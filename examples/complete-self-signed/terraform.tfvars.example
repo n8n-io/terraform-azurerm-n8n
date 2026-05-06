@@ -1,0 +1,43 @@
+# Copy this file to terraform.tfvars and fill in your values.
+
+# ── Required ──────────────────────────────────────────────────────────────────
+
+# Public DNS zone name the example creates in Azure DNS (e.g. example.com).
+# var.n8n_domain MUST resolve inside this zone — typical pattern is to set
+# n8n_domain to a subdomain (n8n.example.com) and public_dns_zone_name to the
+# parent (example.com). After `terraform apply`, copy the zone's NS records
+# (`terraform output -json public_dns_zone_name_servers`) into your registrar
+# to delegate the zone to Azure DNS — Terraform cannot do this upstream step.
+public_dns_zone_name = "example.com"
+
+# Fully-qualified domain name n8n is served on. The n8n module writes the
+# A-record for this name into the zone above — single-apply, no manual DNS
+# step. Must be the zone apex itself or a subdomain of public_dns_zone_name.
+# The self-signed cert's CN is set to this same value.
+n8n_domain = "n8n.example.com"
+
+# n8n Enterprise license activation key. Get one at https://n8n.io/pricing.
+# The module's variables.tf rejects this exact placeholder string — replace it
+# before running terraform apply, otherwise validation fails.
+n8n_license_key = "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
+
+# ── Optional ──────────────────────────────────────────────────────────────────
+
+# Azure region. Change if you're deploying outside eastus.
+# location = "westeurope"
+
+# Lowercase prefix used in every resource name. 2–12 alnum-lowercase chars
+# (Azure storage-account naming is the binding constraint — names cap at 24
+# chars and must be globally unique across all of Azure).
+# friendly_name_prefix = "n8nlab"
+
+# Lifetime of the self-signed cert the submodule issues, in hours.
+# Default 8760 (1 year). Range: 24..87600 (1 day to 10 years).
+# tls_validity_period_hours = 8760
+
+# Extra Azure tags applied to the example's resource group, VNet, DNS zone,
+# and shared Key Vault.
+# common_tags = {
+#   Environment = "lab"
+#   Owner       = "platform-team"
+# }

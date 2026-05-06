@@ -1,0 +1,23 @@
+# terraform-docs configuration for examples/complete.
+#
+# Mirrors the module-root .terraform-docs.yml so the example's README is
+# rendered with the same options. CI runs `terraform-docs --output-check`
+# from this directory in addition to the module root — see the `docs` job
+# in .github/workflows/terraform-tests.yml.
+#
+# Refresh with:
+#
+#   terraform-docs examples/complete
+
+formatter: markdown table
+
+output:
+  file: README.md
+  mode: inject
+  template: |-
+    <!-- BEGIN_TF_DOCS -->
+    {{ .Content }}
+    <!-- END_TF_DOCS -->
+
+settings:
+  lockfile: false

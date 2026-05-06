@@ -1,0 +1,37 @@
+# terraform-docs configuration for terraform-azurerm-n8n / modules/workload/.
+#
+# Mirrors the root .terraform-docs.yml so that `terraform-docs .` and
+# `terraform-docs --output-check .` run from inside this submodule produce
+# identical output to the root + CI invocations. terraform-docs has no
+# config-inheritance / extends mechanism and only reads `.terraform-docs.yml`
+# from its working directory, so the file needs to exist in every directory
+# that publishes a `<!-- BEGIN_TF_DOCS -->` block. Bump in lockstep with the
+# root file (and any other submodules' copies) when settings change.
+#
+# Refresh the README with:
+#
+#   terraform-docs .
+#
+# CI verifies with `terraform-docs --output-check .`.
+
+formatter: markdown table
+
+output:
+  file: README.md
+  mode: inject
+  template: |-
+    <!-- BEGIN_TF_DOCS -->
+    {{ .Content }}
+    <!-- END_TF_DOCS -->
+
+settings:
+  # Always render provider versions as the constraints declared in
+  # versions.tf (e.g. `~> 4.0`), never as the resolved versions from
+  # `.terraform.lock.hcl` (e.g. `4.20.0`). Constraints are what consumers
+  # of this registry module actually contract against; resolved versions
+  # are local-environment noise. Per HashiCorp's guidance for modules
+  # published to the registry, `.terraform.lock.hcl` is intentionally not
+  # committed (see .gitignore), so this also keeps local renders matching
+  # CI even after a contributor runs `terraform init`.
+  # https://developer.hashicorp.com/terraform/language/files/dependency-lock
+  lockfile: false
