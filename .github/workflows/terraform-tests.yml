@@ -11,7 +11,12 @@ permissions:
   pull-requests: write
 
 env:
-  TF_VERSION: "1.9.8"
+  # Terraform >= 1.11 required for `override_during` on `override_resource`
+  # blocks in tftest.hcl files (used by the TLS submodules and the
+  # examples to pin computed-at-apply attributes to plan-known synthetic
+  # values under mock_provider). Bumped from 1.9.8 to track the version
+  # the AGENTS.md combined-test-suite wall-clock note was measured on.
+  TF_VERSION: "1.15.1"
   TFLINT_VERSION: "v0.53.0"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
