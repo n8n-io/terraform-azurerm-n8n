@@ -44,14 +44,14 @@ jobs:
       # versions emit different markdown table whitespace, so any drift between
       # CI and the version contributors actually use produces spurious diffs.
       # Bump together with the brew default.
-      TERRAFORM_DOCS_VERSION: v0.22.0
+      TERRAFORM_DOCS_VERSION: v0.24.0
     strategy:
       fail-fast: false
       matrix:
         # Only directories whose README.md carries a <!-- BEGIN_TF_DOCS -->
         # block. The two TLS submodules are intentionally excluded (their
         # READMEs are hand-written without an auto-generated reference table).
-        target: [".", "modules/infra", "modules/workload", "examples/complete", "examples/complete-letsencrypt", "examples/complete-self-signed"]
+        target: [".", "examples/small", "examples/medium", "examples/large", "examples/split-ingress"]
     steps:
       - uses: actions/checkout@v4
 
@@ -75,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "modules/infra", "modules/workload", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/complete", "examples/complete-letsencrypt", "examples/complete-self-signed"]
+        target: [".", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/small", "examples/medium", "examples/large", "examples/split-ingress"]
     steps:
       - uses: actions/checkout@v4
 
@@ -112,7 +112,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "modules/infra", "modules/workload", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/complete", "examples/complete-letsencrypt", "examples/complete-self-signed"]
+        target: [".", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/small", "examples/medium", "examples/large", "examples/split-ingress"]
     steps:
       - uses: actions/checkout@v4
 
@@ -144,10 +144,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "modules/infra", "modules/workload", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/complete", "examples/complete-letsencrypt", "examples/complete-self-signed"]
-    # Both targets share the single .tflint.hcl at the module root. tflint
-    # reads TFLINT_CONFIG_FILE before falling back to ./.tflint.hcl, so the
-    # examples/complete cell can reuse the root config without a duplicate.
+        target: [".", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/small", "examples/medium", "examples/large", "examples/split-ingress"]
+    # All targets share the single .tflint.hcl at the module root. tflint
+    # reads TFLINT_CONFIG_FILE before falling back to ./.tflint.hcl, so each
+    # example cell can reuse the root config without a duplicate.
     env:
       TFLINT_CONFIG_FILE: ${{ github.workspace }}/.tflint.hcl
     steps:
@@ -200,8 +200,8 @@ jobs:
           # Module surfaces low-severity findings (e.g. PostgreSQL geo-redundant
           # backup, Storage Account public access knobs) that are intentional
           # defaults for a getting-started template. Flip soft_fail to false
-          # once we curate suppressions — see AGENTS.md "Static analysis"
-          # section and the Registry-readiness audit checklist.
+          # once we curate suppressions — see the "Static analysis" section
+          # of AGENTS.md's quality bar.
           soft_fail: true
           output_format: cli
           output_file_path: console

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Failure modes observed in real `terraform apply` runs against this module — symptom, root cause, and the fix that gets the apply unstuck. Most of these are Azure-specific deltas vs `terraform-aws-n8n` (see [`AGENTS.md`](../AGENTS.md) → "Azure-specific deltas") or external dependencies (Helm CLI, Azure Files driver) the module relies on.
+Failure modes observed in real `terraform apply` runs against this module — symptom, root cause, and the fix that gets the apply unstuck. Most of these are Azure-specific deltas vs `terraform-aws-n8n` (see [`AGENTS.md`](../AGENTS.md) → "Azure-specific deltas") or external dependencies (Helm CLI) the module relies on.
 
 If you hit something not covered here, open an issue with the resource address that failed and the last 50 lines of `terraform apply` output.
 
@@ -181,78 +181,6 @@ kubectl -n n8n rollout status deployment/n8n --timeout=5m
 ```
 
 If the UI still hangs after a manual restart, the migration is probably wedged in `pg_stat_activity`. Connect from a bootstrap pod (see the uuid-ossp section above), run `SELECT pid, state, query FROM pg_stat_activity WHERE state != 'idle';`, and `pg_cancel_backend(pid)` any session stuck on `CREATE INDEX`. Then `kubectl -n n8n rollout restart deployment/n8n`. If the race recurs on subsequent applies, raise `var.n8n_helm_post_install_settle_seconds` (e.g. to 120) so the Ingress wait window comfortably outlasts the chart's leader-election bootstrap.
-
-## `terraform apply`: pods crash-loop with `Error: EACCES: permission denied`
-
-**Symptom**
-
-n8n main / worker / webhook-processor pods enter `CrashLoopBackOff` with a log line of the form:
-
-```
-Error: EACCES: permission denied, chmod '/home/node/.n8n/config'
-```
-
-**Root cause**
-
-Azure Files mounts via SMB/CIFS, which **does not support `chmod`**. n8n's settings-file permission check (`N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS = true` by default) tries to lock the config file mode to `0600` and fails on every startup against an Azure Files mount.
-
-**Resolution**
-
-The module hardcodes `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS = "false"` in the n8n Helm values block ([`n8n.tf`](../n8n.tf), `config.extraEnv`). If you've forked the module and removed that env var, put it back. The setting is safe on Azure Files because the share is private to the storage account and reachable only from inside the VNet.
-
-The same workaround is needed on any cloud filesystem that mounts via CIFS or another protocol that does not implement `chmod` — note this if you swap `azurerm_storage_share` for a different storage backend.
-
-## `terraform destroy` hangs on `helm_release.n8n` (Azure Files volume detach)
-
-**Symptom**
-
-`terraform destroy` runs cleanly through most resources, then stalls at:
-
-```
-helm_release.n8n: Still destroying... [id=n8n, 5m elapsed]
-helm_release.n8n: Still destroying... [id=n8n, 10m elapsed]
-…
-Error: context deadline exceeded
-```
-
-…and `kubectl -n n8n get pods` shows pods stuck in `Terminating` for the full duration.
-
-**Root cause**
-
-Azure Files volumes mount via CIFS and the in-tree `azure_file` driver's detach operation can stall for several minutes per pod when the SMB share is still busy. Helm's uninstall waits for every pod to terminate before reporting success, so each stuck `Terminating` pod multiplies the wait until Helm's timeout fires. The release then enters a half-uninstalled state that requires manual `helm uninstall --no-hooks` recovery, and subsequent `terraform destroy` re-runs hit the same hang.
-
-**Resolution**
-
-The module's `helm_release.n8n` runs with `wait = true, atomic = true, cleanup_on_fail = true` and a 600 s `timeout`, which together drive an orderly pod scale-down inside the release on `terraform destroy`. After Helm uninstalls, `time_sleep.wait_for_aks_drain` ([`cleanup.tf`](../cleanup.tf)) pauses for `var.aks_destroy_drain_seconds` (default 120 s; range 30..600) so the asynchronous Azure Files CIFS detach completes before `kubernetes_namespace.n8n` is deleted (its delete timeout is 5 minutes, n8n.tf). The destroy ordering is:
-
-```
-helm_release.n8n  →  time_sleep.wait_for_aks_drain  →  kubernetes_namespace.n8n
-```
-
-If `terraform destroy` still stalls past the gate (most often when the share has many open handles — large `var.storage_share_quota_gb`, scaled-out main / worker pools), bump the gate and retry:
-
-```hcl
-# terraform.tfvars
-aks_destroy_drain_seconds = 300
-```
-
-```bash
-terraform destroy
-```
-
-If a manual unblock is needed, the same scale-to-zero flow used to be the destroy-time provisioner (registry-hardening US-005 replaced it with the declarative gate above):
-
-```bash
-# Manual recovery — only when bumping aks_destroy_drain_seconds didn't suffice.
-kubectl scale deployment --all -n n8n --replicas=0
-kubectl get pods -n n8n -o name | xargs -r -n1 kubectl delete -n n8n --force --grace-period=0
-kubectl wait --for=delete pods --all -n n8n --timeout=2m
-
-# Then re-run.
-terraform destroy
-```
-
-If `helm_release.n8n` is wedged in a half-uninstalled state, see [`destroy-cleanup.md`](./destroy-cleanup.md) for the manual recovery flow (bypassing Helm's release secret and removing the namespace's `kubernetes` finalizer).
 
 ## `terraform destroy` hangs on namespace finalizers or App Gateway frontend IP release
 

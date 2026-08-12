@@ -11,7 +11,7 @@
 # minimal.
 #
 # Provider configuration (subscription, tenant, auth shape) is the caller's
-# job — see examples/complete-self-signed/providers.tf (US-011).
+# job — see the provider example in this submodule's README.
 
 terraform {
   required_version = ">= 1.9"

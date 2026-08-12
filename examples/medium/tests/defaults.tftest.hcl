@@ -1,0 +1,69 @@
+# Copyright n8n GmbH 2025
+# SPDX-License-Identifier: MIT
+
+mock_provider "azurerm" {}
+mock_provider "kubernetes" {}
+mock_provider "helm" {}
+mock_provider "kubectl" {}
+mock_provider "random" {}
+mock_provider "time" {}
+
+override_data {
+  target = data.azurerm_client_config.current
+  values = {
+    tenant_id       = "00000000-0000-0000-0000-000000000000"
+    object_id       = "11111111-1111-1111-1111-111111111111"
+    subscription_id = "22222222-2222-2222-2222-222222222222"
+    client_id       = "33333333-3333-3333-3333-333333333333"
+  }
+}
+
+variables {
+  friendly_name_prefix = "n8nmedium"
+  n8n_domain           = "n8n.test.example.com"
+  public_dns_zone_name = "test.example.com"
+  n8n_license_key      = "test-license-key-not-real"
+}
+
+run "medium_tier_plan" {
+  command = plan
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nmedium-tls-test.vault.azure.net/secrets/n8nmedium-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = azurerm_subnet.aks.address_prefixes[0] == "10.0.0.0/20"
+    error_message = "The medium AKS subnet must preserve its documented /20 address space."
+  }
+
+  assert {
+    condition = output.tier_configuration == {
+      aks_node_vm_size             = "Standard_D8s_v5"
+      aks_node_count_min           = 3
+      aks_node_count_max           = 10
+      pg_sku_name                  = "GP_Standard_D4s_v3"
+      pg_storage_mb                = 131072
+      pg_backup_retention_days     = 14
+      redis_sku_name               = "Balanced_B5"
+      storage_replication_type     = "ZRS"
+      main_min_replicas            = 3
+      main_max_replicas            = 16
+      webhook_min_replicas         = 4
+      webhook_max_replicas         = 24
+      worker_min_replicas          = 4
+      worker_max_replicas          = 30
+      worker_concurrency           = 20
+      appgw_autoscale_min_capacity = 2
+      appgw_autoscale_max_capacity = 10
+    }
+    error_message = "The medium example must preserve its documented root-module sizing decisions."
+  }
+
+  # A clean plan also proves the root capacity check accepts the 67,700m of
+  # requested CPU against about 150,380m of modeled supply.
+}

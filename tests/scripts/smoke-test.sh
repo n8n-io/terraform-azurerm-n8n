@@ -14,36 +14,49 @@
 #   3.  ≥2 n8n-main pods Ready, ≥1 n8n-worker pod Ready, ≥2
 #       n8n-webhook-processor pods Ready (the multi-main floor enforced
 #       by `var.n8n_main_replicas ≥ 2` and the chart's HPA min_replicas).
-#   4.  Multi-main leader election: `N8N_MULTI_MAIN_SETUP_ENABLED=true`
+#   4.  Application version: `n8n --version` agrees across main, worker,
+#       and webhook-processor pods (catches a half-finished rollout).
+#   5.  Multi-main leader election: `N8N_MULTI_MAIN_SETUP_ENABLED=true`
 #       on main pods + leadership activity in main logs.
-#   5.  Task runner sidecar present + connected to the broker on worker
+#   6.  Task runner sidecar present + connected to the broker on worker
 #       pods (warning when task runners are disabled).
-#   6.  KEDA `TriggerAuthentication` `n8n-redis-keda-auth` present in the
+#   7.  KEDA `TriggerAuthentication` `n8n-redis-keda-auth` present in the
 #       n8n namespace — the chart's worker `ScaledObject` references it.
-#   7.  Autoscaler state surface: KEDA `ScaledObject` (workers, queue-
+#   8.  Autoscaler state surface: KEDA `ScaledObject` (workers, queue-
 #       depth driven against Azure Cache for Redis) + HPA
 #       (`n8n-webhook-processor`, CPU-based).
-#   8.  Worker pods see `QUEUE_BULL_REDIS_HOST` (the Azure Cache for Redis
+#   9.  Worker pods see `QUEUE_BULL_REDIS_HOST` (the Azure Cache for Redis
 #       FQDN) + queue-related log activity.
+#   10. PostgreSQL: main pod's `DB_POSTGRESDB_HOST` matches
+#       `terraform output postgres_fqdn` and its logs show no connection
+#       or authentication errors.
+#   11. Azure Blob: main pod's `N8N_EXTERNAL_STORAGE_AZURE_*` environment
+#       matches the storage outputs and its logs show no Blob
+#       authorization errors (skipped unless the binary-data mode is
+#       `azure`).
 #
 #   ── Ingress + reachability ─────────────────────────────────────────────────
-#   9.  App Gateway public IP reachable on TCP/443.
-#   10. HTTPS GET on `n8n_url` returns HTTP 200 — uses regular DNS first,
+#   12. App Gateway public IP reachable on TCP/443.
+#   13. HTTPS GET on `n8n_url` returns HTTP 200 — uses regular DNS first,
 #       falls back to `curl --resolve <fqdn>:443:<APPGW_PUBLIC_IP>` when
 #       the parent zone hasn't been delegated to Azure DNS yet.
-#   11. HTTP → HTTPS redirect on port 80 returns 30x (the chart sets
+#   14. HTTP → HTTPS redirect on port 80 returns 30x (the chart sets
 #       `appgw.ingress.kubernetes.io/ssl-redirect = "true"`).
+#   15. Webhook route ownership: every prefix in
+#       `n8n_webhook_path_prefixes` (`/webhook`, `/webhook-waiting`,
+#       `/form`, `/form-waiting`, `/mcp`) routes to the
+#       webhook-processor Service, and `/` routes to the main Service.
 #
 #   ── Application + license ──────────────────────────────────────────────────
-#   12. API connectivity: GET `/api/v1/workflows?limit=1` returns 200
+#   16. API connectivity: GET `/api/v1/workflows?limit=1` returns 200
 #       (skipped when N8N_API_KEY is unset).
-#   13. Workflow execution: webhook → set workflow round-trip via the
+#   17. Workflow execution: webhook → set workflow round-trip via the
 #       App Gateway listener (skipped when N8N_API_KEY is unset).
-#   14. n8n license is valid via `n8n license:info` exec'd inside a Ready
+#   18. n8n license is valid via `n8n license:info` exec'd inside a Ready
 #       main pod (no API key needed).
 #
 #   ── Optional load test ─────────────────────────────────────────────────────
-#   15. Worker scaling: queues CPU-burning webhook executions and verifies
+#   19. Worker scaling: queues CPU-burning webhook executions and verifies
 #       KEDA scales `n8n-worker` up via Azure Redis queue depth (opt-in
 #       via LOAD_TEST=true; requires N8N_API_KEY).
 #
@@ -216,16 +229,27 @@ read_output() {
 if [[ -f "$TERRAFORM_DIR/terraform.tfstate" ]] && command -v terraform &>/dev/null; then
   AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-$(read_output aks_cluster_name)}"
   AKS_RESOURCE_GROUP="${AKS_RESOURCE_GROUP:-$(read_output aks_resource_group)}"
+  # The example-level output is named `namespace` (examples/small|medium|large's
+  # outputs.tf), not `n8n_namespace` (that name is the *root module's* output).
+  # Fall back to n8n_namespace for callers running the script straight against
+  # a root module directory that re-exports the module output verbatim.
+  NAMESPACE="${NAMESPACE:-$(read_output namespace)}"
   NAMESPACE="${NAMESPACE:-$(read_output n8n_namespace)}"
   N8N_URL="${N8N_URL:-$(read_output n8n_url)}"
   APPGW_PUBLIC_IP="${APPGW_PUBLIC_IP:-$(read_output appgw_public_ip)}"
   KUBECTL_CMD="$(read_output kubectl_config_command)"
+  POSTGRES_FQDN="${POSTGRES_FQDN:-$(read_output postgres_fqdn)}"
+  STORAGE_ACCOUNT_NAME="${STORAGE_ACCOUNT_NAME:-$(read_output storage_account_name)}"
+  BLOB_CONTAINER_NAME="${BLOB_CONTAINER_NAME:-$(read_output azure_blob_container_name)}"
 
   info "aks_cluster_name      = ${AKS_CLUSTER_NAME:-<not found>}"
   info "aks_resource_group    = ${AKS_RESOURCE_GROUP:-<not found>}"
   info "n8n_namespace         = ${NAMESPACE:-<not found>}"
   info "n8n_url               = ${N8N_URL:-<not found>}"
   info "appgw_public_ip       = ${APPGW_PUBLIC_IP:-<not found>}"
+  info "postgres_fqdn         = ${POSTGRES_FQDN:-<not found>}"
+  info "storage_account_name  = ${STORAGE_ACCOUNT_NAME:-<not found>}"
+  info "blob_container_name   = ${BLOB_CONTAINER_NAME:-<not found>}"
 else
   info "No terraform.tfstate in $TERRAFORM_DIR — relying on environment variables."
   KUBECTL_CMD=""
@@ -233,6 +257,9 @@ fi
 
 NAMESPACE="${NAMESPACE:-n8n}"
 N8N_API_KEY="${N8N_API_KEY:-}"
+POSTGRES_FQDN="${POSTGRES_FQDN:-}"
+STORAGE_ACCOUNT_NAME="${STORAGE_ACCOUNT_NAME:-}"
+BLOB_CONTAINER_NAME="${BLOB_CONTAINER_NAME:-}"
 
 # Final required-input check.
 for var in AKS_CLUSTER_NAME AKS_RESOURCE_GROUP N8N_URL APPGW_PUBLIC_IP; do
@@ -356,6 +383,47 @@ check_deployment() {
 check_deployment "n8n-main"              "$MAIN_MIN"    "n8n-main"
 check_deployment "n8n-worker"            "$WORKER_MIN"  "n8n-worker"
 check_deployment "n8n-webhook-processor" "$WEBHOOK_MIN" "n8n-webhook-processor"
+
+# ── Application version ───────────────────────────────────────────────────────
+# Confirms every pod family runs the same n8n application version — a
+# half-finished rollout is exactly the state in which "works on main, fails
+# on workers" surfaces, so ruling out version drift belongs before any
+# functional check runs. `n8n --version` is authoritative; the image tag on
+# the pod spec is printed alongside it for cross-reference.
+
+header "Application version"
+
+version_report=""
+for component in main worker webhook-processor; do
+  pod=$(kubectl get pods -n "$NAMESPACE" \
+    -l "app.kubernetes.io/component=${component}" \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+  if [[ -z "$pod" ]]; then
+    warn "No Ready n8n-${component} pod available to check application version"
+    continue
+  fi
+
+  container="n8n-${component}"
+  image=$(kubectl get pod "$pod" -n "$NAMESPACE" \
+    -o jsonpath="{.spec.containers[?(@.name=='${container}')].image}" 2>/dev/null || true)
+  version=$(kubectl exec "$pod" -n "$NAMESPACE" -c "$container" \
+    -- n8n --version 2>/dev/null || echo "<unreadable>")
+
+  info "$(printf '%-20s version=%-14s image=%s' "$component" "$version" "${image:-<unreadable>}")"
+  version_report="${version_report}${component}|${version}
+"
+done
+
+unique_versions=$(printf '%s' "$version_report" | awk -F'|' 'NF>1 {print $2}' | sort -u | grep -c . || true)
+if [[ "${unique_versions:-0}" -eq 0 ]]; then
+  fail "Could not read the application version from any pod family"
+elif [[ "$unique_versions" -eq 1 ]]; then
+  pass "All pod families report the same n8n application version"
+else
+  fail "Pod families report $unique_versions different n8n application versions — rollout is not converged"
+fi
 
 # ── Multi-main leader election ────────────────────────────────────────────────
 # n8n's multi-main topology elects a single leader pod via Redis to run
@@ -516,8 +584,8 @@ else
 
   if [[ -n "$redis_host" ]]; then
     pass "Worker env: QUEUE_BULL_REDIS_HOST=$redis_host port=${redis_port:-?} tls=${redis_tls:-?}"
-    if [[ "$redis_host" != *.redis.cache.windows.net ]]; then
-      warn "Redis host doesn't look like an Azure Cache for Redis FQDN — chart override?"
+    if [[ "$redis_host" != *.redis.azure.net && "$redis_host" != *.redis.cache.windows.net ]]; then
+      warn "Redis host doesn't look like an Azure Managed Redis or Azure Cache for Redis FQDN — chart override?"
     fi
   else
     warn "Could not read QUEUE_BULL_REDIS_HOST from worker — chart-side env wiring may have drifted"
@@ -530,6 +598,116 @@ else
     while IFS= read -r line; do info "$line"; done <<< "$queue_logs"
   else
     warn "No queue-related log lines in worker logs (last 200) — pod may have just started"
+  fi
+fi
+
+# ── PostgreSQL connectivity ───────────────────────────────────────────────────
+# PostgreSQL Flexible Server sits on a delegated subnet with no public data
+# plane, so this machine cannot open a direct TCP connection to it the way it
+# can to the App Gateway's public IP. Verify instead from inside the
+# workload: the main pod's DB_POSTGRESDB_* environment matches the Terraform
+# output, and recent main pod logs show no connection or auth failures
+# (n8n fails fast and loudly on migration/connection errors, so their
+# absence in a Ready pod's logs is a reliable proxy for a healthy link).
+
+header "PostgreSQL connectivity"
+
+if [[ -z "$main_pod" ]]; then
+  warn "No Ready n8n-main pod available to probe PostgreSQL connectivity"
+else
+  pg_host=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
+    -- printenv DB_POSTGRESDB_HOST 2>/dev/null || true)
+  pg_database=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
+    -- printenv DB_POSTGRESDB_DATABASE 2>/dev/null || true)
+  pg_ssl=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
+    -- printenv DB_POSTGRESDB_SSL_ENABLED 2>/dev/null || true)
+
+  if [[ -n "$pg_host" ]]; then
+    pass "Main env: DB_POSTGRESDB_HOST=$pg_host database=${pg_database:-?} ssl=${pg_ssl:-?}"
+    if [[ -n "${POSTGRES_FQDN:-}" && "$pg_host" != "$POSTGRES_FQDN" ]]; then
+      warn "DB_POSTGRESDB_HOST ($pg_host) does not match terraform output postgres_fqdn ($POSTGRES_FQDN)"
+    fi
+  else
+    warn "Could not read DB_POSTGRESDB_HOST from main — chart-side env wiring may have drifted"
+  fi
+
+  pg_errors=$(kubectl logs "$main_pod" -n "$NAMESPACE" -c n8n-main --tail=300 2>/dev/null \
+    | grep -iE "ECONNREFUSED|password authentication failed|could not connect to server|SASL|connection terminated unexpectedly" \
+    | tail -5 || true)
+  if [[ -z "$pg_errors" ]]; then
+    pass "No PostgreSQL connection or auth errors in main pod logs (last 300 lines)"
+  else
+    fail "PostgreSQL connection or auth errors found in main pod logs"
+    while IFS= read -r line; do info "$line"; done <<< "$pg_errors"
+  fi
+
+  migration_log=$(kubectl logs "$main_pod" -n "$NAMESPACE" -c n8n-main --tail=300 2>/dev/null \
+    | grep -iE "migrations? (finished|completed|ran successfully)" | tail -1 || true)
+  if [[ -n "$migration_log" ]]; then
+    pass "PostgreSQL migrations completed"
+    info "$migration_log"
+  else
+    info "No migration-completion log line in last 300 lines — normal if the pod has been up a while"
+  fi
+fi
+
+# ── Azure Blob storage ────────────────────────────────────────────────────────
+# Confirms the workload identity path is wired end-to-end on the main pod:
+# the container/account env matches the Terraform output, and
+# N8N_DEFAULT_BINARY_DATA_MODE reflects the configured storage mode. This is
+# infrastructure-level proof only — the module-verification spec's
+# n8n-level write/read/download/delete acceptance criteria belong to the
+# live procedure in section 17.3 (docs/data-storage.md), which needs a real
+# workflow execution, not just an environment check.
+
+header "Azure Blob storage"
+
+if [[ -z "$main_pod" ]]; then
+  warn "No Ready n8n-main pod available to probe Azure Blob configuration"
+else
+  binary_mode=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
+    -- printenv N8N_DEFAULT_BINARY_DATA_MODE 2>/dev/null || true)
+  blob_container=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
+    -- printenv N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME 2>/dev/null || true)
+  blob_account=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
+    -- printenv N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME 2>/dev/null || true)
+  blob_auto_detect=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
+    -- printenv N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT 2>/dev/null || true)
+
+  info "N8N_DEFAULT_BINARY_DATA_MODE=${binary_mode:-<unset>}"
+
+  if [[ "$binary_mode" != "azure" ]]; then
+    skip "Azure Blob checks (N8N_DEFAULT_BINARY_DATA_MODE is '${binary_mode:-<unset>}', not 'azure')"
+  else
+    if [[ -n "$blob_container" && -n "$BLOB_CONTAINER_NAME" && "$blob_container" == "$BLOB_CONTAINER_NAME" ]]; then
+      pass "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME matches terraform output ($blob_container)"
+    elif [[ -n "$blob_container" ]]; then
+      warn "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME=$blob_container does not match terraform output azure_blob_container_name (${BLOB_CONTAINER_NAME:-<unset>})"
+    else
+      fail "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME not set on main pod despite azure binary mode"
+    fi
+
+    if [[ -n "$blob_account" ]]; then
+      pass "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME=$blob_account (workload-identity auth path)"
+      if [[ -n "$STORAGE_ACCOUNT_NAME" && "$blob_account" != "$STORAGE_ACCOUNT_NAME" ]]; then
+        warn "Account name does not match terraform output storage_account_name ($STORAGE_ACCOUNT_NAME)"
+      fi
+    else
+      info "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME not set — connection-string or account-key auth may be in use"
+    fi
+
+    if [[ "$blob_auto_detect" == "true" ]]; then
+      pass "N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT=true (workload identity, DefaultAzureCredential)"
+    fi
+
+    blob_errors=$(kubectl logs "$main_pod" -n "$NAMESPACE" -c n8n-main --tail=300 2>/dev/null \
+      | grep -iE "AuthorizationFailure|ContainerNotFound|blob.*(forbidden|denied)" | tail -5 || true)
+    if [[ -z "$blob_errors" ]]; then
+      pass "No Azure Blob authorization or access errors in main pod logs (last 300 lines)"
+    else
+      fail "Azure Blob authorization or access errors found in main pod logs"
+      while IFS= read -r line; do info "$line"; done <<< "$blob_errors"
+    fi
   fi
 fi
 
@@ -603,7 +781,69 @@ else
   fi
 fi
 
-# ── API connectivity ──────────────────────────────────────────────────────────
+# ── Webhook route ownership ───────────────────────────────────────────────────
+# n8n runs here with dedicated webhook-processor pods, so every one of
+# local.n8n_webhook_path_prefixes (root locals.tf, module output
+# n8n_webhook_path_prefixes) MUST route to the webhook-processor Service
+# ahead of the main-service catch-all, or requests fall through to main and
+# 404: waiting webhooks never resume, Form Trigger nodes break, MCP server
+# triggers are unreachable. Checking the Ingress object directly is
+# deterministic — it needs no registered workflow, and it distinguishes
+# "wrong backend" from "no workflow with that path".
+
+header "Webhook route ownership"
+
+WEBHOOK_SVC="n8n-webhook-processor"
+MAIN_SVC="n8n-main"
+
+# terraform output -json — n8n_webhook_path_prefixes is a list, not a scalar.
+# Falls back to the module's hard-coded default prefix set (locals.tf,
+# n8n_webhook_path_prefixes) when the output can't be read, so the check
+# still runs something meaningful against a remote deployment with no local
+# state.
+webhook_prefixes_json=$(terraform -chdir="$TERRAFORM_DIR" output -json n8n_webhook_path_prefixes 2>/dev/null || echo "")
+WEBHOOK_PREFIXES=()
+if [[ -n "$webhook_prefixes_json" ]]; then
+  while IFS= read -r prefix; do
+    WEBHOOK_PREFIXES+=("$prefix")
+  done < <(echo "$webhook_prefixes_json" \
+    | python3 -c 'import sys, json; [print(p) for p in json.load(sys.stdin)]' 2>/dev/null)
+fi
+if [[ ${#WEBHOOK_PREFIXES[@]} -eq 0 ]]; then
+  WEBHOOK_PREFIXES=(/webhook /webhook-waiting /form /form-waiting /mcp)
+  info "n8n_webhook_path_prefixes output not found — using the module's default prefix set"
+fi
+
+ingress_paths=$(kubectl get ingress n8n-ingress -n "$NAMESPACE" \
+  -o jsonpath='{range .spec.rules[*].http.paths[*]}{.path}{"="}{.backend.service.name}{"\n"}{end}' \
+  2>/dev/null || true)
+
+if [[ -z "$ingress_paths" ]]; then
+  skip "Webhook route ownership (no 'n8n-ingress' in namespace '$NAMESPACE')"
+  info "Expected when create_ingress = false: you own the Ingress routes."
+  info "Verify your own route all of: ${WEBHOOK_PREFIXES[*]} → $WEBHOOK_SVC"
+else
+  for prefix in "${WEBHOOK_PREFIXES[@]}"; do
+    backend=$(echo "$ingress_paths" | grep -E "^${prefix}/?=" | head -1 | cut -d= -f2)
+
+    if [[ -z "$backend" ]]; then
+      fail "$prefix is not routed, so requests fall through to the main pods and 404"
+    elif [[ "$backend" == "$WEBHOOK_SVC" ]]; then
+      pass "$prefix → $backend"
+    else
+      fail "$prefix → $backend (expected $WEBHOOK_SVC)"
+    fi
+  done
+
+  root_backend=$(echo "$ingress_paths" | grep -E '^/=' | head -1 | cut -d= -f2)
+  if [[ "$root_backend" == "$MAIN_SVC" ]]; then
+    pass "/ → $root_backend"
+  elif [[ -n "$root_backend" ]]; then
+    fail "/ → $root_backend (expected $MAIN_SVC)"
+  else
+    warn "No catch-all '/' rule on the Ingress, so the editor UI may be unreachable"
+  fi
+fi
 
 header "API connectivity"
 

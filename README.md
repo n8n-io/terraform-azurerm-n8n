@@ -1,245 +1,209 @@
 # terraform-azurerm-n8n
 
-Terraform module for deploying [n8n](https://n8n.io) on Microsoft Azure.
+Terraform module for deploying a production-grade, multi-main [n8n](https://n8n.io) Enterprise installation on Microsoft Azure. One `terraform apply` against this root module brings up Azure Kubernetes Service, PostgreSQL, Redis, Blob storage, and the n8n Helm release together — there is no separate infrastructure tier and workload tier to wire up.
 
-After the registry-hardening Phase-5 split (US-014..US-026), this repository ships **two registry-publishable submodules** rather than a single umbrella:
+This module is the Azure sibling of [`terraform-aws-n8n`](https://github.com/n8n-io/terraform-aws-n8n). The two share the same shape — one resource-bearing root module, the same variable and output naming, the same quality bar — so an operator who knows one can read the other. Cloud-specific deltas (the PostgreSQL `azure.extensions` allowlist, the CRD-aware KEDA `TriggerAuthentication` install) are documented in [`AGENTS.md`](./AGENTS.md).
 
-- [`modules/infra/README.md`](./modules/infra/README.md) — **Tier 1, Azure IaaS.** AKS, PostgreSQL Flexible Server, Redis Cache, Storage Account / Azure Files share, Application Gateway, IAM (UAMIs + role assignments), and the BYO Key Vault role assignment for the App Gateway TLS cert.
-- [`modules/workload/README.md`](./modules/workload/README.md) — **Tier 2, Kubernetes workload.** KEDA Helm release, n8n Helm release + namespace + chart-side Secrets, n8n Ingress, post-install settle gate, webhook-processor HPA, KEDA `TriggerAuthentication` CR, destroy-time CIFS-detach gate.
-
-Plus two TLS-cert-issuing submodules:
-
-- [`modules/tls-self-signed/README.md`](./modules/tls-self-signed/README.md) — lab-grade self-signed cert imported into a caller-owned Key Vault.
-- [`modules/tls-letsencrypt/README.md`](./modules/tls-letsencrypt/README.md) — production-grade Let's Encrypt cert (DNS-01 via `vancluever/acme`) imported into a caller-owned Key Vault.
-
-Together these provision a production-grade multi-main n8n Enterprise deployment: multiple n8n main pods, dedicated worker pods, external PostgreSQL, Redis behind a private endpoint, Azure Files for shared binary storage, fronted by an Application Gateway with AGIC. An **n8n Enterprise license is required**.
-
-For a ready-to-run end-to-end deployment showing both modules wired together — including the example-owned VNet + 5 subnets, public Azure DNS zone with auto-managed A-record, and the shared Key Vault — see [`examples/complete/`](./examples/complete/).
+An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this module does not provision a community-edition deployment.
 
 ## Table of contents
 
-- **Submodules** — [`modules/infra/README.md`](./modules/infra/README.md), [`modules/workload/README.md`](./modules/workload/README.md), [`modules/tls-self-signed/README.md`](./modules/tls-self-signed/README.md), [`modules/tls-letsencrypt/README.md`](./modules/tls-letsencrypt/README.md)
-- **Examples** — [`examples/complete/`](./examples/complete/), [`examples/complete-letsencrypt/`](./examples/complete-letsencrypt/), [`examples/complete-self-signed/`](./examples/complete-self-signed/)
-- **Operator docs** — [`docs/post-deployment.md`](./docs/post-deployment.md), [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md), [`docs/tls-rotation.md`](./docs/tls-rotation.md), [`docs/troubleshooting.md`](./docs/troubleshooting.md)
-- **Migration** — [`CHANGELOG.md`](./CHANGELOG.md), [`#migrating-from-v1x`](#migrating-from-v1x)
-- **Audit** — [`AGENTS.md`](./AGENTS.md) (Registry-readiness audit table)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Usage](#usage)
+- [Runtime and workload controls](#runtime-and-workload-controls)
+- [Managed-service topologies](#managed-service-topologies)
+- [Ingress, DNS, and TLS](#ingress-dns-and-tls)
+- [Sizing and capacity](#sizing-and-capacity)
+- [Examples](#examples)
+- [Operator documentation](#operator-documentation)
+- [Support](#support)
+- [Out of scope](#out-of-scope)
+- [Reference](#reference)
 
-## Goals
+## Architecture
 
-### Phase 1 — Internal baseline
+```
+              ┌──────── Azure DNS (optional, public or private) ────┐
+              │                                                     │
+   user ──► Application Gateway (AGIC, WAF_v2) ──► AKS ──► n8n mains ──► PostgreSQL Flexible Server
+                                              │             │       (delegated subnet, private DNS zone)
+                                              │             │
+                                              │             └──► Azure Managed Redis (private endpoint,
+                                              │                   TLS-only) ◄── workers (KEDA-scaled)
+                                              │
+                                              └──► Azure Blob Storage (private endpoint,
+                                                   workload identity) for binary / execution data
+```
 
-A minimal, lean Terraform module that deploys the multi-main n8n Enterprise topology on Azure (AKS + PostgreSQL Flexible Server + Azure Cache for Redis + Application Gateway), validated through n8n-internal testing on a green-field subscription.
+A single `terraform apply` creates:
 
-### Phase 2 — Production hardening
+- **Azure Kubernetes Service (AKS)** with the OIDC issuer and workload identity enabled, availability-zone-spread node pools, an autoscaler-owned node count, and optional API-server IP allowlisting.
+- **Multiple n8n main pods** plus dedicated **worker** and **webhook-processor** pods (queue mode) — the Enterprise multi-main topology, each with its own HPA or KEDA `ScaledObject`.
+- **PostgreSQL — Flexible Server**, on a delegated subnet with `uuid-ossp` allow-listed via `azure.extensions`, or an external PostgreSQL endpoint you already run.
+- **Azure Managed Redis** behind a private endpoint (encrypted protocol, `NoCluster`, access-key auth) for the Bull queue backing workers, or an external Redis endpoint.
+- **Private Azure Blob Storage** for binary and execution data, authenticated via AKS workload identity by default, with PostgreSQL as the non-Azure binary and execution-data backend.
+- **Application Gateway (WAF_v2 by default)** with **AGIC** and **KEDA** for ingress, queue-driven worker scaling, and HPA-driven main/webhook scaling — or `create_ingress = false` for a caller-owned topology (see [`examples/split-ingress/`](./examples/split-ingress/)).
+- **Azure Key Vault**-backed TLS for the App Gateway listener via a single BYO-secret contract (`var.app_gateway_tls_cert_secret_id`); see [TLS cert and Key Vault](#tls-cert-and-key-vault) below.
+- **Optional public or private Azure DNS** A-records for the canonical domain and every additional domain.
 
-Tighten the security posture for customer-facing rollouts: customer-managed keys (CMK) on PostgreSQL and the storage account, BYO Key Vault for the App Gateway TLS cert, automated public/private Azure DNS A-record creation, and full propagation of `friendly_name_prefix` + `common_tags` across every taggable resource.
-
-### Phase 3 — Registry publication
-
-Polish to Terraform Registry standards: CI on every PR (fmt, validate, `terraform test`, tflint with the azurerm ruleset, checkov, terraform-docs `--output-check`), operator-facing documentation (`docs/troubleshooting.md`, `docs/post-deployment.md`, `docs/destroy-cleanup.md`, `docs/tls-rotation.md`), a smoke-test script for post-apply verification, and a final Registry-readiness audit before tagging `v1.0.0`.
-
-## Support
-
-This module is open source software, maintained by the n8n Solutions team independently of n8n's enterprise products. While the n8n Support team provides dedicated support for the enterprise offerings, this module isn't included.
+The module **expects a pre-existing VNet** and five pre-sized subnets (AKS, Application Gateway, PostgreSQL, Redis private endpoint, storage private endpoints). The [`examples/small`](./examples/small/), [`examples/medium`](./examples/medium/), and [`examples/large`](./examples/large/) sizing examples create those Azure foundations and call this module directly — start there rather than wiring the VNet yourself.
 
 ## Prerequisites
 
-- **Terraform** `>= 1.9` (every submodule pins this floor in `versions.tf`; 1.9 is the minimum that supports cross-variable validation, used by `modules/infra/`'s `var.app_gateway_keyvault_id` cross-check against `var.app_gateway_keyvault_role_assignment_enabled`)
-- **Azure CLI** `>= 2.50` (used for `az login` and the few imperative steps the module shells out to)
-- **kubectl** `>= 1.30` (used by `tests/scripts/smoke-test.sh` for post-apply verification; the apply-host bash drain, AKS API readiness probe, post-deploy restart, uuid-ossp bootstrap Job, and KEDA TriggerAuthentication `local-exec kubectl apply` were all retired in registry-hardening Phase 1, 2, and 3 — the `gavinbunney/kubectl` provider now talks to the AKS API directly)
-- **Helm** `>= 3.14` (the `helm` provider invokes the local Helm binary)
+- **Terraform** `>= 1.9` (the floor that supports the cross-variable validation this module relies on, e.g. `var.app_gateway_keyvault_id` against `var.app_gateway_keyvault_role_assignment_enabled`).
+- **Azure CLI** `>= 2.50` (`az login`, plus the few imperative steps in the docs under `docs/`).
+- **kubectl** `>= 1.30` (used by `tests/scripts/smoke-test.sh` for post-apply verification; the module itself never shells out to `kubectl` — the `kubernetes`, `helm`, and `gavinbunney/kubectl` Terraform providers talk to the AKS API directly).
+- **Helm** `>= 3.14` (the `helm` provider invokes the local Helm binary).
+- A configured `azurerm` provider with `storage_use_azuread = true`, plus `kubernetes` / `helm` / `kubectl` providers wired against the cluster this module creates (see [Usage](#usage) below) — this module declares `required_providers` but never configures a provider itself.
 
 The caller is responsible for providing:
 
-- A pre-existing **VNet** with five subnets:
-  - `aks_subnet_id` — the AKS node subnet (Azure CNI).
-  - `appgw_subnet_id` — the Application Gateway subnet.
-  - `postgres_subnet_id` — delegated to `Microsoft.DBforPostgreSQL/flexibleServers`.
-  - `redis_pe_subnet_id` — `private_endpoint_network_policies` disabled (required for the Redis private endpoint).
-  - One spare subnet for future workloads / per the example.
+- A pre-existing **VNet** with five subnets: `aks_subnet_id` (Azure CNI node subnet), `appgw_subnet_id` (dedicated to Application Gateway, `/24` or larger), `postgres_subnet_id` (delegated to `Microsoft.DBforPostgreSQL/flexibleServers`, unless `create_database = false`), `redis_subnet_id` (`private_endpoint_network_policies` disabled, unless `create_redis = false`), and `private_endpoint_subnet_id` (Blob private endpoints).
+- A **resource group** (`var.resource_group_name`) — this module does not create one.
+- `Storage Blob Data Contributor` for the Terraform applying identity on that resource group (or the module-managed storage account). The provider needs data-plane access to create the private container while shared-key authentication is disabled by default.
 - An **n8n Enterprise license key** (`var.n8n_license_key`).
-- A configured `azurerm` provider in the calling root module (this module declares `required_providers` but does not configure them).
+- A Key Vault Secret URI for the App Gateway TLS certificate (`var.app_gateway_tls_cert_secret_id`) — see [TLS cert and Key Vault](#tls-cert-and-key-vault).
 
 ## Usage
 
-The canonical pattern is to call both submodules from your own root module, threading `module.infra`'s outputs into `module.workload`'s inputs. The example below mirrors the wiring inside [`examples/complete/main.tf`](./examples/complete/main.tf):
-
 ```hcl
-module "tls" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-self-signed"
-
-  domain_name          = "n8n.example.com"
-  key_vault_id         = azurerm_key_vault.shared.id
-  friendly_name_prefix = "acme"
-}
-
-module "infra" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/infra"
+module "n8n" {
+  source = "github.com/n8n-io/terraform-azurerm-n8n"
 
   location             = "eastus"
-  resource_group_name  = azurerm_resource_group.n8n.name   # caller-owned RG
+  resource_group_name  = azurerm_resource_group.n8n.name
   friendly_name_prefix = "acme"
 
   vnet_id                    = azurerm_virtual_network.n8n.id
   aks_subnet_id              = azurerm_subnet.aks.id
+  appgw_subnet_id            = azurerm_subnet.appgw.id
   postgres_subnet_id         = azurerm_subnet.postgres.id
   redis_subnet_id            = azurerm_subnet.redis_pe.id
-  appgw_subnet_id            = azurerm_subnet.appgw.id
-  private_endpoint_subnet_id = azurerm_subnet.redis_pe.id
+  private_endpoint_subnet_id = azurerm_subnet.private_endpoints.id
 
   n8n_domain                     = "n8n.example.com"
-  app_gateway_tls_cert_secret_id = module.tls.app_gateway_tls_cert_secret_id
+  app_gateway_tls_cert_secret_id = module.tls_self_signed.app_gateway_tls_cert_secret_id
   app_gateway_keyvault_id        = azurerm_key_vault.shared.id
-}
-
-module "workload" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/workload"
-
-  friendly_name_prefix = "acme"
-
-  aks_cluster_name    = module.infra.aks_cluster_name
-  aks_oidc_issuer_url = module.infra.aks_oidc_issuer_url
-
-  postgres_fqdn           = module.infra.postgres_fqdn
-  postgres_admin_username = module.infra.postgres_admin_username
-  postgres_admin_password = module.infra.postgres_admin_password
-  postgres_database_name  = module.infra.postgres_database_name
-
-  redis_hostname           = module.infra.redis_hostname
-  redis_ssl_port           = module.infra.redis_ssl_port
-  redis_primary_access_key = module.infra.redis_primary_access_key
-
-  storage_account_name               = module.infra.storage_account_name
-  storage_account_primary_access_key = module.infra.storage_account_primary_access_key
-  storage_share_name                 = module.infra.storage_share_name
-
-  n8n_workload_uami_client_id = module.infra.n8n_workload_uami_client_id
-
-  n8n_domain                     = "n8n.example.com"
-  app_gateway_id                 = module.infra.app_gateway_id
-  app_gateway_tls_cert_secret_id = module.tls.app_gateway_tls_cert_secret_id
-  key_vault_id                   = module.infra.key_vault_id
 
   n8n_license_key = var.n8n_license_key
 }
 ```
 
-Neither submodule declares `provider {}` blocks. Callers configure `azurerm` (used by `modules/infra/`) and `kubernetes` / `helm` / `kubectl` (used by `modules/workload/`, wired against the AKS cluster `modules/infra/` creates via the `aks_kube_config` output). See [`examples/complete/providers.tf`](./examples/complete/providers.tf) for the canonical certificate-based auth wiring.
+This module declares `required_providers` (`azurerm`, `kubernetes`, `helm`, `random`, `time`, `kubectl`) but never configures a provider — that is always the caller's job. Configure AzureRM to use Microsoft Entra ID for Storage data-plane operations because the module disables storage-account shared keys by default:
 
-For a full end-to-end example including the resource groups, VNet + 5 subnets, public Azure DNS zone with auto-managed A-record, and the shared Key Vault, see [`examples/complete/`](./examples/complete/). If `terraform apply` fails on a `helm_release`, a `time_sleep` gate (`aks_api_warmup`, `n8n_helm_settle`), or the `kubectl_manifest.keda_trigger_authentication` defer-rendered manifest, see [`docs/troubleshooting.md`](./docs/troubleshooting.md). Destroy-time hangs (Azure Files volume detach, App Gateway frontend-IP release, namespace finalizers) are covered in [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md).
+```hcl
+provider "azurerm" {
+  storage_use_azuread = true
+
+  features {}
+}
+```
+
+The applying identity needs `Storage Blob Data Contributor` before the module creates its container. The complete examples grant that role on their n8n resource group and wait for RBAC propagation. In a composed deployment, grant it outside this module and make the module call depend on the role assignment or your equivalent access-provisioning step.
+
+Because this same module creates the AKS cluster that the `kubernetes`/`helm`/`kubectl` providers need to talk to, wire those provider blocks from this module's own outputs (`aks_kube_config`, or a certificate-based `exec` block):
+
+```hcl
+provider "kubernetes" {
+  host                   = yamldecode(module.n8n.aks_kube_config).clusters[0].cluster.server
+  cluster_ca_certificate = base64decode(yamldecode(module.n8n.aks_kube_config).clusters[0].cluster["certificate-authority-data"])
+  client_certificate     = base64decode(yamldecode(module.n8n.aks_kube_config).users[0].user["client-certificate-data"])
+  client_key             = base64decode(yamldecode(module.n8n.aks_kube_config).users[0].user["client-key-data"])
+}
+```
+
+Terraform partitions the module's own resource graph so the Azure-side resources (AKS, PostgreSQL, Redis, storage) create before any Kubernetes-side resource needs those provider blocks resolved — see [`examples/small/providers.tf`](./examples/small/providers.tf) for the complete wiring, including the `helm` and `kubectl` providers.
+
+For a full end-to-end deployment including the resource group, VNet and five subnets, public Azure DNS zone, and a self-signed Key Vault certificate, run [`examples/small/`](./examples/small/). If `terraform apply` fails on a `helm_release`, a `time_sleep` gate, or the `kubectl_manifest.keda_trigger_authentication` defer-rendered manifest, see [`docs/troubleshooting.md`](./docs/troubleshooting.md). Destroy-time hangs (App Gateway frontend-IP release, namespace finalizers) are covered in [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md).
 
 ### TLS cert and Key Vault
 
-The module no longer provisions a Key Vault or imports a certificate (registry-hardening US-012, Phase 4 R4.3). Provisioning the cert is the caller's job; pick one of:
+This module does not provision a Key Vault or import a certificate. Provisioning the cert is the caller's job; pick one of:
 
-- **Use one of the two TLS submodules** — `modules/tls-letsencrypt/` (production) or `modules/tls-self-signed/` (lab / internal-only). Each submodule creates an `azurerm_key_vault_certificate` in a caller-supplied Key Vault and exposes the resulting versioned secret URI as its `app_gateway_tls_cert_secret_id` output. See `examples/complete-*/` for the full wiring.
-- **Bring your own cert** — import a PFX / PEM cert into a Key Vault out-of-band (or via your own `azurerm_key_vault_certificate`) and feed the resulting secret URI into this module as `var.app_gateway_tls_cert_secret_id`.
+- **Use one of the two TLS submodules** — [`modules/tls-letsencrypt/`](./modules/tls-letsencrypt/) (production, DNS-01 via `vancluever/acme`) or [`modules/tls-self-signed/`](./modules/tls-self-signed/) (lab / internal-only). Each creates an `azurerm_key_vault_certificate` in a caller-supplied Key Vault and exposes the resulting versioned secret URI as `app_gateway_tls_cert_secret_id`. See [`examples/small/`](./examples/small/) for the self-signed wiring and the ["DNS-01 providers" section](./modules/tls-letsencrypt/README.md#dns-01-providers) of `modules/tls-letsencrypt/README.md` for the Let's Encrypt DNS-01 path against Azure DNS or another provider.
+- **Bring your own cert** — import a PFX/PEM cert into a Key Vault out-of-band and feed the resulting secret URI into `var.app_gateway_tls_cert_secret_id` directly.
 
-In both cases, pair the secret URI with `var.app_gateway_keyvault_id` (the resource ID of the same vault). When set, the module grants the App Gateway's user-assigned identity (`<friendly_name_prefix>-appgw-tls`) the **Key Vault Secrets User** role on the supplied vault via `azurerm_role_assignment.appgw_kv_secrets_user`. When unset, the caller is responsible for granting the UAMI access (e.g. via an access policy on a vault in legacy access-policy mode).
+Pair the secret URI with `var.app_gateway_keyvault_id` (the resource ID of the same vault) and set `var.app_gateway_keyvault_role_assignment_enabled = true` to have this module grant the App Gateway's TLS-cert-reader identity **Key Vault Secrets User** on that vault — the minimum role needed to fetch the cert at runtime. Leave the toggle false to grant that access out-of-band (e.g. an access policy on a vault in legacy access-policy mode). See [`docs/tls-rotation.md`](./docs/tls-rotation.md) for rotating the cert after the first apply.
 
-The supplied vault must be reachable by the App Gateway with the following requirements:
+## Runtime and workload controls
 
-- The vault should be **RBAC-mode** (`enable_rbac_authorization = true`). Legacy access-policy mode also works, but the caller must pre-grant the App Gateway UAMI `Get` on certificates and secrets via an access policy they manage themselves; the role assignment the module creates is harmless but inert in access-policy mode.
-- The vault must allow the App Gateway's network path (firewall rules / private endpoint / public access) — the module does not configure the vault's networking.
+Beyond the base multi-main topology, this module ports the AWS sibling's operator-facing n8n controls into Helm values and pod environment variables:
 
-The App Gateway fetches the cert as a secret reference at runtime, so **Key Vault Secrets User** is the minimum role needed for the runtime read.
+- **Runtime** — timezone, log destination/level, per-pod-family CPU/memory, worker concurrency, execution timeout/concurrency, execution pruning, graceful shutdown, and task-runner (image, resources, auto-shutdown, Python runner) controls. See the `n8n_log_*`, `n8n_execution_*`, `n8n_task_runner_*` inputs in the [Reference](#reference) table.
+- **Custom images and extensions** — `n8n_image_repository` / `n8n_image_tag`, `n8n_image_pull_secrets` (existing Secret names only — this module never accepts registry credentials directly), and `n8n_custom_extensions_path` for custom nodes. A conditional module-owned `ServiceAccount` (`n8n-enterprise-pull`) carries workload identity when pull secrets are supplied.
+- **Typed extra volumes** — `n8n_extra_volumes` / `n8n_extra_volume_mounts` for ConfigMap, Secret, or PVC sources, merged onto every main/worker/webhook pod.
+- **Guarded extra environment** — `n8n_extra_env` rejects duplicates and every module- or chart-reserved name (connection, identity, storage, license, runner, and topology settings) before rendering.
+- **Binary and execution data** — independent `database`/`azure` modes, with PostgreSQL providing the durable non-Azure path and separate `feat:binaryDataAz` / `feat:executionDataAz` Enterprise entitlements for Blob. Mode changes do not backfill data. 0.1.0 does not support n8n's inline-memory `default` binary mode or a shared-filesystem mode. See [`docs/data-storage.md`](./docs/data-storage.md).
+- **Observability** — Prometheus metrics, OpenTelemetry endpoint/tuning, and typed sensitive webhook/syslog/Sentry log-streaming destinations. See [`docs/observability.md`](./docs/observability.md).
+- **Azure Key Vault external secrets** — the infrastructure boundary and prerequisites for n8n's own Azure Key Vault external-secrets integration are documented in [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md); this module does not manage the Entra application or workflow credentials that feature needs.
 
-## Migrating from v1.x
+n8n application version `2.29.0` or later is required for the Azure binary/execution-data modes; the module's default (`n8n_image_tag = "2.35.0"`) already meets that floor, and applying a version below it fails validation.
 
-Phase 4 R4.3 (registry-hardening US-012) collapses the legacy three-mode TLS surface (`var.tls_mode = self_signed | letsencrypt | custom_pfx`) into a single BYO-secret contract: `var.app_gateway_tls_cert_secret_id`. The module no longer provisions a Key Vault or imports certificates — provisioning the cert is now the caller's job, and the Let's Encrypt and self-signed flows live in `modules/tls-letsencrypt/` and `modules/tls-self-signed/`.
+## Managed-service topologies
 
-See [`CHANGELOG.md`](./CHANGELOG.md) for the full v2.0.0 breaking-change list. The exact `.tf` snippet diff each old `tls_mode` value needs is below.
+Every stateful dependency has a managed (module-owned) and an external (caller-owned) path, gated by one plan-known boolean each:
 
-### From `tls_mode = "self_signed"` (v1.x default)
+| Service | Managed (`create_* = true`, default) | External (`create_* = false`) |
+|---|---|---|
+| PostgreSQL | `azurerm_postgresql_flexible_server`, zone-redundant HA, backup retention/geo-redundancy, maintenance window | `postgres_external_host` / `_port` / `_database` / `_username` / `_password` |
+| Redis | `azurerm_managed_redis` (Azure Managed Redis, `NoCluster`, encrypted, private endpoint), optional high availability | `redis_external_host` / `_port` / `_tls_enabled` / `_username` (optional) / `_password` (optional — an unauthenticated endpoint is supported) |
+| Blob storage | Always module-managed — private container, workload-identity auth by default, optional connection-string/account-key/custom-endpoint compatibility credentials | n/a |
 
-```diff
-+ module "tls" {
-+   source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-self-signed"
-+
-+   domain_name          = "n8n.example.com"
-+   key_vault_id         = azurerm_key_vault.shared.id
-+   friendly_name_prefix = "acme"
-+   common_tags          = local.common_tags
-+ }
-+
-  module "n8n" {
-    source = "github.com/n8n-io/terraform-azurerm-n8n"
+Both managed and external paths render one canonical connection object per service (`local.postgres_connection`, `local.redis_connection`) so the n8n Helm values and KEDA `TriggerAuthentication` never branch on `create_database` / `create_redis` themselves. Non-blocking `check` diagnostics flag the two directions Terraform can't reject outright: managed-only tuning inputs set while the external path is active, and external-only inputs set while the managed path is active.
 
--   tls_mode = "self_signed"
-+   app_gateway_tls_cert_secret_id = module.tls.app_gateway_tls_cert_secret_id
-+   app_gateway_keyvault_id        = azurerm_key_vault.shared.id
-    # …
-  }
-```
+Azure Managed Redis regional/SKU availability, `NoCluster` capacity limits, and the queue-draining implications of changing high availability or clustering policy are documented in [`docs/redis.md`](./docs/redis.md).
 
-You bring your own Key Vault (`azurerm_key_vault.shared` above) — the module no longer creates one. See [`examples/complete-self-signed/`](./examples/complete-self-signed/) for a full end-to-end wiring including the vault, vault access policies, and submodule call.
+## Ingress, DNS, and TLS
 
-### From `tls_mode = "letsencrypt"`
+`create_ingress = true` (the default) provisions a public- or internal-frontend Application Gateway, the AKS AGIC addon, a subnet NSG with optional IPv4 source restrictions, and a Kubernetes Ingress that routes `/webhook`, `/webhook-waiting`, `/form`, `/form-waiting`, and `/mcp` to the dedicated webhook-processor Service before the `/` catch-all — for the canonical domain (`n8n_domain`) and every entry in `n8n_additional_domains`.
 
-```diff
-+ module "tls" {
-+   source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-letsencrypt"
-+
-+   acme_email                   = "platform@example.com"
-+   domain_name                  = "n8n.example.com"
-+   dns_zone_name                = "example.com"
-+   dns_zone_resource_group_name = "dns-rg"
-+   key_vault_id                 = azurerm_key_vault.shared.id
-+   friendly_name_prefix         = "acme"
-+   common_tags                  = local.common_tags
-+ }
-+
-  module "n8n" {
-    source = "github.com/n8n-io/terraform-azurerm-n8n"
+`create_ingress = false` disables the Application Gateway, the AGIC addon, and both of this module's Azure DNS record paths, leaving AKS, the n8n Helm release, and the `n8n_service_name` / `n8n_webhook_service_name` / `n8n_webhook_path_prefixes` outputs available for a caller-owned topology — see [`examples/split-ingress/`](./examples/split-ingress/) for a public webhook-only gateway paired with a private admin gateway, each with its own standalone AGIC install.
 
--   tls_mode          = "letsencrypt"
--   letsencrypt_email = "platform@example.com"
-+   app_gateway_tls_cert_secret_id = module.tls.app_gateway_tls_cert_secret_id
-+   app_gateway_keyvault_id        = azurerm_key_vault.shared.id
-    # …
-  }
-```
+Public or private Azure DNS A-records are optional and mutually exclusive (`create_public_dns_record` / `create_private_dns_record`), require a caller-supplied zone ID, and validate that every routed host lives inside the selected zone. For a non-Azure DNS provider instead, leave both toggles false and issue the certificate via the ["DNS-01 providers" section](./modules/tls-letsencrypt/README.md#dns-01-providers) of `modules/tls-letsencrypt/README.md`.
 
-The submodule needs `vancluever/acme` and `hashicorp/tls` configured in your root `providers.tf` — these were declared by the root in v1.x but moved into the submodule in v2.0.0. See [`examples/complete-letsencrypt/providers.tf`](./examples/complete-letsencrypt/providers.tf) for the canonical wiring (including the LE staging-server URL nudge for first-apply rehearsals).
+## Sizing and capacity
 
-### From `tls_mode = "custom_pfx"`
+`aks_node_vm_size` plus the main/worker/webhook autoscaler floors and ceilings (`n8n_main_hpa_min_replicas`/`_max_replicas`, `n8n_worker_keda_min_replicas`/`_max_replicas`, `n8n_webhook_hpa_min_replicas`/`_max_replicas`) drive an advisory, non-blocking capacity `check`: it maps a curated set of reviewed `Dsv4`/`Dsv5`/`Dsv7` SKUs to vCPU counts, counts both untainted node pools, subtracts documented AKS and per-node system-workload reservations, and warns only when the configured autoscaler ceilings would not fit — it stays silent for unknown-but-valid SKUs and never blocks `terraform apply`. The model is a documented estimate, not a live capacity guarantee; re-validate it during load testing and after AKS/KEDA/CSI/AGIC version changes.
 
-There's no submodule for this path — the BYO cert flow goes through your own Key Vault directly:
+[`examples/README.md`](./examples/README.md) has the full small/medium/large sizing comparison table (AKS SKU, node/replica floors and ceilings, PostgreSQL/Redis SKU, storage durability, and the dominant cost factors per tier) — start from the tier closest to your expected workload rather than tuning every input from the `small` defaults.
 
-```diff
-+ resource "azurerm_key_vault_certificate" "n8n_tls" {
-+   name         = "n8n-tls"
-+   key_vault_id = azurerm_key_vault.shared.id
-+
-+   certificate {
-+     contents = var.custom_pfx_data       # base64-encoded PFX, as before
-+     password = var.custom_pfx_password
-+   }
-+ }
-+
-  module "n8n" {
-    source = "github.com/n8n-io/terraform-azurerm-n8n"
+## Examples
 
--   tls_mode             = "custom_pfx"
--   custom_pfx_data      = var.custom_pfx_data
--   custom_pfx_password  = var.custom_pfx_password
-+   app_gateway_tls_cert_secret_id = azurerm_key_vault_certificate.n8n_tls.secret_id
-+   app_gateway_keyvault_id        = azurerm_key_vault.shared.id
-    # …
-  }
-```
+| Example | What it demonstrates |
+|---|---|
+| [`small`](./examples/small/) | Evaluation-sized, self-signed cert, public Azure DNS — the canonical wiring reference. |
+| [`medium`](./examples/medium/) | Sustained production traffic sizing. |
+| [`large`](./examples/large/) | High-volume sizing: zone-redundant PostgreSQL behind a two-replica PgBouncer, HA Redis. |
+| [`split-ingress`](./examples/split-ingress/) | `create_ingress = false` plus two caller-owned Application Gateways: a public webhook-only frontend and a private admin frontend, each with its own standalone AGIC install. |
 
-The `var.custom_pfx_data` / `var.custom_pfx_password` variables on the consumer side can stay if the PFX bytes are still injected via env var (`TF_VAR_custom_pfx_data`); only the *consumer* of those vars moved from inside the module to a caller-side `azurerm_key_vault_certificate`. See [`docs/tls-rotation.md`](./docs/tls-rotation.md) for rotation under the new contract.
+## Operator documentation
 
-### Provider-block changes in your `providers.tf`
+- [`docs/post-deployment.md`](./docs/post-deployment.md) — DNS verification, encryption-key backup, license activation, post-apply health checks.
+- [`docs/troubleshooting.md`](./docs/troubleshooting.md) — symptom → root cause → fix for the failure modes observed in real `terraform apply` runs.
+- [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md) — manual recovery for stuck namespace finalizers, half-uninstalled Helm releases, and App Gateway frontend-IP release.
+- [`docs/tls-rotation.md`](./docs/tls-rotation.md) — rotating the App Gateway TLS certificate under the BYO-secret contract.
+- [`docs/redis.md`](./docs/redis.md) — Azure Managed Redis SKU/region availability, `NoCluster` sizing, and HA/clustering-policy change caveats.
+- [`docs/data-storage.md`](./docs/data-storage.md) — binary-data and execution-data mode combinations, entitlements, and migration guidance.
+- [`docs/observability.md`](./docs/observability.md) — Prometheus, OpenTelemetry, and log-streaming configuration.
+- [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md) — infrastructure prerequisites for n8n's Azure Key Vault external-secrets integration.
+- [`examples/split-ingress/README.md`](./examples/split-ingress/README.md) — operating a split public-webhook/internal-admin topology, including the known `WEBHOOK_URL` limitation when the editor and webhook hostnames differ.
+- [`CHANGELOG.md`](./CHANGELOG.md) — release history.
+- [`AGENTS.md`](./AGENTS.md) — contributor guide, Azure-specific deltas vs the AWS sibling, and the registry quality bar this module is held to.
 
-After upgrading, the root module no longer pulls `vancluever/acme` or `hashicorp/tls`. After the Phase-5 split (v3.0.0) the root module no longer pulls **any** providers — every provider lives inside the submodule that consumes it. Callers configuring providers for this module:
+## Support
 
-- **`modules/infra/`**: configure `azurerm` (3 providers declared: `azurerm`, `random`, `time`).
-- **`modules/workload/`**: configure `kubernetes`, `helm`, and `kubectl` from the AKS kubeconfig (5 providers declared: `kubernetes`, `helm`, `random`, `time`, `kubectl`). The canonical wiring (cert-based auth via `module.infra.aks_kube_config`) lives in [`examples/complete/providers.tf`](./examples/complete/providers.tf).
-- **Self-signed TLS path** (`modules/tls-self-signed/`): add `provider "tls" {}` to your root `providers.tf`. Drop `provider "acme" {}` if it's only there for this module.
-- **Let's Encrypt TLS path** (`modules/tls-letsencrypt/`): keep both `provider "acme"` and `provider "tls"`.
-- **BYO cert path**: drop both `provider "acme"` and `provider "tls"` if they're only there for this module.
+This module is open source software, maintained by the n8n Solutions team independently of n8n's enterprise products. While the n8n Support team provides dedicated support for the enterprise offerings, this module isn't included.
+
+## Out of scope
+
+This module does not:
+
+- Create the caller's resource group, VNet, or subnets — see [Prerequisites](#prerequisites) and the sizing examples for a reference network layout.
+- Provision or renew the App Gateway TLS certificate itself — see [TLS cert and Key Vault](#tls-cert-and-key-vault).
+- Manage the Microsoft Entra application or workflow credentials n8n's own Azure Key Vault external-secrets integration needs — see [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md).
+- Certify sovereign-cloud (Azure Government, Azure China) deployments — the pinned n8n Azure Key Vault client constructs the public `vault.azure.net` endpoint unconditionally; see the same doc for the current limitation.
+- Back up or restore PostgreSQL, Redis, or Blob data on an ongoing basis beyond PostgreSQL's own configured backup retention — build your own backup/DR runbook around the managed services' native capabilities.
 
 ## Reference
 
@@ -251,10 +215,23 @@ After upgrading, the root module no longer pulls `vancluever/acme` or `hashicorp
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9 |
+| <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
+| <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
+| <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
 
 ## Providers
 
-No providers.
+| Name | Version |
+| ---- | ------- |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | ~> 4.0 |
+| <a name="provider_helm"></a> [helm](#provider\_helm) | ~> 2.12 |
+| <a name="provider_kubectl"></a> [kubectl](#provider\_kubectl) | >= 1.14 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.0 |
+| <a name="provider_random"></a> [random](#provider\_random) | ~> 3.0 |
+| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.12 |
 
 ## Modules
 
@@ -262,36 +239,247 @@ No modules.
 
 ## Resources
 
-No resources.
+| Name | Type |
+| ---- | ---- |
+| [azurerm_application_gateway.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway) | resource |
+| [azurerm_dns_a_record.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/dns_a_record) | resource |
+| [azurerm_federated_identity_credential.n8n_workload](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/federated_identity_credential) | resource |
+| [azurerm_kubernetes_cluster.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/kubernetes_cluster) | resource |
+| [azurerm_kubernetes_cluster_node_pool.n8n_user](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/kubernetes_cluster_node_pool) | resource |
+| [azurerm_managed_redis.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/managed_redis) | resource |
+| [azurerm_network_security_group.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_security_group) | resource |
+| [azurerm_postgresql_flexible_server.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/postgresql_flexible_server) | resource |
+| [azurerm_postgresql_flexible_server_configuration.uuid_ossp](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/postgresql_flexible_server_configuration) | resource |
+| [azurerm_postgresql_flexible_server_database.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/postgresql_flexible_server_database) | resource |
+| [azurerm_private_dns_a_record.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_a_record) | resource |
+| [azurerm_private_dns_zone.blob](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone) | resource |
+| [azurerm_private_dns_zone.postgres](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone) | resource |
+| [azurerm_private_dns_zone.redis](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone) | resource |
+| [azurerm_private_dns_zone_virtual_network_link.blob](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone_virtual_network_link) | resource |
+| [azurerm_private_dns_zone_virtual_network_link.postgres](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone_virtual_network_link) | resource |
+| [azurerm_private_dns_zone_virtual_network_link.redis](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_dns_zone_virtual_network_link) | resource |
+| [azurerm_private_endpoint.blob](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_endpoint) | resource |
+| [azurerm_private_endpoint.redis](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/private_endpoint) | resource |
+| [azurerm_public_ip.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/public_ip) | resource |
+| [azurerm_role_assignment.agic_addon_appgw_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.agic_addon_appgw_subnet_network_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.agic_addon_appgw_tls_uami_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.agic_addon_rg_reader](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.agic_rg_reader](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.appgw_kv_secrets_user](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.n8n_blob_data_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_storage_account.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/storage_account) | resource |
+| [azurerm_storage_container.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/storage_container) | resource |
+| [azurerm_storage_management_policy.n8n_binary](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/storage_management_policy) | resource |
+| [azurerm_subnet_network_security_group_association.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet_network_security_group_association) | resource |
+| [azurerm_user_assigned_identity.agic](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
+| [azurerm_user_assigned_identity.appgw_tls_cert](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
+| [azurerm_user_assigned_identity.n8n_workload](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
+| [azurerm_web_application_firewall_policy.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/web_application_firewall_policy) | resource |
+| [helm_release.keda](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release) | resource |
+| [helm_release.n8n](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release) | resource |
+| [kubectl_manifest.keda_trigger_authentication](https://registry.terraform.io/providers/gavinbunney/kubectl/latest/docs/resources/manifest) | resource |
+| [kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/horizontal_pod_autoscaler_v2) | resource |
+| [kubernetes_ingress_v1.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/ingress_v1) | resource |
+| [kubernetes_namespace.keda](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace) | resource |
+| [kubernetes_namespace.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace) | resource |
+| [kubernetes_secret.n8n_db](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret) | resource |
+| [kubernetes_secret.n8n_encryption_key](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret) | resource |
+| [kubernetes_secret.n8n_license](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret) | resource |
+| [kubernetes_secret.n8n_redis](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret) | resource |
+| [kubernetes_secret.n8n_task_runners](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret) | resource |
+| [kubernetes_service_account_v1.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/service_account_v1) | resource |
+| [random_password.n8n_encryption_key](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
+| [random_password.n8n_task_runners_token](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
+| [random_password.postgres_admin](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
+| [time_sleep.aks_api_warmup](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
+| [time_sleep.appgw_kv_secrets_user_rbac_propagation](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
+| [time_sleep.n8n_helm_settle](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
+| [azurerm_resource_group.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/resource_group) | data source |
 
 ## Inputs
 
-No inputs.
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_aks_api_authorized_ip_ranges"></a> [aks\_api\_authorized\_ip\_ranges](#input\_aks\_api\_authorized\_ip\_ranges) | IPv4 CIDR ranges allowed to reach the AKS API server's public endpoint (e.g. ["203.0.113.0/24"]). Empty list (the default) leaves the API server publicly reachable from any address — set this on any production cluster. Azure always allows traffic that originates from inside the cluster's own VNet, so this list only needs to cover operator/CI networks. | `list(string)` | `[]` | no |
+| <a name="input_aks_api_warmup_seconds"></a> [aks\_api\_warmup\_seconds](#input\_aks\_api\_warmup\_seconds) | Seconds to wait after `azurerm_kubernetes_cluster.n8n` reports success before downstream Kubernetes-/Helm-provider resources are created. Azure reports the AKS resource as `Succeeded` before /healthz is consistently green; the kubernetes/helm providers' built-in retry handles any transient 503s after the gate. Default 90 s covers the typical AKS post-provision warm-up. Operators on cold regions or capacity-constrained subscriptions can extend this; the floor (30 s) is below which the providers' retry budget alone is insufficient, the ceiling (600 s) matches the legacy probe's 10-minute upper bound. | `number` | `90` | no |
+| <a name="input_aks_availability_zones"></a> [aks\_availability\_zones](#input\_aks\_availability\_zones) | Availability zones the AKS default node pool and user node pool spread across (e.g. ["1", "2", "3"]). Set to [] to deploy into a region without zone support (e.g. some smaller Azure regions). Zonal placement survives a single-zone outage without waiting for the cluster autoscaler to reschedule pods into a healthy zone. | `list(string)` | <pre>[<br/>  "1",<br/>  "2",<br/>  "3"<br/>]</pre> | no |
+| <a name="input_aks_kubernetes_version"></a> [aks\_kubernetes\_version](#input\_aks\_kubernetes\_version) | Kubernetes version for the AKS cluster (e.g. 1.35, 1.35.6). Must be a version Azure currently supports on the standard plan in the target region — check with `az aks get-versions --location <region>` and the AKS support-plan matrix at https://learn.microsoft.com/azure/aks/supported-kubernetes-versions. Defaults to 1.35; bump deliberately. Versions outside the standard support window are LTS-only and require a Premium-tier cluster to provision. | `string` | `"1.35"` | no |
+| <a name="input_aks_node_count_max"></a> [aks\_node\_count\_max](#input\_aks\_node\_count\_max) | Maximum nodes in each of the system and user AKS node pools. The cluster autoscaler will not scale either pool above this value. The advisory capacity model uses both pools because neither is tainted against n8n pods, then subtracts AKS reservations and system workload requests. Terraform ignores each pool's live node count after creation so plans do not revert autoscaler-owned scale-out. | `number` | `6` | no |
+| <a name="input_aks_node_count_min"></a> [aks\_node\_count\_min](#input\_aks\_node\_count\_min) | Minimum number of nodes in the AKS default node pool. The cluster autoscaler will not scale below this, and Terraform sets this as the pool's initial node count at creation only — see `aks_node_count_max`'s ignore\_changes note. Floor of 2 keeps the multi-main topology (≥2 main pods, ≥1 worker, ≥2 webhook processors) schedulable across single-node failures. | `number` | `2` | no |
+| <a name="input_aks_node_upgrade_max_surge"></a> [aks\_node\_upgrade\_max\_surge](#input\_aks\_node\_upgrade\_max\_surge) | `max_surge` for the AKS default and user node pools' rolling upgrade (e.g. "10%" or "1"). Controls how many extra nodes AKS provisions above the pool's current count while draining nodes during a Kubernetes-version or node-image upgrade. Higher values upgrade faster but briefly cost more; lower values upgrade slower with less spare capacity. | `string` | `"10%"` | no |
+| <a name="input_aks_node_vm_size"></a> [aks\_node\_vm\_size](#input\_aks\_node\_vm\_size) | Azure VM SKU for both AKS node pools (for example Standard\_D4s\_v7 or Standard\_D8s\_v5). The capacity diagnostic models reviewed Dsv4, Dsv5, and Dsv7 SKUs and stays silent for valid SKUs outside that map. Standard\_D4s\_v7 provides 4 vCPU and 16 GB per node. | `string` | `"Standard_D4s_v4"` | no |
+| <a name="input_aks_subnet_id"></a> [aks\_subnet\_id](#input\_aks\_subnet\_id) | Resource ID of the subnet the AKS node pool attaches to (Azure CNI). Sized to fit the node-count ceiling plus pod IPs (CNI consumes one IP per pod). No subnet delegation required. Format: /subscriptions/<sub>/.../subnets/<name>. | `string` | n/a | yes |
+| <a name="input_app_gateway_keyvault_id"></a> [app\_gateway\_keyvault\_id](#input\_app\_gateway\_keyvault\_id) | Resource ID of the Key Vault holding `var.app_gateway_tls_cert_secret_id`. When `var.app_gateway_keyvault_role_assignment_enabled = true`, this module grants the App Gateway TLS-cert reader UAMI `Key Vault Secrets User` on the supplied vault — the minimum role needed for the gateway to fetch the cert at runtime. When the toggle is false (default), the caller is responsible for granting the UAMI access out-of-band (e.g. via an `access_policy` block on a vault in legacy access-policy mode). May be `null` when the toggle is false. | `string` | `null` | no |
+| <a name="input_app_gateway_keyvault_role_assignment_enabled"></a> [app\_gateway\_keyvault\_role\_assignment\_enabled](#input\_app\_gateway\_keyvault\_role\_assignment\_enabled) | When true, grant the App Gateway TLS-cert reader UAMI `Key Vault Secrets User` on `var.app_gateway_keyvault_id`. Default false; the caller is then responsible for granting the UAMI access out-of-band. When set to true, `var.app_gateway_keyvault_id` MUST also be supplied. The toggle is isolated from `var.app_gateway_keyvault_id` so the section 12 role-assignment count is plan-time-known even when the ID is a same-plan-built resource attribute (e.g. `azurerm_key_vault.shared.id`). | `bool` | `false` | no |
+| <a name="input_app_gateway_tls_cert_secret_id"></a> [app\_gateway\_tls\_cert\_secret\_id](#input\_app\_gateway\_tls\_cert\_secret\_id) | Versioned Azure Key Vault Secret URI for the App Gateway listener's TLS certificate (e.g. `https://<vault>.vault.azure.net/secrets/<cert>/<version>`). Required — the caller is responsible for provisioning the cert and importing it into a Key Vault. The `modules/tls-letsencrypt/` and `modules/tls-self-signed/` submodules expose this exact value as their `app_gateway_tls_cert_secret_id` output; callers with an existing PKI / DigiCert / Sectigo cert can supply the secret URI directly. Pair with `var.app_gateway_keyvault_id` so this module grants the App Gateway UAMI `Key Vault Secrets User` on the vault holding the cert; alternatively grant the UAMI access out-of-band. | `string` | n/a | yes |
+| <a name="input_appgw_allowed_inbound_cidrs"></a> [appgw\_allowed\_inbound\_cidrs](#input\_appgw\_allowed\_inbound\_cidrs) | IPv4 network CIDRs allowed to reach ports 80 and 443 on the module-managed Application Gateway subnet. Empty allows Internet traffic. Restrictions cover the editor and every webhook path, so third-party webhooks outside the list will fail. GatewayManager control traffic and AzureLoadBalancer health probes remain explicitly allowed. Ignored when create\_ingress is false. | `list(string)` | `[]` | no |
+| <a name="input_appgw_autoscale_max_capacity"></a> [appgw\_autoscale\_max\_capacity](#input\_appgw\_autoscale\_max\_capacity) | Maximum Application Gateway instances when autoscaling is enabled. Ignored when autoscaling or create\_ingress is disabled. | `number` | `10` | no |
+| <a name="input_appgw_autoscale_min_capacity"></a> [appgw\_autoscale\_min\_capacity](#input\_appgw\_autoscale\_min\_capacity) | Minimum Application Gateway instances when autoscaling is enabled. Azure permits zero for scale-to-zero, but the default of 2 keeps redundant warm capacity. Ignored when autoscaling or create\_ingress is disabled. | `number` | `2` | no |
+| <a name="input_appgw_autoscaling_enabled"></a> [appgw\_autoscaling\_enabled](#input\_appgw\_autoscaling\_enabled) | Use Application Gateway autoscaling instead of fixed appgw\_capacity. The autoscaler remains within appgw\_autoscale\_min\_capacity and appgw\_autoscale\_max\_capacity. Ignored when create\_ingress is false. | `bool` | `false` | no |
+| <a name="input_appgw_capacity"></a> [appgw\_capacity](#input\_appgw\_capacity) | Fixed Application Gateway instance count used when appgw\_autoscaling\_enabled is false. Azure Application Gateway v2 supports 1 through 125 instances. Ignored when autoscaling or create\_ingress is disabled. | `number` | `2` | no |
+| <a name="input_appgw_frontend_mode"></a> [appgw\_frontend\_mode](#input\_appgw\_frontend\_mode) | Frontend exposure for the module-managed Application Gateway: public creates a static Standard public IP, while internal creates only a dynamically allocated private frontend in appgw\_subnet\_id. Ignored when create\_ingress is false. | `string` | `"public"` | no |
+| <a name="input_appgw_sku_name"></a> [appgw\_sku\_name](#input\_appgw\_sku\_name) | Application Gateway v2 SKU. WAF\_v2 creates or attaches a WAF policy; Standard\_v2 omits WAF. v1 SKUs are unsupported. Ignored when create\_ingress is false. | `string` | `"WAF_v2"` | no |
+| <a name="input_appgw_ssl_policy"></a> [appgw\_ssl\_policy](#input\_appgw\_ssl\_policy) | Predefined Application Gateway TLS policy for HTTPS listeners. The default AppGwSslPolicy20220101S requires TLS 1.2 or later and uses the stricter curated cipher set. Ignored when create\_ingress is false. | `string` | `"AppGwSslPolicy20220101S"` | no |
+| <a name="input_appgw_subnet_id"></a> [appgw\_subnet\_id](#input\_appgw\_subnet\_id) | Resource ID of the subnet the Application Gateway attaches to. Must be dedicated to Application Gateway (no other workloads), with a /24 or larger CIDR per Azure App Gateway sizing guidance. No subnet delegation required. Format: /subscriptions/<sub>/.../subnets/<name>. | `string` | n/a | yes |
+| <a name="input_appgw_waf_mode"></a> [appgw\_waf\_mode](#input\_appgw\_waf\_mode) | Mode for the module-managed WAF\_v2 policy: Detection logs rule matches, while Prevention blocks them. Ignored for Standard\_v2, caller-supplied appgw\_waf\_policy\_id, or disabled ingress. | `string` | `"Detection"` | no |
+| <a name="input_appgw_waf_policy_id"></a> [appgw\_waf\_policy\_id](#input\_appgw\_waf\_policy\_id) | Optional resource ID of an existing Application Gateway WAF policy. When null with WAF\_v2, the module creates an OWASP 3.2 policy using appgw\_waf\_mode. Supplying an ID delegates rule and mode management to the caller. Must remain null with Standard\_v2. | `string` | `null` | no |
+| <a name="input_azure_blob_account_key"></a> [azure\_blob\_account\_key](#input\_azure\_blob\_account\_key) | Optional Azure Storage account key compatibility credential. Leave null (the default) to use AKS workload identity and DefaultAzureCredential. Mutually exclusive with azure\_blob\_connection\_string. Marked sensitive, but it still resides in Terraform state and is rendered into every n8n pod environment while an Azure storage mode is active or retained. | `string` | `null` | no |
+| <a name="input_azure_blob_binary_retention_days"></a> [azure\_blob\_binary\_retention\_days](#input\_azure\_blob\_binary\_retention\_days) | Optional number of days after last modification before Azure deletes blobs from a binary-only managed container. Null (the default) creates no lifecycle rule. The module omits the rule and warns when azure\_blob\_container\_stores\_execution\_data is true because n8n owns execution-data pruning and broad Azure expiry can delete bundles n8n still references. | `number` | `null` | no |
+| <a name="input_azure_blob_connection_string"></a> [azure\_blob\_connection\_string](#input\_azure\_blob\_connection\_string) | Optional Azure Blob connection string compatibility credential. Leave null (the default) to use AKS workload identity and DefaultAzureCredential. Mutually exclusive with azure\_blob\_account\_key. Marked sensitive, but it still resides in Terraform state and is rendered into every n8n pod environment while an Azure storage mode is active or retained. | `string` | `null` | no |
+| <a name="input_azure_blob_container_name"></a> [azure\_blob\_container\_name](#input\_azure\_blob\_container\_name) | Name of the private Blob container used by n8n binary data and, when enabled, Azure execution-data storage. The default `n8n-data` is shared by both Azure storage features. Changing it does not migrate or backfill objects from the old container. | `string` | `"n8n-data"` | no |
+| <a name="input_azure_blob_container_stores_execution_data"></a> [azure\_blob\_container\_stores\_execution\_data](#input\_azure\_blob\_container\_stores\_execution\_data) | Whether the managed Blob container stores current or historical n8n execution-data bundles. Set true before selecting Azure execution-data storage so the module omits binary lifecycle expiry. Keep it true after switching execution writes away from Azure until all retained Azure bundles have been pruned or migrated. n8n owns execution-data pruning; current object paths cannot scope an Azure lifecycle filter to binary objects without also reaching execution bundles. | `bool` | `false` | no |
+| <a name="input_azure_blob_endpoint"></a> [azure\_blob\_endpoint](#input\_azure\_blob\_endpoint) | Optional custom Azure Blob service endpoint, including scheme (for example `https://account.blob.core.usgovcloudapi.net`). Leave null to use the module-managed storage account's primary Blob endpoint. Endpoint support is a compatibility hook and does not certify the module for sovereign clouds. Marked sensitive to keep private custom hostnames out of plan output. | `string` | `null` | no |
+| <a name="input_common_tags"></a> [common\_tags](#input\_common\_tags) | Additional Azure tags merged onto every taggable resource this module creates. Combined with the module's built-in `ManagedBy = terraform` and `Project = n8n` tags via `local.common_tags`. | `map(string)` | `{}` | no |
+| <a name="input_create_database"></a> [create\_database](#input\_create\_database) | When true (the default), the module creates and manages a private PostgreSQL Flexible Server. Set to false to use an external PostgreSQL endpoint — `postgres_external_host`, `postgres_external_username`, and `postgres_external_password` must then be supplied. Kept as a static boolean rather than `postgres_external_host == null` because `count` expressions cannot depend on values computed at apply time. | `bool` | `true` | no |
+| <a name="input_create_ingress"></a> [create\_ingress](#input\_create\_ingress) | Create the module-managed Application Gateway, AGIC addon integration, Kubernetes Ingress, and eligible application DNS records. True by default. Set false for caller-owned routing such as split public-webhook and internal-admin gateways; AKS, n8n Services, and service-discovery outputs remain available. | `bool` | `true` | no |
+| <a name="input_create_private_dns_record"></a> [create\_private\_dns\_record](#input\_create\_private\_dns\_record) | Create private Azure DNS A records for every managed ingress host. Requires create\_ingress = true, appgw\_frontend\_mode = internal, and private\_dns\_zone\_id. Mutually exclusive with create\_public\_dns\_record. The explicit toggle remains plan-known when private\_dns\_zone\_id comes from an Azure private DNS zone created in the caller's same apply. | `bool` | `false` | no |
+| <a name="input_create_public_dns_record"></a> [create\_public\_dns\_record](#input\_create\_public\_dns\_record) | Create public Azure DNS A records for every managed ingress host. Requires create\_ingress = true, appgw\_frontend\_mode = public, and public\_dns\_zone\_id. Mutually exclusive with create\_private\_dns\_record. The explicit toggle remains plan-known when public\_dns\_zone\_id comes from an Azure DNS zone created in the caller's same apply. | `bool` | `false` | no |
+| <a name="input_create_redis"></a> [create\_redis](#input\_create\_redis) | When true (the default), the module creates and manages a private Azure Managed Redis instance. Set to false to use an external Redis endpoint — `redis_external_host`, `redis_external_username` is optional, and `redis_external_password` must then be supplied. Kept as a static boolean rather than `redis_external_host == null` because `count` expressions cannot depend on values computed at apply time. | `bool` | `true` | no |
+| <a name="input_friendly_name_prefix"></a> [friendly\_name\_prefix](#input\_friendly\_name\_prefix) | Short, lowercase name prefix used in every resource name and as the value of the `Name` tag (e.g. `n8nprod`, `n8ndev`). 2–12 characters, lowercase alphanumeric only — Azure storage-account names cap at 24 chars and must be alnum-lowercase, so this prefix is the binding constraint. | `string` | n/a | yes |
+| <a name="input_ingress_annotations"></a> [ingress\_annotations](#input\_ingress\_annotations) | Additional annotations for the module-managed AGIC Ingress, merged over module defaults. Use this for AGIC features such as rewrite rule sets. Overrides of module-owned TLS, frontend, backend, draining, timeout, or affinity annotations emit a warning because the caller value wins. Ignored when create\_ingress is false. | `map(string)` | `{}` | no |
+| <a name="input_keda_chart_version"></a> [keda\_chart\_version](#input\_keda\_chart\_version) | KEDA Helm chart version from the official kedacore repository. Pinning the controller keeps the CRD shape used by the root kubectl\_manifest deterministic. | `string` | `"2.15.0"` | no |
+| <a name="input_location"></a> [location](#input\_location) | Azure region to deploy into (e.g. eastus, westeurope, australiaeast). Must match the region the azurerm provider is configured for. | `string` | n/a | yes |
+| <a name="input_n8n_additional_domains"></a> [n8n\_additional\_domains](#input\_n8n\_additional\_domains) | Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n\_domain. n8n\_domain remains canonical for N8N\_HOST, WEBHOOK\_URL, and the editor URL. The supplied Key Vault certificate must cover every name. | `list(string)` | `[]` | no |
+| <a name="input_n8n_available_binary_data_modes"></a> [n8n\_available\_binary\_data\_modes](#input\_n8n\_available\_binary\_data\_modes) | Binary-data backends n8n may read, rendered as N8N\_AVAILABLE\_BINARY\_DATA\_MODES. Include the active n8n\_binary\_data\_storage\_mode and every historical backend that still contains retained objects. Supported values are database and azure. Removing a mode does not migrate data and makes objects in that backend unreadable. | `list(string)` | <pre>[<br/>  "azure"<br/>]</pre> | no |
+| <a name="input_n8n_binary_data_storage_mode"></a> [n8n\_binary\_data\_storage\_mode](#input\_n8n\_binary\_data\_storage\_mode) | Where n8n writes new binary data. `azure` (the default) writes to the private module-managed Blob container and requires the separate `feat:binaryDataAz` Enterprise entitlement. `database` stores binary data in PostgreSQL and is the durable queue-mode fallback when that entitlement is unavailable. 0.1.0 does not support the inline-memory `default` mode or a shared-filesystem mode. Changing this value does not move existing objects; keep every historical backend in n8n\_available\_binary\_data\_modes until its data expires or is migrated. | `string` | `"azure"` | no |
+| <a name="input_n8n_chart_version"></a> [n8n\_chart\_version](#input\_n8n\_chart\_version) | n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default follows the AWS sibling's validated 1.10 chart line. | `string` | `"1.10.0"` | no |
+| <a name="input_n8n_community_packages_prevent_loading"></a> [n8n\_community\_packages\_prevent\_loading](#input\_n8n\_community\_packages\_prevent\_loading) | Prevent installed community packages from loading at runtime without uninstalling them. | `bool` | `false` | no |
+| <a name="input_n8n_community_packages_registry"></a> [n8n\_community\_packages\_registry](#input\_n8n\_community\_packages\_registry) | Optional HTTP or HTTPS npm registry used for community-package installation. Null leaves n8n on its public registry default. Custom registries require the matching Enterprise entitlement. | `string` | `null` | no |
+| <a name="input_n8n_custom_extensions_path"></a> [n8n\_custom\_extensions\_path](#input\_n8n\_custom\_extensions\_path) | Optional canonical absolute path that every n8n application container scans for custom nodes, such as /opt/n8n-nodes. A custom image or an extra volume mount must put content at this path. Only one path is supported because n8n's semicolon-separated paths overwrite one another under the CUSTOM package key. The path must stay outside /home/node/.n8n, which the chart shadows on main pods. | `string` | `null` | no |
+| <a name="input_n8n_domain"></a> [n8n\_domain](#input\_n8n\_domain) | Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `WEBHOOK_URL` / `N8N_HOST` from this value. | `string` | n/a | yes |
+| <a name="input_n8n_encryption_key"></a> [n8n\_encryption\_key](#input\_n8n\_encryption\_key) | Existing n8n encryption key to reuse — e.g. the backed-up key from another n8n installation whose PostgreSQL data this deployment restores. Leave null (the default) to generate a fresh 48-character key. n8n cannot decrypt credentials encrypted under a different key, so any restore of an existing n8n database MUST set this to that database's original key before the first apply. Marked sensitive — supply via environment variable (TF\_VAR\_n8n\_encryption\_key) or a secret-managed terraform.tfvars, and note the value resides in Terraform state either way. | `string` | `null` | no |
+| <a name="input_n8n_execution_concurrency_limit"></a> [n8n\_execution\_concurrency\_limit](#input\_n8n\_execution\_concurrency\_limit) | Maximum concurrent production executions. Set to -1 to disable the limit. | `number` | `100` | no |
+| <a name="input_n8n_execution_data_storage_mode"></a> [n8n\_execution\_data\_storage\_mode](#input\_n8n\_execution\_data\_storage\_mode) | Where n8n writes each new execution bundle. `database` (the default) keeps data in PostgreSQL. `azure` writes to the managed Blob container, requires azure\_blob\_container\_stores\_execution\_data = true, and requires the separate `feat:executionDataAz` Enterprise entitlement. 0.1.0 does not support a shared-filesystem mode. Mode changes do not backfill data; n8n records each execution's backend and continues reading historical data while that backend and its credentials remain available. | `string` | `"database"` | no |
+| <a name="input_n8n_execution_timeout"></a> [n8n\_execution\_timeout](#input\_n8n\_execution\_timeout) | Default execution timeout in seconds. Set to -1 to disable the timeout. | `number` | `7200` | no |
+| <a name="input_n8n_execution_timeout_max"></a> [n8n\_execution\_timeout\_max](#input\_n8n\_execution\_timeout\_max) | Maximum execution timeout users can configure in seconds. Set to -1 to disable the maximum. | `number` | `7200` | no |
+| <a name="input_n8n_extra_env"></a> [n8n\_extra\_env](#input\_n8n\_extra\_env) | Additional non-secret environment variables applied to every main, worker, and webhook-processor application container. Entries render in Helm values and Terraform state. Duplicate names and module or chart-reserved connection, identity, storage, license, runner, and topology names are rejected. Use dedicated module inputs for reserved variables and mounted Secrets for credentials. | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |
+| <a name="input_n8n_extra_volume_mounts"></a> [n8n\_extra\_volume\_mounts](#input\_n8n\_extra\_volume\_mounts) | Mounts for n8n\_extra\_volumes on every main, worker, and webhook-processor application container. Each name must match a declared volume. read\_only defaults to true. Task-runner sidecars do not receive these mounts. | <pre>list(object({<br/>    name       = string<br/>    mount_path = string<br/>    sub_path   = optional(string)<br/>    read_only  = optional(bool, true)<br/>  }))</pre> | `[]` | no |
+| <a name="input_n8n_extra_volumes"></a> [n8n\_extra\_volumes](#input\_n8n\_extra\_volumes) | Typed volumes added to every main, worker, and webhook-processor pod. Each entry must select exactly one ConfigMap, Secret, or persistent volume claim source. Pair each volume with n8n\_extra\_volume\_mounts. default\_mode is an octal string such as 0644 so Terraform does not reinterpret it as decimal. | <pre>list(object({<br/>    name = string<br/>    config_map = optional(object({<br/>      name         = string<br/>      default_mode = optional(string)<br/>    }))<br/>    secret = optional(object({<br/>      secret_name  = string<br/>      default_mode = optional(string)<br/>    }))<br/>    persistent_volume_claim = optional(object({<br/>      claim_name = string<br/>      read_only  = optional(bool)<br/>    }))<br/>  }))</pre> | `[]` | no |
+| <a name="input_n8n_helm_post_install_settle_seconds"></a> [n8n\_helm\_post\_install\_settle\_seconds](#input\_n8n\_helm\_post\_install\_settle\_seconds) | Seconds to wait after the n8n Helm release converges before downstream ingress resources reconcile. | `number` | `60` | no |
+| <a name="input_n8n_helm_timeout"></a> [n8n\_helm\_timeout](#input\_n8n\_helm\_timeout) | Seconds Terraform waits for the n8n Helm release to converge. Increase this for large deployments whose rolling update cannot finish within the 600-second default. | `number` | `600` | no |
+| <a name="input_n8n_image_pull_secrets"></a> [n8n\_image\_pull\_secrets](#input\_n8n\_image\_pull\_secrets) | Names of existing kubernetes.io/dockerconfigjson Secrets in the n8n namespace. The module attaches these names to a module-managed service account when a private custom image needs registry authentication. Callers create and rotate the Secrets; registry credentials never enter this module's inputs or Terraform state through this contract. | `list(string)` | `[]` | no |
+| <a name="input_n8n_image_repository"></a> [n8n\_image\_repository](#input\_n8n\_image\_repository) | Optional container image repository for every n8n application pod, without a tag or digest. Null uses the chart default docker.n8n.io/n8nio/n8n. Use n8n\_image\_tag for the application tag. Private registries can use existing dockerconfigjson Secrets named by n8n\_image\_pull\_secrets; this module accepts Secret names only and never registry credentials. | `string` | `null` | no |
+| <a name="input_n8n_image_tag"></a> [n8n\_image\_tag](#input\_n8n\_image\_tag) | Pinned n8n application version used by the main, worker, webhook-processor, and task-runner images. Azure Blob binary and execution-data modes require n8n 2.29.0 or later. Environment-managed log streaming requires n8n 2.19.0 or later. The default 2.35.0 includes the Azure container-scoped credential startup probe fix. | `string` | `"2.35.0"` | no |
+| <a name="input_n8n_license_detach_floating_on_shutdown"></a> [n8n\_license\_detach\_floating\_on\_shutdown](#input\_n8n\_license\_detach\_floating\_on\_shutdown) | Whether n8n main pods detach their floating license on shutdown. The default false prevents a leader shutdown from invalidating the shared certificate and crash-looping replacement mains in this multi-main topology. | `bool` | `false` | no |
+| <a name="input_n8n_license_key"></a> [n8n\_license\_key](#input\_n8n\_license\_key) | n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF\_VAR\_n8n\_license\_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below. | `string` | n/a | yes |
+| <a name="input_n8n_log_level"></a> [n8n\_log\_level](#input\_n8n\_log\_level) | n8n log level written to N8N\_LOG\_LEVEL. | `string` | `"info"` | no |
+| <a name="input_n8n_log_output"></a> [n8n\_log\_output](#input\_n8n\_log\_output) | Comma-separated n8n log destinations written to N8N\_LOG\_OUTPUT. Each destination must be console or file. This selects destinations, not log format. | `string` | `"console"` | no |
+| <a name="input_n8n_log_streaming_destinations"></a> [n8n\_log\_streaming\_destinations](#input\_n8n\_log\_streaming\_destinations) | Typed webhook, syslog, or Sentry log-streaming destinations JSON-encoded into N8N\_LOG\_STREAMING\_DESTINATIONS. Field names match n8n's environment-managed destination schema. Marked sensitive because headers, TLS material, and DSNs can carry credentials, but the rendered JSON remains in Terraform state and pod environments. Ignored when n8n\_log\_streaming\_managed\_by\_env is false. | <pre>list(object({<br/>    type                   = string<br/>    label                  = optional(string)<br/>    enabled                = optional(bool)<br/>    subscribedEvents       = optional(list(string))<br/>    anonymizeAuditMessages = optional(bool)<br/>    circuitBreaker = optional(object({<br/>      maxFailures   = number<br/>      failureWindow = number<br/>    }))<br/>    url          = optional(string)<br/>    method       = optional(string)<br/>    sendQuery    = optional(bool)<br/>    specifyQuery = optional(string)<br/>    queryParameters = optional(object({<br/>      parameters = list(object({ name = string, value = string }))<br/>    }))<br/>    jsonQuery      = optional(string)<br/>    sendHeaders    = optional(bool)<br/>    specifyHeaders = optional(string)<br/>    headerParameters = optional(object({<br/>      parameters = list(object({ name = string, value = string }))<br/>    }))<br/>    jsonHeaders = optional(string)<br/>    host        = optional(string)<br/>    port        = optional(number)<br/>    protocol    = optional(string)<br/>    tlsCa       = optional(string)<br/>    facility    = optional(number)<br/>    app_name    = optional(string)<br/>    dsn         = optional(string)<br/>  }))</pre> | `[]` | no |
+| <a name="input_n8n_log_streaming_managed_by_env"></a> [n8n\_log\_streaming\_managed\_by\_env](#input\_n8n\_log\_streaming\_managed\_by\_env) | Manage Enterprise log-streaming destinations from environment variables. When true, n8n reapplies n8n\_log\_streaming\_destinations on every startup and makes the Log Streaming UI read-only. Requires n8n 2.19.0 or later and the log-streaming Enterprise entitlement. False leaves destinations UI-managed and emits no N8N\_LOG\_STREAMING\_* variables. | `bool` | `false` | no |
+| <a name="input_n8n_main_cpu_limit"></a> [n8n\_main\_cpu\_limit](#input\_n8n\_main\_cpu\_limit) | CPU limit for each n8n main container, such as 2000m or 2. | `string` | `"2000m"` | no |
+| <a name="input_n8n_main_cpu_request"></a> [n8n\_main\_cpu\_request](#input\_n8n\_main\_cpu\_request) | CPU request for each n8n main container, such as 1000m or 1. Included in the advisory capacity model at n8n\_main\_hpa\_max\_replicas. | `string` | `"1000m"` | no |
+| <a name="input_n8n_main_hpa_cpu_threshold"></a> [n8n\_main\_hpa\_cpu\_threshold](#input\_n8n\_main\_hpa\_cpu\_threshold) | Target average CPU utilization percentage for the main HPA. | `number` | `60` | no |
+| <a name="input_n8n_main_hpa_max_replicas"></a> [n8n\_main\_hpa\_max\_replicas](#input\_n8n\_main\_hpa\_max\_replicas) | Maximum main replicas for the CPU HPA. The default of 6 participates in the AKS capacity diagnostic with the main and task-runner CPU requests. | `number` | `6` | no |
+| <a name="input_n8n_main_hpa_min_replicas"></a> [n8n\_main\_hpa\_min\_replicas](#input\_n8n\_main\_hpa\_min\_replicas) | Minimum main replicas for the CPU HPA and the Helm deployment floor. Multi-main requires at least two replicas. | `number` | `2` | no |
+| <a name="input_n8n_main_memory_limit"></a> [n8n\_main\_memory\_limit](#input\_n8n\_main\_memory\_limit) | Memory limit for each n8n main container, such as 4Gi or 4096Mi. | `string` | `"4Gi"` | no |
+| <a name="input_n8n_main_memory_request"></a> [n8n\_main\_memory\_request](#input\_n8n\_main\_memory\_request) | Memory request for each n8n main container, such as 2Gi or 2048Mi. | `string` | `"2Gi"` | no |
+| <a name="input_n8n_metrics_enabled"></a> [n8n\_metrics\_enabled](#input\_n8n\_metrics\_enabled) | Enable n8n's built-in Prometheus endpoint at /metrics on port 5678 for every n8n process. The module sets N8N\_METRICS=true but does not install Prometheus, a ServiceMonitor, Grafana, or a log shipper. Disabled by default, in which case the environment variable is omitted. | `bool` | `false` | no |
+| <a name="input_n8n_otel_enabled"></a> [n8n\_otel\_enabled](#input\_n8n\_otel\_enabled) | Enable OpenTelemetry workflow and node tracing on main, worker, and webhook processes. The module sets N8N\_OTEL\_ENABLED=true but does not deploy an OTLP collector or tracing backend. Disabled by default, in which case every N8N\_OTEL\_* variable is omitted. | `bool` | `false` | no |
+| <a name="input_n8n_otel_exporter_otlp_endpoint"></a> [n8n\_otel\_exporter\_otlp\_endpoint](#input\_n8n\_otel\_exporter\_otlp\_endpoint) | Optional base URL of the OTLP HTTP collector, such as http://otel-collector.observability.svc.cluster.local:4318. n8n appends /v1/traces. Ignored when n8n\_otel\_enabled is false. | `string` | `null` | no |
+| <a name="input_n8n_otel_exporter_otlp_headers"></a> [n8n\_otel\_exporter\_otlp\_headers](#input\_n8n\_otel\_exporter\_otlp\_headers) | Optional comma-separated key=value headers sent to the OTLP collector. Marked sensitive, but the literal remains in Terraform state and the pod environment because the chart's shared config.extraEnv contract does not support secretKeyRef. Ignored when n8n\_otel\_enabled is false. | `string` | `null` | no |
+| <a name="input_n8n_otel_exporter_service_name"></a> [n8n\_otel\_exporter\_service\_name](#input\_n8n\_otel\_exporter\_service\_name) | Optional OpenTelemetry service.name value used to distinguish this deployment in a shared collector. Null keeps n8n's default. Ignored when n8n\_otel\_enabled is false. | `string` | `null` | no |
+| <a name="input_n8n_otel_traces_include_node_spans"></a> [n8n\_otel\_traces\_include\_node\_spans](#input\_n8n\_otel\_traces\_include\_node\_spans) | Whether to emit a node.execute span for each node. Null keeps n8n's default true. Ignored when n8n\_otel\_enabled is false. | `bool` | `null` | no |
+| <a name="input_n8n_otel_traces_inject_outbound"></a> [n8n\_otel\_traces\_inject\_outbound](#input\_n8n\_otel\_traces\_inject\_outbound) | Whether supported nodes inject W3C trace context into outbound requests. Null keeps n8n's default true. Ignored when n8n\_otel\_enabled is false. | `bool` | `null` | no |
+| <a name="input_n8n_otel_traces_production_only"></a> [n8n\_otel\_traces\_production\_only](#input\_n8n\_otel\_traces\_production\_only) | Whether to trace production executions only. Null keeps n8n's default true. Ignored when n8n\_otel\_enabled is false. | `bool` | `null` | no |
+| <a name="input_n8n_otel_traces_sample_rate"></a> [n8n\_otel\_traces\_sample\_rate](#input\_n8n\_otel\_traces\_sample\_rate) | Optional fraction of traces to export, from 0 through 1. Null keeps n8n's default of 1.0. Ignored when n8n\_otel\_enabled is false. | `number` | `null` | no |
+| <a name="input_n8n_personalization_enabled"></a> [n8n\_personalization\_enabled](#input\_n8n\_personalization\_enabled) | Enable n8n personalization questions and recommendations. False writes N8N\_PERSONALIZATION\_ENABLED=false to every n8n pod. | `bool` | `true` | no |
+| <a name="input_n8n_prestop_sleep"></a> [n8n\_prestop\_sleep](#input\_n8n\_prestop\_sleep) | Seconds each n8n pod waits in its preStop hook so ingress can drain before SIGTERM. | `number` | `10` | no |
+| <a name="input_n8n_pruning_max_age"></a> [n8n\_pruning\_max\_age](#input\_n8n\_pruning\_max\_age) | Maximum age of execution records to retain in hours. | `number` | `336` | no |
+| <a name="input_n8n_pruning_max_count"></a> [n8n\_pruning\_max\_count](#input\_n8n\_pruning\_max\_count) | Maximum number of execution records to retain. Set to 0 for no count limit. | `number` | `10000` | no |
+| <a name="input_n8n_reinstall_missing_packages"></a> [n8n\_reinstall\_missing\_packages](#input\_n8n\_reinstall\_missing\_packages) | Reinstall database-recorded community packages that are missing from a pod's local filesystem at startup. This applies to every n8n pod family. | `bool` | `false` | no |
+| <a name="input_n8n_task_runner_auto_shutdown_timeout"></a> [n8n\_task\_runner\_auto\_shutdown\_timeout](#input\_n8n\_task\_runner\_auto\_shutdown\_timeout) | Seconds of inactivity before the task-runner process shuts down. Set to 0 to disable auto-shutdown. | `number` | `15` | no |
+| <a name="input_n8n_task_runner_cpu_limit"></a> [n8n\_task\_runner\_cpu\_limit](#input\_n8n\_task\_runner\_cpu\_limit) | CPU limit for each task-runner sidecar, such as 1 or 1000m. | `string` | `"1"` | no |
+| <a name="input_n8n_task_runner_cpu_request"></a> [n8n\_task\_runner\_cpu\_request](#input\_n8n\_task\_runner\_cpu\_request) | CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every main and worker replica when task runners are enabled. | `string` | `"200m"` | no |
+| <a name="input_n8n_task_runner_image_tag"></a> [n8n\_task\_runner\_image\_tag](#input\_n8n\_task\_runner\_image\_tag) | Optional image tag for the n8nio/runners sidecar. Null inherits n8n\_image\_tag. Set this to the underlying n8n version when a custom application image uses a suffixed tag, such as n8n\_image\_tag = "2.35.0-custom" with n8n\_task\_runner\_image\_tag = "2.35.0", so the runner image exists and its protocol matches the application. | `string` | `null` | no |
+| <a name="input_n8n_task_runner_memory_limit"></a> [n8n\_task\_runner\_memory\_limit](#input\_n8n\_task\_runner\_memory\_limit) | Memory limit for each task-runner sidecar, such as 1Gi or 1024Mi. | `string` | `"1Gi"` | no |
+| <a name="input_n8n_task_runner_memory_request"></a> [n8n\_task\_runner\_memory\_request](#input\_n8n\_task\_runner\_memory\_request) | Memory request for each task-runner sidecar, such as 512Mi or 0.5Gi. | `string` | `"512Mi"` | no |
+| <a name="input_n8n_task_runner_python_enabled"></a> [n8n\_task\_runner\_python\_enabled](#input\_n8n\_task\_runner\_python\_enabled) | Enable the native Python task runner. | `bool` | `true` | no |
+| <a name="input_n8n_task_runner_request_timeout"></a> [n8n\_task\_runner\_request\_timeout](#input\_n8n\_task\_runner\_request\_timeout) | Seconds n8n waits for a task runner to accept a Code node task. | `number` | `300` | no |
+| <a name="input_n8n_task_runners_enabled"></a> [n8n\_task\_runners\_enabled](#input\_n8n\_task\_runners\_enabled) | Enable task-runner sidecars for isolated JavaScript and Python code execution. The advisory capacity model adds the runner CPU request to every main and worker replica when enabled. | `bool` | `true` | no |
+| <a name="input_n8n_templates_enabled"></a> [n8n\_templates\_enabled](#input\_n8n\_templates\_enabled) | Enable n8n workflow templates and template suggestions. False writes N8N\_TEMPLATES\_ENABLED=false to every n8n pod. | `bool` | `true` | no |
+| <a name="input_n8n_termination_grace_period"></a> [n8n\_termination\_grace\_period](#input\_n8n\_termination\_grace\_period) | Seconds Kubernetes waits after SIGTERM before force-killing an n8n pod. Workers need at least 60 seconds to finish in-flight executions. | `number` | `60` | no |
+| <a name="input_n8n_timezone"></a> [n8n\_timezone](#input\_n8n\_timezone) | Timezone used by n8n for schedules and date handling, such as UTC, America/New\_York, or Europe/London. | `string` | `"UTC"` | no |
+| <a name="input_n8n_webhook_cpu_limit"></a> [n8n\_webhook\_cpu\_limit](#input\_n8n\_webhook\_cpu\_limit) | CPU limit for each n8n webhook processor container, such as 800m or 0.8. | `string` | `"800m"` | no |
+| <a name="input_n8n_webhook_cpu_request"></a> [n8n\_webhook\_cpu\_request](#input\_n8n\_webhook\_cpu\_request) | CPU request for each n8n webhook processor container, such as 300m or 0.3. Included in the advisory capacity model at n8n\_webhook\_hpa\_max\_replicas. | `string` | `"300m"` | no |
+| <a name="input_n8n_webhook_hpa_cpu_threshold"></a> [n8n\_webhook\_hpa\_cpu\_threshold](#input\_n8n\_webhook\_hpa\_cpu\_threshold) | Target average CPU utilization percentage for the webhook-processor HPA. | `number` | `65` | no |
+| <a name="input_n8n_webhook_hpa_max_replicas"></a> [n8n\_webhook\_hpa\_max\_replicas](#input\_n8n\_webhook\_hpa\_max\_replicas) | Maximum webhook-processor replicas for the CPU HPA. The default of 8 participates in the AKS capacity diagnostic. | `number` | `8` | no |
+| <a name="input_n8n_webhook_hpa_min_replicas"></a> [n8n\_webhook\_hpa\_min\_replicas](#input\_n8n\_webhook\_hpa\_min\_replicas) | Minimum webhook-processor replicas for the CPU HPA and the Helm deployment floor. The default of 2 keeps a warm, redundant webhook path. | `number` | `2` | no |
+| <a name="input_n8n_webhook_hpa_scale_up_stabilization_window_seconds"></a> [n8n\_webhook\_hpa\_scale\_up\_stabilization\_window\_seconds](#input\_n8n\_webhook\_hpa\_scale\_up\_stabilization\_window\_seconds) | Seconds the webhook HPA looks back before scaling up. Zero preserves Kubernetes' immediate scale-up default. Raise this to absorb short startup CPU spikes. | `number` | `0` | no |
+| <a name="input_n8n_webhook_memory_limit"></a> [n8n\_webhook\_memory\_limit](#input\_n8n\_webhook\_memory\_limit) | Memory limit for each n8n webhook processor container, such as 1Gi or 1024Mi. | `string` | `"1Gi"` | no |
+| <a name="input_n8n_webhook_memory_request"></a> [n8n\_webhook\_memory\_request](#input\_n8n\_webhook\_memory\_request) | Memory request for each n8n webhook processor container, such as 512Mi or 0.5Gi. | `string` | `"512Mi"` | no |
+| <a name="input_n8n_worker_concurrency"></a> [n8n\_worker\_concurrency](#input\_n8n\_worker\_concurrency) | Number of jobs each worker pod can process simultaneously. | `number` | `10` | no |
+| <a name="input_n8n_worker_cpu_limit"></a> [n8n\_worker\_cpu\_limit](#input\_n8n\_worker\_cpu\_limit) | CPU limit for each n8n worker container, such as 1000m or 1. | `string` | `"1000m"` | no |
+| <a name="input_n8n_worker_cpu_request"></a> [n8n\_worker\_cpu\_request](#input\_n8n\_worker\_cpu\_request) | CPU request for each n8n worker container, such as 500m or 0.5. Included in the advisory capacity model at n8n\_worker\_keda\_max\_replicas. | `string` | `"500m"` | no |
+| <a name="input_n8n_worker_keda_jobs_per_replica"></a> [n8n\_worker\_keda\_jobs\_per\_replica](#input\_n8n\_worker\_keda\_jobs\_per\_replica) | Waiting or active Redis jobs per worker replica used as the KEDA scaling target. KEDA takes the maximum desired replica count from the bull:jobs:wait and bull:jobs:active triggers. | `number` | `5` | no |
+| <a name="input_n8n_worker_keda_max_replicas"></a> [n8n\_worker\_keda\_max\_replicas](#input\_n8n\_worker\_keda\_max\_replicas) | Maximum worker replicas KEDA may request from Redis queue depth. The default of 10 participates in the AKS capacity diagnostic with worker and task-runner CPU requests. | `number` | `10` | no |
+| <a name="input_n8n_worker_keda_min_replicas"></a> [n8n\_worker\_keda\_min\_replicas](#input\_n8n\_worker\_keda\_min\_replicas) | Minimum worker replicas for KEDA and the Helm deployment floor. The default of 1 keeps one queue consumer warm when Redis has no waiting jobs. | `number` | `1` | no |
+| <a name="input_n8n_worker_memory_limit"></a> [n8n\_worker\_memory\_limit](#input\_n8n\_worker\_memory\_limit) | Memory limit for each n8n worker container, such as 2Gi or 2048Mi. | `string` | `"2Gi"` | no |
+| <a name="input_n8n_worker_memory_request"></a> [n8n\_worker\_memory\_request](#input\_n8n\_worker\_memory\_request) | Memory request for each n8n worker container, such as 1Gi or 1024Mi. | `string` | `"1Gi"` | no |
+| <a name="input_pg_admin_username"></a> [pg\_admin\_username](#input\_pg\_admin\_username) | PostgreSQL administrator (login role) name. Surfaced to n8n via `local.postgres_connection`. Azure Flexible Server reserves a small set of names (`azure_superuser`, `azure_pg_admin`, `admin`, `administrator`, `root`, `guest`, `public`) — the validation below blocks them. Default 'n8n' matches the legacy umbrella module's hardcoded login. Ignored when `create_database = false`. | `string` | `"n8n"` | no |
+| <a name="input_pg_backup_retention_days"></a> [pg\_backup\_retention\_days](#input\_pg\_backup\_retention\_days) | Number of days to retain automated PostgreSQL Flexible Server backups. Azure enforces a range of 7–35 days for Flexible Server (unlike RDS, Azure does not allow disabling backups). Ignored when `create_database = false`. | `number` | `7` | no |
+| <a name="input_pg_enable_high_availability"></a> [pg\_enable\_high\_availability](#input\_pg\_enable\_high\_availability) | Enable zone-redundant HA on the PostgreSQL Flexible Server (synchronous standby in a different availability zone). Requires a non-Burstable SKU (GP\_* or MO\_*) — Burstable does NOT support HA. Adds a ~2× cost premium. Ignored when `create_database = false`. | `bool` | `false` | no |
+| <a name="input_pg_geo_redundant_backup_enabled"></a> [pg\_geo\_redundant\_backup\_enabled](#input\_pg\_geo\_redundant\_backup\_enabled) | When true, replicate PostgreSQL Flexible Server backups to the Azure-paired region for the module's location, so a regional outage does not also destroy backup data. Adds a cost premium; cannot be changed after server creation without a snapshot/restore into a new server. Ignored when `create_database = false`. | `bool` | `false` | no |
+| <a name="input_pg_maintenance_window"></a> [pg\_maintenance\_window](#input\_pg\_maintenance\_window) | Optional custom maintenance window for the PostgreSQL Flexible Server (day\_of\_week: 0=Sunday..6=Saturday, start\_hour: 0-23, start\_minute: 0-59). Azure applies mandatory servicing (security patches) during this window. `null` (the default) leaves Azure's system-assigned window in place. Ignored when `create_database = false`. | <pre>object({<br/>    day_of_week  = number<br/>    start_hour   = number<br/>    start_minute = number<br/>  })</pre> | `null` | no |
+| <a name="input_pg_primary_zone"></a> [pg\_primary\_zone](#input\_pg\_primary\_zone) | Availability zone the PostgreSQL Flexible Server's primary instance is created in (e.g. "1", "2", "3"). `null` (the default) leaves Azure to pick a zone at create time. Terraform ignores drift on this attribute after creation — Azure only allows changing it as part of an HA failover, not a plain apply. Ignored when `create_database = false`. | `string` | `null` | no |
+| <a name="input_pg_sku_name"></a> [pg\_sku\_name](#input\_pg\_sku\_name) | Azure PostgreSQL Flexible Server SKU (e.g. B\_Standard\_B1ms for dev, GP\_Standard\_D2s\_v3 for production). Format: `<tier>_Standard_<family>` where tier is B (Burstable), GP (General Purpose), or MO (Memory Optimized). Burstable does NOT support zone-redundant HA — set `pg_enable_high_availability = false` when using B\_*. Ignored when `create_database = false`. | `string` | `"GP_Standard_D2s_v3"` | no |
+| <a name="input_pg_standby_zone"></a> [pg\_standby\_zone](#input\_pg\_standby\_zone) | Availability zone the PostgreSQL Flexible Server's HA standby instance is created in (e.g. "1", "2", "3"). Only meaningful when `pg_enable_high_availability = true`; must differ from `pg_primary_zone` — Azure requires the standby to sit in a different zone than the primary for zone-redundant HA to provide any resilience. `null` (the default) leaves Azure to pick a standby zone at create time. Ignored when `create_database = false`. | `string` | `null` | no |
+| <a name="input_pg_storage_mb"></a> [pg\_storage\_mb](#input\_pg\_storage\_mb) | Allocated storage for the PostgreSQL Flexible Server in MB. Azure minimum is 32768 (32 GB). Storage can be grown but not shrunk in place — size for projected growth. Ignored when `create_database = false`. | `number` | `32768` | no |
+| <a name="input_pg_version"></a> [pg\_version](#input\_pg\_version) | PostgreSQL major version (e.g. 14, 15, 16). 16 is the current GA on Azure Flexible Server. Major-version upgrades are not in-place — see Azure docs for the upgrade workflow. Ignored when `create_database = false`. | `string` | `"16"` | no |
+| <a name="input_postgres_external_database"></a> [postgres\_external\_database](#input\_postgres\_external\_database) | External PostgreSQL database name n8n connects to. Ignored when `create_database = true` (the module-managed database is always named `n8n`). | `string` | `"n8n"` | no |
+| <a name="input_postgres_external_host"></a> [postgres\_external\_host](#input\_postgres\_external\_host) | External PostgreSQL host. Required when `create_database = false`. Ignored otherwise. Use this to point n8n at an existing Flexible Server, a server in a different subscription, or any PostgreSQL-compatible endpoint. | `string` | `null` | no |
+| <a name="input_postgres_external_password"></a> [postgres\_external\_password](#input\_postgres\_external\_password) | Password for the external PostgreSQL endpoint specified by `postgres_external_host`. Required when `create_database = false`. Ignored otherwise (the module generates a random password for its managed Flexible Server). | `string` | `null` | no |
+| <a name="input_postgres_external_port"></a> [postgres\_external\_port](#input\_postgres\_external\_port) | External PostgreSQL port. Ignored when `create_database = true` (the module-managed server always uses 5432). | `number` | `5432` | no |
+| <a name="input_postgres_external_ssl_mode"></a> [postgres\_external\_ssl\_mode](#input\_postgres\_external\_ssl\_mode) | TLS mode for the external PostgreSQL connection (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`). Ignored when `create_database = true` (the module-managed server always uses `require`). | `string` | `"require"` | no |
+| <a name="input_postgres_external_username"></a> [postgres\_external\_username](#input\_postgres\_external\_username) | Username for the external PostgreSQL endpoint specified by `postgres_external_host`. Required when `create_database = false`. Ignored otherwise. | `string` | `null` | no |
+| <a name="input_postgres_pool_size"></a> [postgres\_pool\_size](#input\_postgres\_pool\_size) | Number of TypeORM connection pool slots per n8n pod (writes `DB_POSTGRESDB_POOL_SIZE`). Applies to both the managed and external database paths. Rule of thumb: pool\_size >= worker\_concurrency / 4. | `number` | `10` | no |
+| <a name="input_postgres_subnet_id"></a> [postgres\_subnet\_id](#input\_postgres\_subnet\_id) | Resource ID of the subnet the PostgreSQL Flexible Server is injected into. Must be delegated to `Microsoft.DBforPostgreSQL/flexibleServers` and contain no other workloads (Flexible Server consumes the entire subnet). Format: /subscriptions/<sub>/.../subnets/<name>. | `string` | n/a | yes |
+| <a name="input_private_dns_zone_id"></a> [private\_dns\_zone\_id](#input\_private\_dns\_zone\_id) | Resource ID of an existing private Azure DNS zone used when create\_private\_dns\_record is true. The module creates one A record for n8n\_domain and every n8n\_additional\_domains entry, targeting the managed private frontend IP. Every hostname must be the zone apex or a subdomain of this zone. Leave null when private DNS is caller-owned. | `string` | `null` | no |
+| <a name="input_private_endpoint_subnet_id"></a> [private\_endpoint\_subnet\_id](#input\_private\_endpoint\_subnet\_id) | Resource ID of the subnet additional private endpoints (Storage Account, Key Vault) attach to. Must have `private_endpoint_network_policies` disabled (Azure refuses to create a private endpoint when network policies are enforced on the subnet). May be the same as `redis_subnet_id` when callers prefer to consolidate all PEs onto a single subnet, but a dedicated subnet keeps blast-radius smaller. Format: /subscriptions/<sub>/.../subnets/<name>. | `string` | n/a | yes |
+| <a name="input_public_dns_zone_id"></a> [public\_dns\_zone\_id](#input\_public\_dns\_zone\_id) | Resource ID of an existing public Azure DNS zone used when create\_public\_dns\_record is true. The module creates one A record for n8n\_domain and every n8n\_additional\_domains entry, targeting the managed static public IP. Every hostname must be the zone apex or a subdomain of this zone. Leave null when public DNS is caller-owned. | `string` | `null` | no |
+| <a name="input_redis_external_host"></a> [redis\_external\_host](#input\_redis\_external\_host) | External Redis host. Required when `create_redis = false`. Ignored otherwise. Use this to point n8n and KEDA at an existing Redis deployment, a managed Redis in a different subscription, or any Redis-compatible endpoint. | `string` | `null` | no |
+| <a name="input_redis_external_password"></a> [redis\_external\_password](#input\_redis\_external\_password) | Password for the external Redis endpoint specified by `redis_external_host`. Optional — leave `null` to point at an unauthenticated external Redis (e.g. one that relies on network-level isolation instead of AUTH). Ignored when `create_redis = true` (the module reads the generated primary access key from its managed Azure Managed Redis instance). | `string` | `null` | no |
+| <a name="input_redis_external_port"></a> [redis\_external\_port](#input\_redis\_external\_port) | External Redis port. Ignored when `create_redis = true` (the module-managed instance's port is read from the Managed Redis database resource). | `number` | `6380` | no |
+| <a name="input_redis_external_tls_enabled"></a> [redis\_external\_tls\_enabled](#input\_redis\_external\_tls\_enabled) | Whether the external Redis endpoint requires TLS. Ignored when `create_redis = true` (the module-managed instance always uses `client_protocol = "Encrypted"`). | `bool` | `true` | no |
+| <a name="input_redis_external_username"></a> [redis\_external\_username](#input\_redis\_external\_username) | Username for the external Redis endpoint specified by `redis_external_host`, for deployments that use Redis 6+ ACL-based auth (`AUTH <username> <password>`). Optional — leave `null` for legacy `AUTH <password>`-only endpoints. Ignored when `create_redis = true` (the module-managed instance uses access-key authentication, which has no username). | `string` | `null` | no |
+| <a name="input_redis_high_availability_enabled"></a> [redis\_high\_availability\_enabled](#input\_redis\_high\_availability\_enabled) | Enable high availability (zone/replica redundancy) for the module-managed Azure Managed Redis instance. Changing this forces replacement of the instance (an Azure constraint on `high_availability_enabled`), which destroys and recreates the queue backend — drain the n8n queue before flipping this on a live deployment. Ignored when `create_redis = false`. | `bool` | `false` | no |
+| <a name="input_redis_sku_name"></a> [redis\_sku\_name](#input\_redis\_sku\_name) | Azure Managed Redis SKU. Restricted to the SKUs documented at 25 GB or smaller — the size ceiling for the `NoCluster` clustering policy this module always uses (https://learn.microsoft.com/en-us/azure/redis/architecture#cluster-policies). Larger SKUs (`Balanced_B50` and up, `ComputeOptimized_X50` and up, `MemoryOptimized_M50` and up, all `FlashOptimized_*`) only support `OSSCluster` or `EnterpriseCluster` and are not offered here. Ignored when `create_redis = false`. | `string` | `"Balanced_B1"` | no |
+| <a name="input_redis_subnet_id"></a> [redis\_subnet\_id](#input\_redis\_subnet\_id) | Resource ID of the subnet the Azure Managed Redis private endpoint attaches to. Must have `private_endpoint_network_policies` disabled (Azure refuses to create a private endpoint when network policies are enforced on the subnet). No subnet delegation required. Format: /subscriptions/<sub>/.../subnets/<name>. | `string` | n/a | yes |
+| <a name="input_resource_group_name"></a> [resource\_group\_name](#input\_resource\_group\_name) | Name of an existing Azure resource group all resources this module creates land in. The module does NOT create the resource group — the caller provisions it (or supplies one) so its lifecycle is decoupled from this module. | `string` | n/a | yes |
+| <a name="input_storage_account_replication_type"></a> [storage\_account\_replication\_type](#input\_storage\_account\_replication\_type) | Replication type for the module-managed StorageV2 account used by Azure Blob: LRS, ZRS, GRS, RAGRS, GZRS, or RAGZRS. The default LRS minimizes cost; production deployments that need zone or regional durability should select a replication type available in their Azure region. | `string` | `"LRS"` | no |
+| <a name="input_vnet_id"></a> [vnet\_id](#input\_vnet\_id) | Resource ID of the VNet n8n will deploy into. The module creates `privatelink.postgres.database.azure.com` and Redis / Blob private DNS zones and links them to this VNet so managed services resolve to private IPs. Format: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<name>. | `string` | n/a | yes |
 
 ## Outputs
 
-No outputs.
+| Name | Description |
+| ---- | ----------- |
+| <a name="output_aks_cluster_id"></a> [aks\_cluster\_id](#output\_aks\_cluster\_id) | Resource ID of the AKS cluster. Consumed by caller wiring that scopes role assignments to the cluster (e.g. AGIC Contributor). |
+| <a name="output_aks_cluster_name"></a> [aks\_cluster\_name](#output\_aks\_cluster\_name) | Name of the AKS cluster. Useful for `data.azurerm_kubernetes_cluster.n8n` lookups in callers that prefer data-source-based kubeconfig refresh over the `aks_kube_config` output. |
+| <a name="output_aks_kube_config"></a> [aks\_kube\_config](#output\_aks\_kube\_config) | Local-account kubeconfig block for the AKS cluster. The cluster has no AAD-RBAC integration so this IS the local-account admin credential. A calling root uses this to configure the kubernetes / helm providers against this module's cluster (see examples/small/providers.tf, section 13) without a kubelogin / exec dependency. |
+| <a name="output_aks_oidc_issuer_url"></a> [aks\_oidc\_issuer\_url](#output\_aks\_oidc\_issuer\_url) | OIDC issuer URL for the AKS cluster. Useful for callers wiring their own federated identity credentials against workload identities this module does not manage. |
+| <a name="output_app_gateway_id"></a> [app\_gateway\_id](#output\_app\_gateway\_id) | Resource ID of the module-managed Application Gateway. Null when create\_ingress is false. |
+| <a name="output_appgw_fqdn"></a> [appgw\_fqdn](#output\_appgw\_fqdn) | Azure-assigned cloudapp.azure.com hostname of the public Application Gateway frontend. Null for internal frontend mode or when create\_ingress is false. |
+| <a name="output_appgw_private_ip_address"></a> [appgw\_private\_ip\_address](#output\_appgw\_private\_ip\_address) | Private frontend IPv4 address of the module-managed Application Gateway. Null for public frontend mode or when create\_ingress is false. |
+| <a name="output_appgw_public_ip_address"></a> [appgw\_public\_ip\_address](#output\_appgw\_public\_ip\_address) | Static public IPv4 address of the module-managed Application Gateway. Null for internal frontend mode or when create\_ingress is false. |
+| <a name="output_azure_blob_container_name"></a> [azure\_blob\_container\_name](#output\_azure\_blob\_container\_name) | Name of the private Azure Blob container used for n8n binary data and optional Azure execution-data bundles. |
+| <a name="output_azure_blob_endpoint"></a> [azure\_blob\_endpoint](#output\_azure\_blob\_endpoint) | Azure Blob endpoint n8n uses, either the module-managed storage account endpoint or the caller-supplied custom endpoint. Marked sensitive because custom endpoints may expose private topology names. |
+| <a name="output_n8n_encryption_key"></a> [n8n\_encryption\_key](#output\_n8n\_encryption\_key) | Effective n8n encryption key that wraps every credential stored in n8n's database — the caller-supplied `var.n8n_encryption_key` when set, otherwise the module-generated key. Back this up to a password manager immediately after the first apply — losing it makes existing credentials unrecoverable on any future deployment. |
+| <a name="output_n8n_helm_release_name"></a> [n8n\_helm\_release\_name](#output\_n8n\_helm\_release\_name) | Name of the n8n Helm release. |
+| <a name="output_n8n_helm_release_revision"></a> [n8n\_helm\_release\_revision](#output\_n8n\_helm\_release\_revision) | Revision number of the most recent successful n8n Helm install or upgrade. |
+| <a name="output_n8n_namespace"></a> [n8n\_namespace](#output\_n8n\_namespace) | Kubernetes namespace containing the n8n workload. Derived from the managed namespace resource so caller-owned Kubernetes resources inherit its creation dependency. |
+| <a name="output_n8n_service_name"></a> [n8n\_service\_name](#output\_n8n\_service\_name) | Name of the chart-rendered ClusterIP Service for n8n main pods. Point caller-owned editor and API ingress routes at this service. |
+| <a name="output_n8n_service_port"></a> [n8n\_service\_port](#output\_n8n\_service\_port) | Port exposed by both chart-rendered n8n ClusterIP Services. |
+| <a name="output_n8n_url"></a> [n8n\_url](#output\_n8n\_url) | Canonical HTTPS URL for the n8n editor and default webhook base. |
+| <a name="output_n8n_webhook_path_prefixes"></a> [n8n\_webhook\_path\_prefixes](#output\_n8n\_webhook\_path\_prefixes) | Complete path-prefix set caller-owned ingress must route to n8n\_webhook\_service\_name before its main-service catch-all. |
+| <a name="output_n8n_webhook_service_name"></a> [n8n\_webhook\_service\_name](#output\_n8n\_webhook\_service\_name) | Name of the chart-rendered ClusterIP Service for dedicated webhook-processor pods. |
+| <a name="output_n8n_workload_uami_client_id"></a> [n8n\_workload\_uami\_client\_id](#output\_n8n\_workload\_uami\_client\_id) | Client ID of the n8n workload user-assigned identity. Consumed by n8n pods via the `azure.workload.identity/client-id` service-account annotation the Helm release (section 6) sets, and by callers extending the identity's role assignments. Marked sensitive because the identity's client\_id is an authentication-relevant value. |
+| <a name="output_n8n_workload_uami_principal_id"></a> [n8n\_workload\_uami\_principal\_id](#output\_n8n\_workload\_uami\_principal\_id) | Principal (AAD object) ID of the n8n workload user-assigned identity. Distinct from `client_id`: the principal\_id is the AAD-side object Azure RBAC role assignments target (e.g. `Storage Blob Data Contributor` in section 5), while client\_id is the OIDC `sub` claim consumed by federated-identity-credential subject mappings. Marked sensitive per the same conservative shape as `client_id`. |
+| <a name="output_postgres_admin_password"></a> [postgres\_admin\_password](#output\_postgres\_admin\_password) | Password n8n authenticates to PostgreSQL with — either the generated `random_password.postgres_admin` (`create_database = true`) or `postgres_external_password` (`create_database = false`). Marked sensitive. |
+| <a name="output_postgres_admin_username"></a> [postgres\_admin\_username](#output\_postgres\_admin\_username) | Username n8n authenticates to PostgreSQL with — either `var.pg_admin_username` (`create_database = true`) or `postgres_external_username` (`create_database = false`). |
+| <a name="output_postgres_database_name"></a> [postgres\_database\_name](#output\_postgres\_database\_name) | Database name n8n connects to — either the module-managed database (`create_database = true`, always `n8n`) or `postgres_external_database` (`create_database = false`). |
+| <a name="output_postgres_fqdn"></a> [postgres\_fqdn](#output\_postgres\_fqdn) | Hostname n8n connects to for PostgreSQL — either the module-managed Flexible Server's private FQDN (`create_database = true`) or the caller-supplied `postgres_external_host` (`create_database = false`). |
+| <a name="output_redis_hostname"></a> [redis\_hostname](#output\_redis\_hostname) | Hostname n8n and KEDA connect to for Redis — either the module-managed Azure Managed Redis instance's private hostname (`create_redis = true`) or the caller-supplied `redis_external_host` (`create_redis = false`). |
+| <a name="output_redis_port"></a> [redis\_port](#output\_redis\_port) | Port n8n and KEDA connect to for Redis — either the module-managed instance's database port (`create_redis = true`) or `redis_external_port` (`create_redis = false`). |
+| <a name="output_redis_primary_access_key"></a> [redis\_primary\_access\_key](#output\_redis\_primary\_access\_key) | Credential n8n and KEDA authenticate to Redis with — either the generated Azure Managed Redis primary access key (`create_redis = true`) or `redis_external_password` (`create_redis = false`). Marked sensitive. |
+| <a name="output_storage_account_name"></a> [storage\_account\_name](#output\_storage\_account\_name) | Name of the private StorageV2 account that holds the managed Azure Blob container. |
 <!-- END_TF_DOCS -->
-
-## Examples
-
-- [`examples/complete/`](./examples/complete/) — full end-to-end deployment, including the network RG + VNet + 5 subnets, public DNS zone, shared Key Vault, and `modules/tls-self-signed/` for the listener cert. Lab-ready default.
-- [`examples/complete-letsencrypt/`](./examples/complete-letsencrypt/) — same shape but wired to `modules/tls-letsencrypt/` for production-grade Let's Encrypt TLS via DNS-01 against an Azure DNS zone.
-- [`examples/complete-self-signed/`](./examples/complete-self-signed/) — explicit self-signed-only deployment (same submodule wiring as `examples/complete/` but with `var.tls_validity_period_hours` exposed).
-
-## Troubleshooting
-
-For failure modes seen in real `terraform apply` runs — Helm 4 cache layout, KEDA TriggerAuthentication ordering, AKS API readiness probe, the `uuid-ossp` allowlist on Flex Server, the multi-main migration race ("n8n is starting up" hang), Azure Files CIFS permission-check, and `terraform destroy` hangs — see [`docs/troubleshooting.md`](./docs/troubleshooting.md). Each section follows the same shape: symptom, root cause, resolution.
-
-## Operator docs
-
-Day-2 reference docs for running the module in production:
-
-- [`docs/post-deployment.md`](./docs/post-deployment.md) — post-apply checks: license activation, DNS verification, capturing the n8n encryption key.
-- [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md) — standard destroy path (gated by `time_sleep.wait_for_aks_drain` / `var.aks_destroy_drain_seconds`), manual cleanup of Azure Files volume-detach hangs, App Gateway frontend-IP release, and namespace finalizers.
-- [`docs/tls-rotation.md`](./docs/tls-rotation.md) — how to rotate the App Gateway TLS cert (rotate the cert in your Key Vault, then re-apply with the new versioned URI passed as `var.app_gateway_tls_cert_secret_id`).
-- [`docs/troubleshooting.md`](./docs/troubleshooting.md) — apply-time failure modes and their fixes.
-
-## See also
-
-This module is the Azure sibling of [`terraform-aws-n8n`](https://github.com/n8n-io/terraform-aws-n8n). The two modules share the same shape (file layout, variable naming, output naming, quality bar) so callers can switch clouds with minimal cognitive overhead. Cloud-specific deltas — the Flex Server `azure.extensions = UUID-OSSP` allowlist, the Azure Files destroy-time CIFS-detach window tuning, and the `kubectl_manifest`-driven KEDA `TriggerAuthentication` install — are documented in [`AGENTS.md`](./AGENTS.md) and [`docs/troubleshooting.md`](./docs/troubleshooting.md). The five historical `null_resource` workarounds and the legacy three-mode TLS surface (`var.tls_mode = self_signed | letsencrypt | custom_pfx`) were retired in registry-hardening Phases 1, 2, 3, and 4; Phase 5 (US-014..US-026) split the umbrella module into [`modules/infra/`](./modules/infra/) (3 providers — `azurerm`, `random`, `time`) and [`modules/workload/`](./modules/workload/) (5 providers — `kubernetes`, `helm`, `random`, `time`, `kubectl`). The root pins **0** providers and carries no resources, no inputs, and no outputs. See the Registry-readiness audit table in [`AGENTS.md`](./AGENTS.md) for the replacement of each retired workaround.

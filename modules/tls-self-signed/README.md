@@ -4,12 +4,11 @@ Generate a self-signed TLS certificate with `hashicorp/tls` and import the
 PEM bundle into an existing Azure Key Vault. The vault's versioned Secret
 URI is exposed as `app_gateway_tls_cert_secret_id`, which the root
 [`terraform-azurerm-n8n`](../../README.md) module consumes as
-`var.app_gateway_tls_cert_secret_id` (Phase 4 R4.3 / US-012).
+`var.app_gateway_tls_cert_secret_id`.
 
-This submodule exists so the root module no longer pulls the
-`hashicorp/tls` provider when the consumer is on the production-majority
-`custom_pfx` path — a lighter `terraform init` and a smaller blast radius
-for transitive dependency CVEs.
+This submodule keeps certificate-specific provider behavior out of the root
+module when a caller supplies an existing certificate — a lighter
+`terraform init` and a smaller blast radius for transitive dependency CVEs.
 
 > **Self-signed mode is intended for lab / internal-only use.** Browsers
 > will warn on the cert (it has no chain of trust). Production
@@ -37,7 +36,7 @@ contacts an external CA.
 
 ```hcl
 module "tls_self_signed" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-self-signed?ref=v2.0.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-self-signed?ref=v0.1.0"
 
   domain_name          = "n8n.example.com"
   key_vault_id         = azurerm_key_vault.shared.id
@@ -48,19 +47,15 @@ module "tls_self_signed" {
   # validity_period_hours = 720  # 30 days
 }
 
-# Wire into the root module (US-012):
+# Wire into the root module:
 module "n8n" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=v2.0.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=v0.1.0"
 
   app_gateway_tls_cert_secret_id = module.tls_self_signed.app_gateway_tls_cert_secret_id
 
   # ... remaining root-module inputs
 }
 ```
-
-A complete runnable example lives at
-[`examples/complete-self-signed/`](../../examples/complete-self-signed/)
-(US-011).
 
 ## Renewal
 

@@ -10,6 +10,122 @@ The shape, quality bar, and "what not to do" list are intentionally aligned;
 the deltas below cover Azure-specific runtime hardening that the AWS module
 doesn't need.
 
+## `align-azure-with-aws-capabilities` internal iteration
+
+This module used a two-tier composition (`modules/infra/` +
+`modules/workload/`, no resources at the root) during internal development. The
+`align-azure-with-aws-capabilities`
+change (`openspec/changes/align-azure-with-aws-capabilities/`) flattened that
+back into **one resource-bearing root module**, matching `terraform-aws-n8n`'s
+shape, and ported the AWS sibling's PostgreSQL/Redis external-endpoint modes,
+Azure Blob storage, full n8n runtime controls, autoscaling, ingress patterns,
+and DNS/TLS integration onto the Azure-specific foundation. `modules/infra/`
+and `modules/workload/` were deleted once every resource, control, and
+safeguard they owned was represented at the root (section 15.5). The
+subsequent `slim-first-release-surface` change removed Azure Files support,
+the `filesystem` binary/execution-data storage modes, the two DNS-provider
+examples, and the version-history framing ahead of the module's first public
+release (`0.1.0`) — see [`CHANGELOG.md`](./CHANGELOG.md). The "What this repo
+is" / "File layout" sections below describe the current shape.
+
+**Storage and workload integration.** Root `storage.tf` owns the private
+Azure Blob container, its private endpoint, and private DNS zone — Blob is
+the module's only durable binary/execution-data backend. `shared_access_key_enabled`
+on the storage account derives solely from the retained connection-string/
+account-key compatibility inputs; workload identity is otherwise the only
+authentication path. Root `helm_release.n8n` merges `local.n8n_extra_volumes` /
+`local.n8n_extra_volume_mounts` at the chart's top level so every pod family
+receives caller-supplied typed volumes.
+
+**Combined provider graph.** The root declares all six providers the former
+two-tier composition used across both submodules (`azurerm`, `kubernetes`,
+`helm`, `random`, `time`, `kubectl`) in one `required_providers` block. AKS
+and the Kubernetes/Helm controllers form one same-apply graph: namespace
+creation depends on `time_sleep.aks_api_warmup`; KEDA installs before the
+CRD-aware TriggerAuthentication; the n8n release installs after both. Mocked
+plans and `terraform graph` verify those static edges, but they do not prove
+live Azure lifecycle behavior — track cold create, no-op apply, Helm-only
+update, AKS credential rotation, partial-apply recovery, AKS replacement,
+normal destroy, and unavailable-API recovery per `openspec/changes/
+align-azure-with-aws-capabilities/tasks.md` section 17.4 before treating the
+one-apply contract as a release guarantee for a given release.
+
+**Runtime controls.** Root `n8n.tf` owns the chart-native resource, execution,
+lifecycle, task-runner, logging, template, personalization, community-package,
+and floating-license settings. The chart's `config.extraEnv` is shared by
+main, worker, and webhook containers. Keep feature variables omitted when
+their defaults match n8n, but always render
+`N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false` because n8n's upstream `true`
+default can invalidate the shared floating certificate during a multi-main
+rollout.
+
+**Custom workload configuration.** The chart does not render image pull
+Secrets, so root Terraform takes over the n8n ServiceAccount only when
+`n8n_image_pull_secrets` is non-empty. It uses the distinct
+`n8n-enterprise-pull` name to avoid colliding with the chart-owned account and
+moves the workload-identity federated subject with it. Inputs contain existing
+Secret names only, never registry credentials. Keep `local.n8n_managed_env_names` and
+`local.n8n_managed_env_prefixes` synchronized with every environment variable
+the module or chart owns before adding to `config.extraEnv`.
+
+**Data and observability configuration.** Root `n8n.tf` renders binary mode,
+historical binary modes, execution-data mode, Azure connection, metrics,
+OpenTelemetry, and log-streaming settings through the shared `config.extraEnv`
+list so main, worker, and webhook processes stay aligned. Binary-data modes are
+restricted to `database`/`azure` for both binary and execution data — 0.1.0 has
+neither n8n's inline-memory `default` binary mode nor a shared-filesystem path.
+Azure binary and execution storage have
+separate Enterprise entitlements. Mode changes never backfill data, so keep
+historical modes and their backends configured until retained objects have
+expired or moved. The Azure Key Vault
+external-secrets integration is caller-configured in n8n and uses a client
+secret, not the Blob workload identity or App Gateway identity. The pinned
+n8n path currently constructs the public Azure vault endpoint and does not
+expose sovereign vault or authority settings.
+
+**Workload scaling and capacity.** The chart owns the main HPA and worker KEDA
+ScaledObject, while root `scaling.tf` owns the webhook HPA because the chart
+suppresses that object whenever KEDA is enabled. Helm replica counts must
+remain tied to the three autoscaler floors. The CPU capacity check models
+both untainted AKS pools, subtracts documented AKS and fixed system workload
+allowances, warns only for reviewed Dsv4, Dsv5, and Dsv7 SKUs, and stays silent for
+unknown valid SKUs. Keep the SKU map and reservation comments current when
+AKS or example sizing changes. The warning is advisory and does not replace
+live capacity testing.
+
+**Managed ingress.** Root `ingress.tf` owns the conditional public or
+private-only Application Gateway, subnet NSG, WAF policy, AGIC permissions,
+and Kubernetes Ingress. `create_ingress = false` must also remove the AKS
+AGIC addon while preserving the resource-derived service-discovery outputs.
+Keep all five entries in `local.n8n_webhook_path_prefixes` before `/` for
+every host. The subnet NSG must retain `GatewayManager` access on
+65200-65535 and `AzureLoadBalancer` probe access before its deny rule. Source
+restrictions apply to the editor and webhook paths together.
+
+**DNS and certificate integration.** Root `dns.tf` accepts at most one
+caller-owned public or private Azure DNS zone ID with a matching explicit,
+plan-known record toggle. It parses the zone name and resource group from
+that ID, creates an A record for every value in `local.n8n_ingress_domains`,
+and targets the matching public or internal Application Gateway frontend.
+Every host must live in the selected zone, and `create_ingress = false` must
+omit all records. Root `keyvault.tf` grants only `Key Vault Secrets User` to
+the gateway TLS identity when explicitly enabled, waits for RBAC propagation,
+and stays behind the same ingress gate. The Let's Encrypt helper normalizes
+its canonical name and subject alternative names to lowercase and requires
+every name to use its one Azure DNS challenge zone.
+
+**Sizing examples.** `examples/small`, `examples/medium`, and `examples/large`
+call the resource-bearing root directly and own their Azure foundations. Keep
+each example self-contained. The large tier intentionally owns PostgreSQL so
+n8n can use the external database contract through the example-owned
+two-replica PgBouncer service, and pins an explicit storage replication type.
+Keep each tier's mocked test and
+`examples/README.md` comparison table synchronized with sizing changes.
+`examples/split-ingress` demonstrates `create_ingress = false` plus two
+caller-owned Application Gateways. Non-Azure DNS-01 validation (Cloudflare,
+GoDaddy) is documented, not demonstrated by a runnable example — see the
+"DNS-01 providers" section of `modules/tls-letsencrypt/README.md`.
+
 ## What this repo is
 
 `terraform-azurerm-n8n` is a Terraform module that deploys a **production-grade,
@@ -17,19 +133,25 @@ multi-main [n8n Enterprise](https://n8n.io) installation on Microsoft Azure**. A
 single `terraform apply` brings up the full stack:
 
 - **Azure Kubernetes Service (AKS)** cluster with OIDC issuer and workload
-  identity enabled, sized for the multi-main workload (default
-  `Standard_D4s_v4`, autoscaled).
-- **Multiple n8n main pods** + dedicated **worker pods** (queue mode) — the
-  Enterprise multi-main topology.
-- **Azure Database for PostgreSQL — Flexible Server**, on a delegated subnet
-  with the `uuid-ossp` extension allow-listed via `azure.extensions`.
-- **Azure Cache for Redis** behind a private endpoint for the Bull queue
-  backing workers.
-- **Azure Files** (Storage Account + file share) for shared binary / file
-  storage, mounted RWX into worker pods.
+  identity enabled, availability-zone-spread node pools, optional API-server
+  authorized IP ranges, and an autoscaler-owned node count (default
+  `Standard_D4s_v4`).
+- **Multiple n8n main pods** plus dedicated **worker** and **webhook-processor**
+  pods (queue mode) — the Enterprise multi-main topology, each independently
+  autoscaled (main/webhook HPA, worker KEDA `ScaledObject`).
+- **PostgreSQL — Flexible Server**, on a delegated subnet with the `uuid-ossp`
+  extension allow-listed via `azure.extensions`, or an external PostgreSQL
+  endpoint (`create_database = false`).
+- **Azure Managed Redis** behind a private endpoint (`NoCluster`, encrypted
+  protocol, access-key auth) for the Bull queue backing workers, or an
+  external Redis endpoint (`create_redis = false`).
+- **Private Azure Blob Storage** for binary and execution data, authenticated
+  via AKS workload identity by default, with PostgreSQL as the durable
+  non-Azure binary and execution-data backend.
 - **Application Gateway (WAF_v2 by default)** with **AGIC** (Application
   Gateway Ingress Controller) and **KEDA** for ingress, queue-driven worker
-  scaling, and HPA-driven webhook-processor scaling.
+  scaling, and HPA-driven main/webhook-processor scaling — or
+  `create_ingress = false` for a caller-owned ingress topology.
 - **Azure Key Vault**-backed TLS for the App Gateway listener via a single
   BYO-secret contract: the caller supplies a Key Vault Secret URI as
   `var.app_gateway_tls_cert_secret_id`. The two `modules/tls-letsencrypt/`
@@ -38,72 +160,65 @@ single `terraform apply` brings up the full stack:
   already have a cert. Pair the URI with `app_gateway_keyvault_id` so
   this module grants the App Gateway UAMI `Key Vault Secrets User` on
   the vault holding the cert.
-- **Optional Azure DNS** A-record (public or private zone) when the caller
-  passes a zone — single-apply path, mirroring the AWS module's
-  `route53_zone_id` pattern (Phase 2).
+- **Optional public or private Azure DNS** A-records for the canonical domain
+  and every additional domain, when the caller passes a zone ID and the
+  matching record toggle.
 
 An **n8n Enterprise license key** is required (`var.n8n_license_key`) — the
 module does not provision a community-edition deployment.
 
-The module **expects a pre-existing VNet** and five pre-tagged subnets. A
-complete reference deployment that includes the VNet (built from the
-`Azure/avm-res-network-virtualnetwork/azurerm` AVM module) lives in
-[`examples/complete/`](./examples/complete/).
+The module **expects a pre-existing VNet** and five pre-sized subnets. The
+`examples/small`, `examples/medium`, and `examples/large` roots create those
+Azure foundations and call the resource-bearing root directly.
 
 ### Architecture at a glance
 
 ```
               ┌──────── Azure DNS (optional, public or private) ────┐
               │                                                     │
-   user ──► App Gateway (AGIC, WAF_v2) ──► AKS ──► n8n mains ──► Postgres Flex
+   user ──► App Gateway (AGIC, WAF_v2) ──► AKS ──► n8n mains ──► PostgreSQL Flex
                                               │             │     (delegated subnet,
                                               │             │      private DNS zone)
                                               │             │
-                                              │             └──► Redis Cache (private
-                                              │                   endpoint, TLS-only) ◄── workers (KEDA-scaled)
+                                              │             └──► Azure Managed Redis
+                                              │                   (private endpoint,
+                                              │                   TLS-only) ◄── workers (KEDA-scaled)
                                               │
-                                              └──► Azure Files (Storage Account +
-                                                   share) for binary data
+                                              └──► Azure Blob Storage (private endpoint,
+                                                   workload identity) for binary /
+                                                   execution data
 ```
 
 ### File layout
 
 The module follows the [standard module
 structure](https://developer.hashicorp.com/terraform/language/modules/develop/structure)
-expected by the Terraform Registry. After registry-hardening Phase 5
-(US-014..US-025), the module is split into a **two-tier composition** —
-the root no longer owns any resources of its own; both submodules under
-`modules/` are the canonical source. Consumers wire both tiers in their
-own root module (see `examples/complete/` for the canonical pattern).
-
-**Root strategy: DELETE.** Per the US-025 R5.3 AC, the listed resource
-files (`aks.tf`, `database.tf`, `redis.tf`, `storage.tf`, `ingress.tf`,
-`n8n.tf`, `keda.tf`, `scaling.tf`, `iam.tf`, `cleanup.tf`) plus the
-related `controllers.tf` / `tls.tf` / `dns.tf` / `locals.tf` /
-`outputs.tf` / `variables.tf` were **deleted** rather than retained as
-thin wrappers. The DELETE rationale: with both submodules complete and
-self-contained, an umbrella wrapper at root would only add a passthrough
-layer (re-declaring every variable, re-exporting every output) without
-giving consumers any expressive power they don't already have by calling
-`module "infra" {...}` and `module "workload" {...}` directly. The split
-matches the project description's stretch goal of two registry-publishable
-tiers (`terraform-azurerm-n8n-infra` + `terraform-azurerm-n8n-workload`)
-with no umbrella.
+expected by the Terraform Registry: one resource-bearing root, one file per
+concern, no nested `module` calls at the root.
 
 | File / dir                        | Purpose                                                     |
 | --------------------------------- | ----------------------------------------------------------- |
-| `versions.tf`                     | `required_version` only — root has no resources, so no `required_providers` block is needed. **No `provider {}` blocks.** |
-| `modules/infra/`                  | **Tier 1 — Azure IaaS.** AKS, PostgreSQL Flexible Server, Redis Cache, Storage Account / Azure Files share, Application Gateway, IAM (UAMIs + role assignments), and the BYO Key Vault role assignment for the App Gateway TLS cert. Provider count: 3 (azurerm, random, time). |
-| `modules/workload/`               | **Tier 2 — Kubernetes workload.** KEDA Helm release, n8n Helm release + namespace + chart-side Secrets, n8n Ingress, post-install settle gate (`time_sleep.n8n_helm_settle`), webhook-processor HPA, KEDA `TriggerAuthentication` CR (`kubectl_manifest`, CRD-aware), destroy-time `time_sleep.wait_for_aks_drain` gate. Provider count: 5 (kubernetes, helm, random, time, kubectl). |
+| `versions.tf`                     | `required_providers` (`azurerm`, `kubernetes`, `helm`, `random`, `time`, `kubectl`), `required_version = ">= 1.9"`. **No `provider {}` blocks.** |
+| `variables.tf` / `locals.tf` / `outputs.tf` | Root input, naming/tag, and output contract. |
+| `aks.tf`, `iam.tf`                | AKS cluster + node pool, workload/AGIC UAMIs, AKS API warm-up gate, workload-identity federated credential. No dormant identities: a kubelet UAMI (private-ACR pulls, CMK disks) is added only when a story binds it. |
+| `database.tf`                     | Managed PostgreSQL Flexible Server or external-endpoint contract; `local.postgres_connection`. |
+| `redis.tf`                        | Managed Azure Managed Redis or external-endpoint contract; `local.redis_connection`. |
+| `storage.tf`                      | Private Azure Blob container, private endpoint, private DNS. |
+| `controllers.tf`, `keda.tf`, `n8n.tf` | KEDA + namespace + Secrets + n8n Helm release + post-install settle gate. |
+| `scaling.tf`                      | Webhook-processor HPA and the advisory AKS capacity diagnostic. |
+| `ingress.tf`, `keyvault.tf`, `dns.tf` | Conditional Application Gateway + AGIC + NSG + Kubernetes Ingress, Key Vault role assignment, public/private Azure DNS A-records. |
 | `modules/tls-self-signed/`        | Lab-grade self-signed cert issued via `tls_self_signed_cert` and imported into a caller-owned Key Vault. |
-| `modules/tls-letsencrypt/`        | Production-grade Let's Encrypt cert issued via `vancluever/acme` (DNS-01) and imported into a caller-owned Key Vault. |
-| `examples/complete/`              | End-to-end runnable example demonstrating the canonical two-tier wiring (`module "infra"` + `module "workload"` + the `tls-self-signed` submodule + caller-owned VNet/DNS/KV). |
+| `modules/tls-letsencrypt/`        | Production-grade Let's Encrypt cert issued via `vancluever/acme` (DNS-01, with subject alternative names) and imported into a caller-owned Key Vault. |
+| `examples/small/`, `examples/medium/`, `examples/large/` | End-to-end sizing examples with caller-owned Azure foundations, a Key Vault certificate helper, and one root `module "n8n"` call. |
+| `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |
 | `tests/scripts/smoke-test.sh`     | Post-`apply` smoke test for live deployments.               |
-| `docs/`                           | Long-form supplementary docs (troubleshooting, post-deploy, cleanup, TLS rotation). |
-| `README.md`                       | Human entry point; points at the two submodules' READMEs and the umbrella example. |
+| `docs/`                           | Long-form supplementary docs (troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets). |
+| `README.md`                       | Human entry point — architecture, prerequisites, usage, and the auto-generated Reference block. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |
 | `.copywrite.hcl`                  | Enforces the `# Copyright n8n GmbH 2025` / `# SPDX-License-Identifier: MIT` header on every `.tf`. |
 | `.github/workflows/`              | CI: fmt, validate, test, tflint, checkov, terraform-docs.   |
+| `openspec/`                       | OpenSpec change artifacts (proposal, design, delta specs, tasks) for in-flight and recently shipped changes. Intentionally tracked — this file references them — and ships in release tags as contributor documentation. |
+| `.agents/skills/`                 | Vendored agent skills used by AI contributors working in this repo. Intentionally tracked; inert for module consumers. Loop-runner state (`progress.txt`, `skills-lock.json`, `logs/`) is gitignored and must never be committed. |
 
 ### Azure-specific deltas vs `terraform-aws-n8n`
 
@@ -111,130 +226,78 @@ These are the things the AWS module does **not** need but this module
 **does** — they exist because Azure managed services have specific failure
 modes the prototype encountered. **Preserve them when restructuring.**
 
-After Phases 1, 2, 3, 4, and 5 of the registry-hardening campaign, only
-**two** genuine deltas remain. Everything else either matches the AWS
-sibling's pattern with a different parameter (e.g. the destroy-time
-`time_sleep` mirrors AWS's `time_sleep.wait_for_alb_cleanup`) or has been
-retired — see "Phase 1 + Phase 2 + Phase 3 + Phase 4 retirements" below.
+Only **two** genuine deltas remain. Everything else either matches the AWS
+sibling's pattern with a different parameter or has been retired — see
+"Historical retirements" below.
 
 1. **`azure.extensions = UUID-OSSP` allowlist on Flex Server**
    (`azurerm_postgresql_flexible_server_configuration.uuid_ossp` in
-   `modules/infra/database.tf`) — Flex Server requires server-level
-   allowlisting before any client (n8n's migrations or an operator's
-   `psql`) can run `CREATE EXTENSION "uuid-ossp"`. The configuration
-   resource is the only Terraform-side requirement; no in-cluster
-   bootstrap Job is needed because n8n's current migrations don't depend
-   on `uuid_generate_v4()` (verified against `packages/@n8n/db/AGENTS.md`).
-   HVD takes the same shape with
-   `azure.extensions = "CITEXT,HSTORE,UUID-OSSP"`. AWS RDS has no
-   equivalent allowlist requirement, so this delta has no sibling.
-2. **Azure Files destroy-time CIFS-detach window tuning**
-   (`time_sleep.wait_for_aks_drain` in `modules/workload/cleanup.tf`,
-   parameterised by `var.aks_destroy_drain_seconds`, default 120 s).
-   Mirrors `terraform-aws-n8n`'s `time_sleep.wait_for_alb_cleanup` (60 s)
-   in shape, but the parameter value is Azure-specific: SMB / CIFS detach
-   on Azure Files takes longer than AWS ALB ENI release, and the gate
-   sits between `helm_release.n8n` uninstall and `kubernetes_namespace.n8n`
-   delete to absorb the asynchronous detach. The structural pattern is
-   identical to the AWS sibling's; only the duration tuning is a delta.
-3. **KEDA `TriggerAuthentication` CRD-aware install**
-   (`kubectl_manifest.keda_trigger_authentication` in
-   `modules/workload/keda.tf`) — KEDA's `TriggerAuthentication` CRD is
-   installed by `helm_release.keda` on first apply, but
-   `hashicorp/kubernetes_manifest` validates CRDs at plan time, which
-   would force a two-pass apply. The module installs the CR via
-   `gavinbunney/kubectl_manifest`, which defers schema resolution to
-   apply time and lets a single-pass apply succeed against a fresh
-   cluster. AWS Redis (ElastiCache) doesn't require auth, so the AWS
-   sibling's KEDA wiring uses the chart's built-in ScaledObject without
-   a TriggerAuthentication — no equivalent delta in `terraform-aws-n8n`.
+   `database.tf`) — Flex Server requires server-level allowlisting before
+   any client (n8n's migrations or an operator's `psql`) can run
+   `CREATE EXTENSION "uuid-ossp"`. The configuration resource is the only
+   Terraform-side requirement; no in-cluster bootstrap Job is needed because
+   n8n's current migrations don't depend on `uuid_generate_v4()` (verified
+   against `packages/@n8n/db/AGENTS.md`). HVD takes the same shape with
+   `azure.extensions = "CITEXT,HSTORE,UUID-OSSP"`. AWS RDS has no equivalent
+   allowlist requirement, so this delta has no sibling.
+2. **KEDA `TriggerAuthentication` CRD-aware install**
+   (`kubectl_manifest.keda_trigger_authentication` in `keda.tf`) — KEDA's
+   `TriggerAuthentication` CRD is installed by `helm_release.keda` on first
+   apply, but `hashicorp/kubernetes_manifest` validates CRDs at plan time,
+   which would force a two-pass apply. The module installs the CR via
+   `gavinbunney/kubectl_manifest`, which defers schema resolution to apply
+   time and lets a single-pass apply succeed against a fresh cluster.
 
-(The destroy-time `time_sleep` is a structural-vs-tuning judgement call:
-the same idiom exists in the AWS sibling, but the parameter value is
-Azure-specific, so the row is preserved here as a tuning-level delta.)
+Azure Managed Redis (this module's Redis backend) replacing legacy Azure
+Cache for Redis is a resource-type change, not a structural delta vs AWS —
+AWS ElastiCache doesn't require the equivalent authentication contract, so
+there's no shared pattern to compare against either way.
 
-#### Phase 1 + Phase 2 + Phase 3 + Phase 4 retirements
+#### Historical retirements
 
-All five `null_resource` workarounds the prototype shipped with have been
+All five `null_resource` workarounds the prototype shipped with were
 replaced with declarative idioms that are **not** Azure-specific in shape
-(only in parameter values), and the three-mode TLS surface
-(`var.tls_mode = self_signed | letsencrypt | custom_pfx`) was collapsed
-into a single BYO-secret contract — so none of these are listed as deltas
-any more:
+(only in parameter values), and the legacy three-mode TLS surface
+(`var.tls_mode = self_signed | letsencrypt | custom_pfx`) was collapsed into
+a single BYO-secret contract. The internal two-tier split (`modules/infra/` +
+`modules/workload/`, 0 providers at the root) was itself later reverted by
+`align-azure-with-aws-capabilities` back into one resource-bearing root:
 
-- **AKS API warm-up** — `time_sleep.aks_api_warmup` in
-  `modules/infra/aks.tf` (`var.aks_api_warmup_seconds`, default 90 s,
-  range 30..600). Replaced the `null_resource.wait_for_aks_api`
-  `/healthz` poll-loop in registry-hardening US-003. The kubernetes /
+- **AKS API warm-up** — `time_sleep.aks_api_warmup` in `aks.tf`
+  (`var.aks_api_warmup_seconds`, default 90 s, range 30..600). Replaced the
+  `null_resource.wait_for_aks_api` `/healthz` poll-loop. The kubernetes /
   helm providers' built-in retry handles any post-gate 503s.
-- **uuid-ossp bootstrap Job** — deleted entirely in registry-hardening
-  US-001; the server-level `azure.extensions` allowlist (delta #1 above)
-  is now the only Terraform-side artefact.
-- **Post-deploy migration rollout-restart** — chart-native Redis
-  multi-main leader election (`multiMain.setup`) plus `helm_release.n8n`
-  running with `wait = true, atomic = true, timeout = 600, cleanup_on_fail = true`
+- **uuid-ossp bootstrap Job** — deleted entirely; the server-level
+  `azure.extensions` allowlist (delta #1 above) is now the only
+  Terraform-side artefact.
+- **Post-deploy migration rollout-restart** — chart-native Redis multi-main
+  leader election (`multiMain.setup`) plus `helm_release.n8n` running with
+  `wait = true, atomic = true, timeout = 600, cleanup_on_fail = true`
   together absorb the `CREATE INDEX CONCURRENTLY` race natively. A small
   `time_sleep.n8n_helm_settle` (default 60 s, configurable via
   `var.n8n_helm_post_install_settle_seconds`) gates the Ingress so AGIC
-  reconciles against a fully-converged deployment. Replaced
-  `null_resource.post_deploy_restart` in registry-hardening US-002.
-- **Destroy-time Azure Files drain** — `time_sleep.wait_for_aks_drain`
-  in `modules/workload/cleanup.tf` (`var.aks_destroy_drain_seconds`,
-  default 120 s, range 30..600). Mirrors `terraform-aws-n8n`
-  `time_sleep.wait_for_alb_cleanup` (60 s; Azure's window is longer
-  because SMB detach is slower than ALB ENI release). Replaced
-  `null_resource.drain_n8n_pods` (60-line shell-out drain via `az` +
-  `kubectl`) in registry-hardening US-005. Listed as delta #2 above for
-  the parameter-tuning aspect.
+  reconciles against a fully-converged deployment.
 - **KEDA TriggerAuthentication apply-time `kubectl`** —
-  `kubectl_manifest.keda_trigger_authentication` in
-  `modules/workload/keda.tf` (under the `gavinbunney/kubectl` provider).
-  Replaced `null_resource.keda_trigger_authentication` (50-line shell-out
-  `kubectl apply` provisioner) in registry-hardening US-007 (Phase 3 R3.2).
-  The R3.1 chart-native path is unavailable because the n8n-io chart at
-  the pinned version does not expose `keda.triggerAuthentication.*`
-  values nor `extraManifests` / `extraObjects` hooks (verified upstream
-  values.yaml).
+  `kubectl_manifest.keda_trigger_authentication` in `keda.tf` (delta #2
+  above). The chart-native path is unavailable because the n8n-io chart at
+  the pinned version does not expose `keda.triggerAuthentication.*` values
+  nor `extraManifests` / `extraObjects` hooks (verified upstream
+  `values.yaml`).
+- **Destroy-time Azure Files CIFS-detach drain** — `time_sleep.wait_for_aks_drain`
+  in `cleanup.tf` existed only to absorb the asynchronous SMB detach after Helm
+  uninstalled pods mounting the Azure Files share. Removed by
+  `slim-first-release-surface` alongside Azure Files support itself — no
+  shared-filesystem mount means no CIFS detach to wait on. If a live destroy
+  qualification surfaces a different teardown race, reintroduce a gate with
+  that failure mode documented; do not resurrect the CIFS rationale.
 - **Three-mode TLS surface (`var.tls_mode`) + module-owned Key Vault** —
-  collapsed into a single BYO-secret contract:
-  `var.app_gateway_tls_cert_secret_id` + the optional
-  `var.app_gateway_keyvault_id` (role-assignment scope). The
-  `azurerm_key_vault.n8n` resource and the three per-mode cert resources
-  (`azurerm_key_vault_certificate.{self_signed,letsencrypt,custom_pfx}`)
-  were deleted; the `acme_*` and `tls_*` helper trees moved into the new
-  `modules/tls-letsencrypt/` (US-009) and `modules/tls-self-signed/`
-  (US-010) submodules. Retired in registry-hardening US-012 (Phase 4
-  R4.3).
-
-#### Phase 5 — two-tier split
-
-Phase 5 (US-014..US-026) split the (then) single-tier root module into
-two registry-publishable submodules: `modules/infra/` (Tier 1, Azure
-IaaS) and `modules/workload/` (Tier 2, Kubernetes workload). The root
-module no longer carries any resources, providers, inputs, or outputs —
-only `versions.tf` with `required_version = ">= 1.9"`. The umbrella
-example (`examples/complete/`) is the canonical wiring template that
-calls both submodules from a single Terraform configuration.
-
-Provider posture after the split:
-
-- **Root**: 0 providers (no resources).
-- **`modules/infra/`**: 3 providers — `azurerm`, `random`, `time`. The
-  `time` provider backs the two declarative gates that replaced
-  `null_resource.wait_for_aks_api` (US-003) and feeds into the
-  workload-tier destroy ordering.
-- **`modules/workload/`**: 5 providers — `kubernetes`, `helm`, `random`,
-  `time`, `kubectl`. The `kubectl` provider backs the single CRD-aware
-  manifest (`kubectl_manifest.keda_trigger_authentication`) that the
-  n8n chart at the pinned version doesn't render; a follow-up PR can
-  revisit moving the TriggerAuthentication into a chart-rendered
-  manifest if upstream adds first-class `keda.triggerAuthentication.*`
-  values, at which point the workload tier drops to 4 providers.
-
-The remaining gap to `terraform-aws-n8n`'s 5-provider posture is the
-+1 `kubectl` in the workload tier; everything else is structurally
-mirrored. See the Registry-readiness audit table below for the
-complete end-state KPIs.
+  collapsed into a single BYO-secret contract: `var.app_gateway_tls_cert_secret_id`
+  + the optional `var.app_gateway_keyvault_id` (role-assignment scope). The
+  `acme_*` and `tls_*` helper trees live in `modules/tls-letsencrypt/` and
+  `modules/tls-self-signed/`.
+- **Two-tier composition (`modules/infra/` + `modules/workload/`)** — every
+  resource, control, and safeguard both submodules owned now lives at the
+  root in the concern files listed under [File layout](#file-layout) above.
 
 ## Quality bar: HashiCorp Terraform Registry & Partner Premier Tier
 
@@ -263,13 +326,11 @@ Concretely, in this repo:
 `.github/workflows/terraform-tests.yml` runs both on every PR and push to `main`:
 
 - **`terraform fmt -check -recursive`** — canonical formatting.
-- **`terraform validate`** against `modules/infra/`, `modules/workload/`,
-  and `examples/complete/` (the root has no resources after the Phase-5
-  split, so `terraform validate` at the root is trivially clean).
-- **`tflint`** against `modules/infra/`, `modules/workload/`, and the
-  example, with the **azurerm** ruleset initialized via `tflint --init`.
-  The ruleset comes from `.tflint.hcl` at the module root, which pins
-  `terraform-linters/tflint-ruleset-azurerm`.
+- **`terraform validate`** against the root, both TLS submodules, and every
+  example.
+- **`tflint`** against the same set, with the **azurerm** ruleset initialized
+  via `tflint --init`. The ruleset comes from `.tflint.hcl` at the module
+  root, which pins `terraform-linters/tflint-ruleset-azurerm`.
 - **`checkov`** (`bridgecrewio/checkov-action@v12`) against the Terraform
   framework. `soft_fail` is currently `true` — see the inline comment in the
   workflow. **When you add new resources, do not regress curated findings;
@@ -277,40 +338,31 @@ Concretely, in this repo:
 
 ### 2. Unit + integration tests via `terraform test`
 
-After the Phase-5 split, three plan-time test suites cover the module:
+- `tests/defaults.tftest.hcl` exercises every resource, output, and
+  diagnostic the root module owns. Uses `mock_provider` for all six
+  declared providers.
+- `modules/tls-letsencrypt/tests/*.tftest.hcl` and
+  `modules/tls-self-signed/tests/*.tftest.hcl` cover the two TLS helpers.
+- Each of `examples/small`, `examples/medium`, `examples/large`, and
+  `examples/split-ingress` carries its own `tests/*.tftest.hcl` suite
+  asserting the example's distinguishing decisions (sizing, split-ingress
+  routing).
 
-- `modules/infra/tests/defaults.tftest.hcl` exercises every Azure IaaS
-  resource the infra tier creates. Uses `mock_provider` for `azurerm`,
-  `random`, and `time`.
-- `modules/workload/tests/defaults.tftest.hcl` exercises every
-  Kubernetes-side resource the workload tier creates. Uses
-  `mock_provider` for `kubernetes`, `helm`, `random`, `time`, and
-  `kubectl`.
-- `examples/complete/tests/defaults.tftest.hcl` exercises the umbrella
-  example end-to-end (caller-owned RGs / VNet / DNS / shared KV plus
-  both module calls plus the tls-self-signed submodule), catching wiring
-  mistakes between the example and a realistic caller. All seven
-  providers mocked.
+`tests/scripts/smoke-test.sh` is the **integration / post-apply** check used
+against a real cluster — kept out of CI on purpose (it needs live Azure
+credentials and an applied stack).
 
-The root has no resources after the Phase-5 split, so it carries no
-`tests/*.tftest.hcl` suite. `tests/scripts/smoke-test.sh` is the
-**integration / post-apply** check used against a real cluster — kept
-out of CI on purpose (it needs live Azure credentials and an applied
-stack).
-
-All three suites run **without Azure credentials** and are safe to run
-in CI.
+All Terraform test suites run **without Azure credentials** and are safe to
+run in CI.
 
 When you add a feature, add an `assert` for it in the relevant
 `.tftest.hcl` file. Use `command = plan` unless you specifically need
 apply semantics.
 
-**Combined wall-clock budget:** `modules/infra/` + `modules/workload/`
-+ `examples/complete/` test suites must complete in **under 5 minutes**
-on a clean GitHub Actions runner. If you add a run that pushes the budget, profile it. Measured on
-`terraform 1.15.1` (US-028, 2026-05-05) on a local laptop: module-root
-6 runs ≈ 2 s, example 1 run ≈ 1 s — combined wall-clock is well below the
-budget; CI runners with cold provider caches add ~30 s per `init`.
+**Combined wall-clock budget:** every `terraform test` suite in this repo
+(root + both TLS submodules + all six examples) must complete in **under 5
+minutes** on a clean GitHub Actions runner. If you add a run that pushes the
+budget, profile it.
 
 ### 3. Naming conventions
 
@@ -320,7 +372,7 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
 - Repository name is **`terraform-<PROVIDER>-<NAME>`** → `terraform-azurerm-n8n`.
 - Resource names use **`snake_case`**. The "main" resource of a kind in this
   module is named `n8n` (e.g. `azurerm_kubernetes_cluster.n8n`,
-  `azurerm_postgresql_flexible_server.n8n`, `azurerm_redis_cache.n8n`) —
+  `azurerm_postgresql_flexible_server.n8n`, `azurerm_managed_redis.n8n`) —
   this matches the registry convention of using a short, descriptive label
   rather than repeating the resource type.
 - Variables and outputs use **`snake_case`** with a leading noun
@@ -351,23 +403,21 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   terraform-docs .
   ```
 
-  CI installs the same version (`v0.22.0`, tracking the brew default) and
+  CI installs the same version (`v0.24.0`, tracking the brew default) and
   runs `terraform-docs --output-check .`. If your local version differs
   from CI's, the markdown table whitespace will drift and the check will
   fail; bump both together when upgrading.
 
-- `examples/complete/README.md` documents the runnable example.
-- `docs/troubleshooting.md`, `docs/post-deployment.md`,
-  `docs/destroy-cleanup.md`, and `docs/tls-rotation.md` cover operator-facing
-  concerns that don't belong inline in `README.md`.
+- `examples/README.md` compares the sizing tiers; each tier has its own generated README reference.
+- `docs/troubleshooting.md`, `docs/post-deployment.md`, `docs/destroy-cleanup.md`,
+  `docs/tls-rotation.md`, `docs/redis.md`, `docs/data-storage.md`,
+  `docs/observability.md`, and `docs/azure-key-vault-external-secrets.md`
+  cover operator-facing concerns that don't belong inline in `README.md`.
 - Inline comments in `.tf` files use the `# ── Section ──` banner style.
   Match it when adding new sections.
-- The destroy-time `time_sleep.wait_for_aks_drain` gate (that replaced
-  the legacy bash drain in registry-hardening US-005) and the
-  `kubectl_manifest.keda_trigger_authentication` defer-rendered manifest
-  (that replaced the legacy `local-exec kubectl apply` workaround in
-  US-007) each carry a comment block above the resource documenting the
-  failure mode prevented and a link to the relevant troubleshooting doc.
+- The `kubectl_manifest.keda_trigger_authentication` defer-rendered manifest
+  carries a comment block above the resource documenting the failure mode
+  prevented and a link to the relevant troubleshooting doc.
 
 ### 5. Standard module files
 
@@ -384,45 +434,60 @@ All of the following are present and should stay present:
 ### Local development loop
 
 ```bash
-terraform fmt -recursive                       # before committing (covers both submodules + the example)
+terraform fmt -recursive        # before committing (covers the root + both TLS submodules + every example)
 
-# Tier 1 — modules/infra/
-cd modules/infra
+# Root module
 terraform init -backend=false
 terraform validate
-terraform test -verbose                        # plan-time, no Azure creds needed
+terraform test -verbose         # plan-time, no Azure creds needed
 tflint --init && tflint --format compact
 
-# Tier 2 — modules/workload/
-cd ../workload
-terraform init -backend=false
-terraform validate
-terraform test -verbose
-tflint --init && tflint --format compact
+# TLS helper submodules
+for dir in modules/tls-self-signed modules/tls-letsencrypt; do
+  terraform -chdir="$dir" init -backend=false
+  terraform -chdir="$dir" validate
+  terraform -chdir="$dir" test -verbose
+done
 
-# Umbrella example
-cd ../../examples/complete
-terraform init -backend=false
-terraform validate
-terraform test -verbose
-tflint --init && tflint --format compact
+# Examples
+for dir in examples/small examples/medium examples/large examples/split-ingress; do
+  terraform -chdir="$dir" init -backend=false
+  terraform -chdir="$dir" validate
+  terraform -chdir="$dir" test -verbose
+done
 
 # Static analysis (matches CI):
-cd ../..
 checkov -d . --framework terraform --soft-fail
 
 # Refresh the README reference blocks (matches CI's --output-check):
-terraform-docs modules/infra
-terraform-docs modules/workload
-terraform-docs examples/complete
+terraform-docs .
+terraform-docs examples/small
+terraform-docs examples/medium
+terraform-docs examples/large
 ```
 
-After running any `terraform init`, clean up `.terraform/` and
-`.terraform.lock.hcl` before committing — both are gitignored but `init`
-will create them.
+`./init.sh` runs the offline subset of this loop (fmt, init, validate, test)
+across the root, both TLS submodules, and all four examples in one command —
+safe to run repeatedly, no Azure credentials required.
 
-A real deployment uses `terraform apply` from `examples/complete/` with a
-populated `terraform.tfvars` — but **never apply from CI** in this repo.
+After running any `terraform init`, clean up `.terraform/` before committing
+— it is gitignored and `init` will recreate it. `.terraform.lock.hcl` is the
+opposite: it is intentionally tracked (not gitignored) at the root and every
+example/submodule, per module-verification's "Provider lock coverage"
+requirement. After adding or bumping a provider, refresh every lock file for
+all three supported platforms and commit the result:
+
+```bash
+for dir in . modules/tls-self-signed modules/tls-letsencrypt \
+  examples/small examples/medium examples/large \
+  examples/split-ingress; do
+  terraform -chdir="$dir" providers lock \
+    -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64
+done
+```
+
+A real deployment uses `terraform apply` from the selected sizing example with
+a populated `terraform.tfvars`, but **never apply from CI** in this repo.
 
 ### Running `tests/scripts/smoke-test.sh` against a live deployment
 
@@ -431,15 +496,16 @@ a machine that has `az login`'d to the target subscription:
 
 ```bash
 az login
-cd examples/complete
+cd examples/small
 terraform init && terraform apply               # populated terraform.tfvars
 ../../tests/scripts/smoke-test.sh               # uses `terraform output` to discover the cluster
 ```
 
-The script asserts: AKS API responds, n8n namespace exists, ≥2 main pods
-Ready, ≥1 worker pod Ready, ≥2 webhook-processor pods Ready, App Gateway
-public IP reachable, HTTPS GET on `n8n_url` returns 200, license is valid.
-Non-zero exit on any failed assertion.
+The script asserts: AKS API responds, n8n namespace exists, main/worker/
+webhook-processor pods meet their autoscaler floors, PostgreSQL and Redis
+connectivity, Azure Blob access, App Gateway reachable, HTTPS GET on
+`n8n_url` returns 200, license is valid. Non-zero exit on any failed
+assertion.
 
 ### When adding a new input
 
@@ -470,25 +536,22 @@ Non-zero exit on any failed assertion.
 
 - Don't configure providers inside the module. `versions.tf` declares
   `required_providers`; provider configuration is the caller's job (see
-  `examples/complete/providers.tf`).
-- Don't introduce nested `module` calls inside the module root — this
-  module is intentionally flat so registry consumers can read it top to
-  bottom. (`examples/complete/` may call AVM modules; the module root may
-  not.)
+  `examples/small/providers.tf`).
+- Don't introduce nested `module` calls inside the module root. This module is
+  intentionally flat so registry consumers can read it top to bottom. Examples
+  may call helper modules; the module root may not.
 - Don't drop networking into the module root. The caller passes `vnet_id`
-  and the five subnet IDs; only the two private DNS zones
-  (`privatelink.postgres.database.azure.com`,
-  `privatelink.redis.cache.windows.net`) are module-owned.
+  and the five subnet IDs; only the private DNS zones (Postgres, Redis, Blob)
+  are module-owned.
 - Don't reintroduce a `null_resource` workaround. All five the prototype
-  shipped with were replaced in Phases 1, 2, and 3 of the registry-hardening
-  campaign — see the Registry-readiness audit table for what shipped where.
-  If you need to apply CRD-aware Kubernetes manifests, use the
-  `gavinbunney/kubectl` provider's `kubectl_manifest` resource (already in
-  `versions.tf`); if you need a destroy-time wait, use `time_sleep` with
-  `destroy_duration`.
+  shipped with have been replaced — see "Historical retirements" above for
+  what shipped where. If you need to apply CRD-aware Kubernetes manifests,
+  use the `gavinbunney/kubectl` provider's `kubectl_manifest` resource
+  (already in `versions.tf`); if you need a destroy-time wait, use
+  `time_sleep` with `destroy_duration`.
 - Don't commit `terraform.tfstate*`, `*.tfplan`, `apply*.log`, or
   `terraform.tfvars`. The `.gitignore` already covers these; check before
-  committing if you ran `apply` locally inside `examples/complete/`.
+  committing if you ran `apply` locally inside an example directory.
 - Don't hand-edit the `<!-- BEGIN_TF_DOCS -->` block in `README.md`.
 - Don't widen `soft_fail` or silence lint rules without a comment explaining
   why and a follow-up TODO.
@@ -500,80 +563,10 @@ Non-zero exit on any failed assertion.
   `gavinbunney/kubectl_manifest` instead — it defers schema resolution to
   apply time, so a single-pass apply works. The KEDA TriggerAuthentication
   in `keda.tf` is the canonical example.
-
-## Registry-readiness audit (Phase 5 exit criterion)
-
-Before tagging `v3.0.0` (the Phase-5 split major), every box below must
-be checked. Audited on 2026-05-06 against `ralph/registry-hardening`
-HEAD as the Phase-5 close-out pass (US-025 wired the split; US-026
-verified the end-state KPIs and signed off the audit below).
-
-- [x] Repo named `terraform-azurerm-n8n`.
-- [x] `LICENSE` is MIT, copyright n8n GmbH 2025.
-- [x] No `provider {}` blocks at the module root or in either submodule
-      (only in `examples/complete/providers.tf`).
-- [x] Two-tier composition layout — `modules/infra/` + `modules/workload/`
-      are the canonical resource-bearing modules; the root carries
-      `versions.tf` only (no resources, no providers, no inputs / outputs).
-      `examples/complete/main.tf` calls both submodules directly.
-- [x] Copywrite header on every `.tf` file (`modules/infra/` +
-      `modules/workload/` + `examples/complete/`).
-- [x] Every n8n-owned resource named `.n8n` (or a topic-scoped `.<topic>`
-      where one cluster hosts multiple of the same resource type, e.g.
-      `azurerm_user_assigned_identity.aks_kubelet` / `.appgw_tls_cert` /
-      `.n8n_workload`).
-- [x] `terraform fmt -check -recursive` passes (the recursive walk covers
-      both submodules and the example).
-- [x] `terraform validate` passes at the root and at every resource-bearing
-      directory: `modules/infra/`, `modules/workload/`, the two TLS
-      submodules, and the three `examples/complete*/` examples.
-- [x] `terraform test` passes everywhere — 60 mock-backed tests across
-      eight locations: 0 root, 29 `modules/infra/`, 19 `modules/workload/`,
-      4 `modules/tls-letsencrypt/`, 5 `modules/tls-self-signed/`, 1 each
-      for `examples/complete/`, `examples/complete-letsencrypt/`, and
-      `examples/complete-self-signed/`.
-- [x] `tflint` passes (azurerm ruleset) at every location — gated by the
-      `.github/workflows/terraform-tests.yml` `tflint` job (matrix
-      expanded in US-026 to cover every submodule and example).
-- [x] `checkov` passes (`soft_fail` allowed) — gated by the
-      `.github/workflows/terraform-tests.yml` `checkov` job.
-- [x] `terraform-docs --output-check` passes at every directory whose
-      `README.md` carries a `<!-- BEGIN_TF_DOCS -->` block (root,
-      `modules/infra/`, `modules/workload/`, and the three
-      `examples/complete*/` examples; the two TLS submodules ship
-      hand-written READMEs without the marker by design).
-      terraform-docs v0.22.0.
-- [x] `null_resource` workaround Phase-tracking — every workaround the
-      prototype shipped with has been replaced with a declarative idiom.
-      **`null_resource` count: 0** (`grep -rc '^resource "null_resource"' modules/ *.tf` returns 0).
-      **Provider counts after the Phase-5 split:**
-      - Root: **0** providers (no resources, no inputs / outputs).
-      - `modules/infra/`: **3** (`azurerm`, `random`, `time`).
-      - `modules/workload/`: **5** (`kubernetes`, `helm`, `random`,
-        `time`, `kubectl`).
-      The remaining gap to `terraform-aws-n8n`'s 5-provider posture is
-      `kubectl` only, which backs the single CRD-aware
-      `kubectl_manifest.keda_trigger_authentication` install in
-      `modules/workload/keda.tf` (the n8n chart at the pinned version
-      doesn't render the TriggerAuthentication; a follow-up PR can
-      revisit if upstream adds first-class
-      `keda.triggerAuthentication.*` values). `tls` and `acme` were
-      removed in US-012 and now live inside the
-      `modules/tls-letsencrypt/` and `modules/tls-self-signed/`
-      submodules. The breaking-change migration guide
-      (`var.tls_mode → var.app_gateway_tls_cert_secret_id`,
-      single-tier root → two-tier `module.infra` + `module.workload`)
-      lives in [`CHANGELOG.md`](./CHANGELOG.md).
-
-      | Workaround                                  | Phase   | Story  | Status   | Replacement                                                                                                                                                                                     |
-      | ------------------------------------------- | ------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-      | `null_resource.create_uuid_extension`       | 1 R1.1  | US-001 | DELETED  | `azurerm_postgresql_flexible_server_configuration.uuid_ossp` in `modules/infra/database.tf` (server-level `azure.extensions` allowlist).                                                       |
-      | `null_resource.post_deploy_restart`         | 1 R1.2  | US-002 | DELETED  | Chart-native Redis multi-main leader election + `helm_release.n8n {wait, atomic, timeout, cleanup_on_fail}` + `time_sleep.n8n_helm_settle` in `modules/workload/n8n.tf` (`var.n8n_helm_post_install_settle_seconds`, 60 s). |
-      | `null_resource.wait_for_aks_api`            | 1 R1.3  | US-003 | DELETED  | `time_sleep.aks_api_warmup` in `modules/infra/aks.tf` (`var.aks_api_warmup_seconds`, default 90 s, range 30..600) + kubernetes/helm provider built-in retry on transient API errors.            |
-      | `null_resource.drain_n8n_pods`              | 2 R2.1  | US-005 | DELETED  | `time_sleep.wait_for_aks_drain` in `modules/workload/cleanup.tf` (`var.aks_destroy_drain_seconds`, default 120 s, range 30..600). Mirrors `terraform-aws-n8n` `time_sleep.wait_for_alb_cleanup`. |
-      | `null_resource.keda_trigger_authentication` | 3 R3.2  | US-007 | DELETED  | `kubectl_manifest.keda_trigger_authentication` in `modules/workload/keda.tf` (gavinbunney/kubectl provider). Defers schema resolution to apply time, so a single-pass apply works.              |
-- [x] Combined `terraform test` wall-clock < 5 minutes on a clean GitHub
-      Actions runner.
+- Don't reintroduce a two-tier `modules/infra` + `modules/workload` split.
+  The root is intentionally the single resource-bearing module again after
+  `align-azure-with-aws-capabilities` — see the "Historical retirements"
+  section above for why the split was reverted.
 
 ## References
 
@@ -590,5 +583,5 @@ verified the end-state KPIs and signed off the audit below).
   [tflint-ruleset-azurerm](https://github.com/terraform-linters/tflint-ruleset-azurerm) ·
   [Checkov](https://www.checkov.io/)
 - [`Azure/avm-res-network-virtualnetwork/azurerm`](https://registry.terraform.io/modules/Azure/avm-res-network-virtualnetwork/azurerm/latest)
-  — AVM module used by `examples/complete/` to build the five subnets with
+  — AVM module used by the sizing examples to build the five subnets with
   the required delegations / network-policy settings.

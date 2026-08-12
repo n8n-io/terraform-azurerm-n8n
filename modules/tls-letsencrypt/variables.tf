@@ -4,7 +4,8 @@
 # ── Inputs ───────────────────────────────────────────────────────────────────
 # Submodule contract. The caller supplies:
 #   - the Key Vault to import the issued PFX into (`key_vault_id`),
-#   - the FQDN the cert is issued for (`domain_name`),
+#   - the primary FQDN and optional subject alternative names the cert covers
+#     (`domain_name` + `subject_alternative_names`),
 #   - the ACME registration email (`acme_email`),
 #   - the Azure DNS zone backing the DNS-01 challenge
 #     (`dns_zone_resource_group_name` + `dns_zone_name`),
@@ -25,12 +26,54 @@ variable "acme_email" {
 }
 
 variable "domain_name" {
-  description = "Fully-qualified domain name the issued cert is valid for (e.g. n8n.example.com). Becomes the cert's CN and the sole entry in its SAN list. Must be a name covered by `var.dns_zone_name` so the DNS-01 challenge can write the validation TXT record."
+  description = "Canonical fully-qualified domain name for the issued certificate (e.g. n8n.example.com). Becomes the certificate common name. It must be the Azure DNS zone apex or a subdomain of dns_zone_name so DNS-01 validation can write the challenge record."
   type        = string
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.domain_name))
-    error_message = "domain_name must be a valid fully qualified domain name (e.g. n8n.example.com)."
+    condition     = length(var.domain_name) <= 253 && can(regex("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,63}$", var.domain_name))
+    error_message = "domain_name must be a valid fully qualified domain name with no empty labels or leading or trailing hyphens (e.g. n8n.example.com)."
+  }
+
+  validation {
+    condition = (
+      lower(var.domain_name) == lower(var.dns_zone_name) ||
+      endswith(lower(var.domain_name), ".${lower(var.dns_zone_name)}")
+    )
+    error_message = "domain_name must be the dns_zone_name apex or a subdomain of dns_zone_name."
+  }
+}
+
+variable "subject_alternative_names" {
+  description = "Additional fully-qualified domain names included on the certificate. Names are normalized to lowercase before issuance, must be unique without repeating domain_name, and must live in dns_zone_name because the Azure DNS challenge uses that one authoritative zone."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition = alltrue([
+      for domain in var.subject_alternative_names :
+      length(domain) <= 253 && can(regex("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,63}$", domain))
+    ])
+    error_message = "Every subject_alternative_names entry must be a valid fully qualified domain name with no empty labels or leading or trailing hyphens."
+  }
+
+  validation {
+    condition     = !contains([for domain in var.subject_alternative_names : lower(domain)], lower(var.domain_name))
+    error_message = "domain_name must not be repeated in subject_alternative_names."
+  }
+
+  validation {
+    condition     = length(distinct([for domain in var.subject_alternative_names : lower(domain)])) == length(var.subject_alternative_names)
+    error_message = "subject_alternative_names must not contain case-insensitive duplicates."
+  }
+
+  validation {
+    condition = alltrue([
+      for domain in var.subject_alternative_names :
+      lower(domain) == lower(var.dns_zone_name) ||
+      endswith(lower(domain), ".${lower(var.dns_zone_name)}")
+    ])
+    error_message = "Every subject_alternative_names entry must be the dns_zone_name apex or a subdomain of dns_zone_name."
   }
 }
 

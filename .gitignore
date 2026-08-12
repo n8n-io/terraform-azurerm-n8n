@@ -10,7 +10,12 @@ terraform.tfstate
 terraform.tfstate.backup
 *.tfstate
 *.tfstate.*
-*.terraform.lock.*
+
+# NOTE: .terraform.lock.hcl is intentionally NOT ignored. The root module and
+# every example commit multi-platform provider locks (Linux AMD64, Linux
+# ARM64, Darwin ARM64) per module-verification's "Provider lock coverage"
+# requirement — see openspec/changes/align-azure-with-aws-capabilities/
+# specs/module-verification/spec.md and AGENTS.md section 16.4.
 
 # Saved plan files
 *.tfplan
@@ -25,6 +30,11 @@ terraform.tfstate.backup
 # Crash logs
 crash.log
 crash.*.log
+
+# Agent loop-runner state — local working files, never part of a release
+progress.txt
+skills-lock.json
+logs/
 
 # Local override files (used for temporary dev changes — not for sharing)
 override.tf

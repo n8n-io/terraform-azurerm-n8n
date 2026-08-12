@@ -142,12 +142,11 @@ This issues a brand-new ACME account, registers it, and re-issues the
 cert. Use sparingly — the old account is left dangling at Let's Encrypt
 (no harm, but no automated cleanup).
 
-**To switch between Let's Encrypt staging and production:** the
-submodule's `examples/complete-letsencrypt/providers.tf` ships with the
-production server URL active and the staging URL commented out. Flip
-the `provider "acme"` block's `server_url` and `terraform apply` —
-staging certs are not trusted by browsers but exercise the issuance
-path without rate-limit consumption.
+**To switch between Let's Encrypt staging and production:** configure the
+calling root's `provider "acme"` block with the desired `server_url`, as shown
+in [`modules/tls-letsencrypt/README.md`](../modules/tls-letsencrypt/README.md),
+then run `terraform apply`. Staging certificates are not trusted by browsers
+but exercise the issuance path without rate-limit consumption.
 
 **Verify after rotation:** same `openssl s_client` snippet as the
 self-signed rotation. The issuer should be `R3` (Let's Encrypt) or

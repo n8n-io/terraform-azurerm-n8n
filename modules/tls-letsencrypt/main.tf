@@ -4,7 +4,8 @@
 # ── Let's Encrypt ACME → Key Vault ────────────────────────────────────────────
 # vancluever/acme registers an account with Let's Encrypt and issues a cert
 # via the DNS-01 challenge against an Azure DNS zone authoritative for
-# `var.domain_name`. The `acme_certificate` resource exposes a PKCS#12 bundle
+# `var.domain_name` and every `var.subject_alternative_names` entry. The
+# `acme_certificate` resource exposes a PKCS#12 bundle
 # (`certificate_p12` + `certificate_p12_password`) that imports directly into
 # Azure Key Vault — no openssl conversion step needed.
 #
@@ -33,7 +34,10 @@ resource "acme_registration" "n8n" {
 
 resource "acme_certificate" "n8n" {
   account_key_pem = acme_registration.n8n.account_key_pem
-  common_name     = var.domain_name
+  common_name     = lower(var.domain_name)
+  subject_alternative_names = length(var.subject_alternative_names) == 0 ? null : toset([
+    for domain in var.subject_alternative_names : lower(domain)
+  ])
 
   dns_challenge {
     provider = "azure"

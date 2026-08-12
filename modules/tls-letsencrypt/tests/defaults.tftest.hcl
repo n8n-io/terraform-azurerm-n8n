@@ -55,8 +55,16 @@ run "submodule_plans_clean_with_defaults" {
   # presents this CN to clients — a mismatch with the ingress hostname is
   # an immediate browser cert-name error.
   assert {
-    condition     = acme_certificate.n8n.common_name == var.domain_name
-    error_message = "acme_certificate.n8n.common_name must equal var.domain_name"
+    condition     = acme_certificate.n8n.common_name == lower(var.domain_name)
+    error_message = "acme_certificate.n8n.common_name must equal the normalized var.domain_name"
+  }
+
+  assert {
+    condition = (
+      acme_certificate.n8n.subject_alternative_names == null &&
+      output.certificate_domain_names == toset([lower(var.domain_name)])
+    )
+    error_message = "The default certificate must cover only the normalized canonical domain."
   }
 
   # DNS-01 challenge against Azure DNS. Provider plug-in must be `azure`
@@ -112,6 +120,31 @@ run "submodule_plans_clean_with_defaults" {
   }
 }
 
+run "subject_alternative_names_expand_certificate_contract" {
+  command = plan
+
+  variables {
+    domain_name = "N8N.EXAMPLE.COM"
+    subject_alternative_names = [
+      "Hooks.Example.com",
+      "mcp.example.com",
+    ]
+  }
+
+  assert {
+    condition = (
+      acme_certificate.n8n.common_name == "n8n.example.com" &&
+      acme_certificate.n8n.subject_alternative_names == toset(["hooks.example.com", "mcp.example.com"])
+    )
+    error_message = "The ACME certificate must normalize and issue every configured subject alternative name."
+  }
+
+  assert {
+    condition     = output.certificate_domain_names == toset(["n8n.example.com", "hooks.example.com", "mcp.example.com"])
+    error_message = "certificate_domain_names must expose the complete normalized certificate name set."
+  }
+}
+
 # ── Variable validation rejects bad input ─────────────────────────────────────
 # One contract per validation rule. Each scenario sets one bad value, leaves
 # the rest at the defaults block above, and asserts terraform plan is
@@ -151,5 +184,29 @@ run "rejects_malformed_key_vault_id" {
 
   expect_failures = [
     var.key_vault_id,
+  ]
+}
+
+run "rejects_malformed_or_duplicate_subject_alternative_names" {
+  command = plan
+
+  variables {
+    subject_alternative_names = ["bad..example.com", "HOOKS.EXAMPLE.COM", "hooks.example.com"]
+  }
+
+  expect_failures = [
+    var.subject_alternative_names,
+  ]
+}
+
+run "rejects_subject_alternative_name_outside_dns_zone" {
+  command = plan
+
+  variables {
+    subject_alternative_names = ["hooks.other.example.net"]
+  }
+
+  expect_failures = [
+    var.subject_alternative_names,
   ]
 }
