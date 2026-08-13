@@ -4,7 +4,8 @@
 # offline (fmt / validate / mocked terraform test).
 set -euo pipefail
 
-cd "$(dirname "$0")"
+# This script lives in openspec/; run everything from the repo root.
+cd "$(dirname "$0")/.."
 
 echo "== Tool check =="
 for tool in terraform tflint checkov terraform-docs; do
@@ -22,20 +23,28 @@ terraform fmt -check -recursive
 
 # Every directory that carries resources and/or a test suite. `.` (the root)
 # is the single resource-bearing module since align-azure-with-aws-capabilities
-# section 15.5 deleted modules/infra and modules/workload. The
-# split-ingress topology example matches the CI matrices in
+# section 15.5 deleted modules/infra and modules/workload. modules/controllers
+# is the directly callable KEDA submodule added by
+# add-customer-managed-modularity section 3. The split-ingress topology
+# example and the four customer-managed-* examples (added by
+# add-customer-managed-modularity section 7) match the CI matrices in
 # .github/workflows/terraform-tests.yml. The cloudflare and godaddy
 # DNS-provider examples were removed in slim-first-release-surface section 1;
 # see modules/tls-letsencrypt/README.md for the DNS-01 provider snippets they
 # used to demonstrate.
 DIRS=(
   .
+  modules/controllers
   modules/tls-self-signed
   modules/tls-letsencrypt
   examples/small
   examples/medium
   examples/large
   examples/split-ingress
+  examples/customer-managed-cluster
+  examples/customer-managed-redis
+  examples/customer-managed-storage
+  examples/customer-managed-everything
 )
 
 for dir in "${DIRS[@]}"; do

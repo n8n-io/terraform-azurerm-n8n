@@ -32,24 +32,24 @@
 # ── AKS ──────────────────────────────────────────────────────────────────
 
 output "aks_cluster_id" {
-  description = "Resource ID of the AKS cluster. Consumed by caller wiring that scopes role assignments to the cluster (e.g. AGIC Contributor)."
-  value       = azurerm_kubernetes_cluster.n8n.id
+  description = "Resource ID of the effective AKS cluster (module-created or existing). Consumed by caller wiring that scopes role assignments to the cluster (e.g. AGIC Contributor)."
+  value       = local.effective_aks_cluster_id
 }
 
 output "aks_cluster_name" {
-  description = "Name of the AKS cluster. Useful for `data.azurerm_kubernetes_cluster.n8n` lookups in callers that prefer data-source-based kubeconfig refresh over the `aks_kube_config` output."
-  value       = azurerm_kubernetes_cluster.n8n.name
+  description = "Name of the effective AKS cluster (module-created or existing). Useful for `data.azurerm_kubernetes_cluster.n8n` lookups in callers that prefer data-source-based kubeconfig refresh over the `aks_kube_config` output."
+  value       = local.effective_aks_cluster_name
 }
 
 output "aks_kube_config" {
-  description = "Local-account kubeconfig block for the AKS cluster. The cluster has no AAD-RBAC integration so this IS the local-account admin credential. A calling root uses this to configure the kubernetes / helm providers against this module's cluster (see examples/small/providers.tf, section 13) without a kubelogin / exec dependency."
-  value       = azurerm_kubernetes_cluster.n8n.kube_config
+  description = "Local-account kubeconfig block for the effective AKS cluster (module-created or existing). The cluster has no AAD-RBAC integration so this IS the local-account admin credential. A calling root uses this to configure the kubernetes / helm providers against this module's cluster (see examples/small/providers.tf, section 13) without a kubelogin / exec dependency. On existing AKS, the caller's own read permissions on the referenced cluster govern whether this local-account kubeconfig is available."
+  value       = local.effective_aks_kube_config
   sensitive   = true
 }
 
 output "aks_oidc_issuer_url" {
-  description = "OIDC issuer URL for the AKS cluster. Useful for callers wiring their own federated identity credentials against workload identities this module does not manage."
-  value       = azurerm_kubernetes_cluster.n8n.oidc_issuer_url
+  description = "OIDC issuer URL for the effective AKS cluster (module-created or existing). Useful for callers wiring their own federated identity credentials against workload identities this module does not manage."
+  value       = local.effective_aks_oidc_issuer_url
 }
 
 output "n8n_workload_uami_client_id" {
@@ -86,7 +86,7 @@ output "postgres_admin_username" {
 }
 
 output "postgres_admin_password" {
-  description = "Password n8n authenticates to PostgreSQL with — either the generated `random_password.postgres_admin` (`create_database = true`) or `postgres_external_password` (`create_database = false`). Marked sensitive."
+  description = "Password n8n authenticates to PostgreSQL with — either the generated `random_password.postgres_admin` (`create_database = true`) or `postgres_external_password` (`create_database = false`). Explicitly null when `postgres_password_secret_ref` selects a caller-managed Kubernetes Secret instead, because Terraform never reads that Secret's value. Marked sensitive."
   value       = local.postgres_connection.password
   sensitive   = true
 }
@@ -107,7 +107,7 @@ output "redis_port" {
 }
 
 output "redis_primary_access_key" {
-  description = "Credential n8n and KEDA authenticate to Redis with — either the generated Azure Managed Redis primary access key (`create_redis = true`) or `redis_external_password` (`create_redis = false`). Marked sensitive."
+  description = "Credential n8n and KEDA authenticate to Redis with — either the generated Azure Managed Redis primary access key (`create_redis = true`) or `redis_external_password` (`create_redis = false`). Explicitly null when `redis_password_secret_ref` selects a caller-managed Kubernetes Secret instead, because Terraform never reads that Secret's value. Marked sensitive."
   value       = local.redis_connection.password
   sensitive   = true
 }
@@ -115,25 +115,23 @@ output "redis_primary_access_key" {
 # ── Storage ───────────────────────────────────────────────────────────────
 
 output "storage_account_name" {
-  description = "Name of the private StorageV2 account that holds the managed Azure Blob container."
-  value       = azurerm_storage_account.n8n.name
+  description = "Name of the Blob storage account n8n uses — the module-managed StorageV2 account (create_blob_storage = true, the default) or the caller-supplied existing_blob_storage_account_name (create_blob_storage = false)."
+  value       = local.effective_blob_storage_account_name
 }
 
 output "azure_blob_container_name" {
-  description = "Name of the private Azure Blob container used for n8n binary data and optional Azure execution-data bundles."
-  value       = azurerm_storage_container.n8n.name
+  description = "Name of the private Azure Blob container n8n uses for binary data and optional Azure execution-data bundles — the module-managed container (create_blob_storage = true, the default) or the caller-supplied existing_blob_container_name (create_blob_storage = false)."
+  value       = local.effective_blob_container_name
 }
 
 output "azure_blob_endpoint" {
-  description = "Azure Blob endpoint n8n uses, either the module-managed storage account endpoint or the caller-supplied custom endpoint. Marked sensitive because custom endpoints may expose private topology names."
+  description = "Azure Blob endpoint n8n uses — the module-managed storage account endpoint (create_blob_storage = true, the default), a caller-supplied custom endpoint override, or the caller-supplied existing_blob_endpoint (create_blob_storage = false). Marked sensitive because custom endpoints may expose private topology names."
   value       = local.azure_blob_connection.endpoint
   sensitive   = true
-
-  depends_on = [azurerm_storage_container.n8n]
 }
 
 output "n8n_encryption_key" {
-  description = "Effective n8n encryption key that wraps every credential stored in n8n's database — the caller-supplied `var.n8n_encryption_key` when set, otherwise the module-generated key. Back this up to a password manager immediately after the first apply — losing it makes existing credentials unrecoverable on any future deployment."
+  description = "Effective n8n encryption key that wraps every credential stored in n8n's database — the caller-supplied `var.n8n_encryption_key` when set, otherwise the module-generated key. Explicitly null when `n8n_encryption_key_secret_ref` selects a caller-managed Kubernetes Secret instead, because Terraform never reads that Secret's value. Back this up to a password manager immediately after the first apply — losing it makes existing credentials unrecoverable on any future deployment."
   value       = local.n8n_encryption_key
   sensitive   = true
 }
@@ -141,8 +139,8 @@ output "n8n_encryption_key" {
 # ── n8n workload and service discovery ───────────────────────────────────
 
 output "n8n_namespace" {
-  description = "Kubernetes namespace containing the n8n workload. Derived from the managed namespace resource so caller-owned Kubernetes resources inherit its creation dependency."
-  value       = kubernetes_namespace.n8n.metadata[0].name
+  description = "Kubernetes namespace containing the n8n workload — the module-created namespace when create_namespace = true (the default), or the caller-supplied existing namespace name when create_namespace = false."
+  value       = local.n8n_namespace
 }
 
 output "n8n_helm_release_name" {

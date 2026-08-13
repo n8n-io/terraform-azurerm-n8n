@@ -1,9 +1,7 @@
 ## Purpose
 
 Provide secure Azure ingress, DNS, and certificate behavior for public, private, multi-domain, and caller-owned routing topologies.
-
 ## Requirements
-
 ### Requirement: Module-managed Application Gateway ingress
 The module SHALL create a WAF_v2 Application Gateway and AGIC-managed Ingress by default, with explicit public or internal frontend selection, TLS policy, WAF mode, capacity or autoscaling, and additional ingress annotations.
 
@@ -26,11 +24,15 @@ The module SHALL expose IPv4 source CIDR restrictions and an annotation map whil
 - **THEN** port 80 and 443 traffic outside those CIDRs SHALL be denied while required Azure gateway-management traffic remains permitted
 
 ### Requirement: Caller-owned ingress
-The module SHALL support disabling module-managed Application Gateway, Ingress, and DNS resources while retaining the n8n services and exposing their names, port, namespace, webhook path prefixes, and webhook URL control.
+The module SHALL support disabling module-managed Application Gateway, AGIC integration, Ingress, Key Vault access grants, and DNS resources while retaining the n8n services and exposing their names, port, namespace, webhook path prefixes, and webhook URL control. Customer-managed AKS SHALL require this caller-owned ingress path.
 
 #### Scenario: Bring two caller-owned gateways
 - **WHEN** `create_ingress` is false
-- **THEN** the module SHALL create no Application Gateway, public IP, Ingress, or application DNS record and SHALL expose enough service metadata for caller-owned routing
+- **THEN** the module SHALL create no Application Gateway, AGIC addon configuration, public IP, Ingress, Key Vault role grant, or application DNS record and SHALL expose enough service metadata for caller-owned routing
+
+#### Scenario: Deploy onto existing AKS
+- **WHEN** AKS creation is disabled
+- **THEN** module-managed ingress SHALL also be disabled and the caller SHALL route the exported main and webhook service coordinates through an existing ingress controller
 
 ### Requirement: Multi-domain TLS and routing
 The module SHALL support a canonical n8n domain plus validated additional domains, attach a Key Vault certificate that covers them, and create a listener and route set for every host on the managed path.

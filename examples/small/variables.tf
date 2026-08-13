@@ -71,7 +71,7 @@ variable "aks_api_authorized_ip_ranges" {
 variable "aks_node_vm_size" {
   description = "Azure VM SKU for both AKS node pools. Confirm regional and zonal availability for the selected subscription before applying."
   type        = string
-  default     = "Standard_D2s_v7"
+  default     = "Standard_D2s_v5"
 
   validation {
     condition     = can(regex("^Standard_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*$", var.aks_node_vm_size))

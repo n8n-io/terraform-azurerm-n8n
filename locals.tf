@@ -48,8 +48,8 @@ locals {
   # Namespace names and chart-rendered service coordinates stay centralized so
   # Kubernetes resources, KEDA manifests, outputs, and caller-owned ingress can
   # share one contract.
-  n8n_namespace                = "n8n"
-  keda_namespace               = "keda"
+  n8n_namespace                = var.n8n_namespace
+  keda_namespace               = var.keda_namespace
   n8n_redis_secret_name        = "n8n-redis-secret"
   n8n_task_runners_secret_name = "n8n-task-runners-secret"
   n8n_redis_keda_auth_name     = "n8n-redis-keda-auth"
@@ -198,14 +198,23 @@ locals {
   # Authentication remains optional for external Redis. Managed Redis always
   # has an access key. These booleans declassify only whether a credential is
   # present, never the credential itself, so Helm and KEDA can omit dead secret
-  # references without exposing the value.
-  redis_password_present       = var.create_redis ? true : nonsensitive(var.redis_external_password != null)
+  # references without exposing the value. A password also counts as present
+  # when it is sourced from a caller-managed Secret reference (section 5) —
+  # Terraform does not know the value in that case, but Redis still requires
+  # AUTH, so the TriggerAuthentication and Helm redis.passwordSecret block
+  # below must still render.
+  redis_password_present       = var.create_redis ? true : nonsensitive(var.redis_external_password != null || var.redis_password_secret_ref != null)
   redis_username_present       = var.create_redis ? false : var.redis_external_username != null
   redis_authentication_enabled = local.redis_password_present ? true : local.redis_username_present
 
   # KEDA resolves TriggerAuthentication in the ScaledObject's namespace. The
   # manifest contains secret references only. Redis credentials remain in the
-  # Kubernetes Secret and are never embedded in this CR.
+  # Kubernetes Secret and are never embedded in this CR. The password entry
+  # points at whichever Secret currently backs it — the module-managed one or
+  # a caller-managed reference (local.redis_password_secret_name/_key,
+  # redis.tf) — while the username entry always uses the module-managed
+  # Secret because kubernetes_secret.n8n_redis (n8n.tf) exists whenever a
+  # username is present, regardless of the password source.
   keda_trigger_authentication_yaml = yamlencode({
     apiVersion = "keda.sh/v1alpha1"
     kind       = "TriggerAuthentication"
@@ -222,8 +231,8 @@ locals {
         }] : [],
         local.redis_password_present ? [{
           parameter = "password"
-          name      = local.n8n_redis_secret_name
-          key       = "password"
+          name      = local.redis_password_secret_name
+          key       = local.redis_password_secret_key
         }] : [],
       )
     }
@@ -243,13 +252,21 @@ locals {
   # endpoint override is passed through verbatim; accepting a sovereign Blob
   # endpoint does not certify the full module for that cloud.
   azure_blob_connection = {
-    account_name      = azurerm_storage_account.n8n.name
-    container_name    = azurerm_storage_container.n8n.name
-    endpoint          = var.azure_blob_endpoint == null ? azurerm_storage_account.n8n.primary_blob_endpoint : var.azure_blob_endpoint
+    account_name      = local.effective_blob_storage_account_name
+    container_name    = local.effective_blob_container_name
+    endpoint          = var.azure_blob_endpoint == null ? local.effective_blob_endpoint : var.azure_blob_endpoint
     auth_auto_detect  = var.azure_blob_connection_string == null && var.azure_blob_account_key == null
     connection_string = var.azure_blob_connection_string
     account_key       = var.azure_blob_account_key
   }
+
+  # Managed public-cloud storage can rely on the Azure SDK's account-derived
+  # default endpoint. Customer-managed storage must render its required
+  # existing endpoint, while an explicit override renders on either path.
+  azure_blob_endpoint_env = var.create_blob_storage && var.azure_blob_endpoint == null ? [] : [{
+    name  = "N8N_EXTERNAL_STORAGE_AZURE_ENDPOINT"
+    value = local.azure_blob_connection.endpoint
+  }]
 
   # Remove absent optional destination fields before JSON encoding. n8n expects
   # the documented flat webhook, syslog, and Sentry objects, not explicit nulls.
@@ -259,4 +276,99 @@ locals {
     }
   ]
 
+  # ── Customer-managed infrastructure effective references ─────────────────
+  # (add-customer-managed-modularity sections 1–2 and 6) Selects one
+  # effective value per potentially customer-managed layer so downstream
+  # resources and outputs can read a single contract regardless of which
+  # side of each create_* switch is active. The "true" branch of each pair
+  # indexes into the corresponding `count`-gated managed resource. The
+  # "false" branch values come only from validated existing-resource inputs
+  # or, for AKS, the read-only `data.azurerm_kubernetes_cluster.existing`
+  # lookup (aks.tf) — the module never inspects a customer-managed Azure
+  # resource beyond that one documented exception (design.md decision 2).
+  effective_aks_cluster_id   = var.create_aks ? azurerm_kubernetes_cluster.n8n[0].id : data.azurerm_kubernetes_cluster.existing[0].id
+  effective_aks_cluster_name = var.create_aks ? azurerm_kubernetes_cluster.n8n[0].name : var.existing_aks_cluster_name
+
+  # No root resource or output currently needs the effective AKS resource
+  # group name (every module-owned resource that needs a resource group uses
+  # var.resource_group_name directly, since UAMIs and role assignments live
+  # in the module's own resource group regardless of which AKS resource group
+  # is in scope). Kept on the contract, and asserted by
+  # tests/defaults.tftest.hcl's `existing_aks_plan_creates_no_managed_resources`
+  # run, so a future consumer (e.g. an AKS-resource-group-scoped diagnostic)
+  # can read it without re-deriving the create_aks ternary.
+  # tflint-ignore: terraform_unused_declarations
+  effective_aks_resource_group_name = var.create_aks ? var.resource_group_name : var.existing_aks_resource_group_name
+
+  effective_aks_oidc_issuer_url = var.create_aks ? azurerm_kubernetes_cluster.n8n[0].oidc_issuer_url : data.azurerm_kubernetes_cluster.existing[0].oidc_issuer_url
+  effective_aks_kube_config     = var.create_aks ? azurerm_kubernetes_cluster.n8n[0].kube_config : data.azurerm_kubernetes_cluster.existing[0].kube_config
+
+  effective_blob_storage_account_name = var.create_blob_storage ? azurerm_storage_account.n8n[0].name : var.existing_blob_storage_account_name
+  effective_blob_container_name       = var.create_blob_storage ? azurerm_storage_container.n8n[0].name : var.existing_blob_container_name
+  effective_blob_container_id         = var.create_blob_storage ? azurerm_storage_container.n8n[0].id : var.existing_blob_container_id
+  effective_blob_endpoint             = var.create_blob_storage ? azurerm_storage_account.n8n[0].primary_blob_endpoint : var.existing_blob_endpoint
+
+  # Declassify only whether a caller-managed Secret reference replaces a
+  # module-generated or literal credential source — never the credential
+  # value itself. Section 5 gates the corresponding generated/Kubernetes
+  # Secret resources and renders the chart and KEDA TriggerAuthentication
+  # from these selections without reading any caller-managed Secret value
+  # into Terraform.
+  n8n_license_key_uses_secret_ref    = var.n8n_license_key_secret_ref != null
+  n8n_encryption_key_uses_secret_ref = var.n8n_encryption_key_secret_ref != null
+  postgres_password_uses_secret_ref  = var.postgres_password_secret_ref != null
+  redis_password_uses_secret_ref     = var.redis_password_secret_ref != null
+
+  # Effective Secret name and key each credential-consuming resource renders
+  # into the chart or the KEDA TriggerAuthentication — the module-managed
+  # Secret's coordinates (name always known statically; the resource itself
+  # is `count`-gated to zero on the caller-managed branch, so `try()` reads
+  # around the absent instance) or the caller-supplied reference's coordinates
+  # verbatim. None of these ever read a caller-managed Secret's value.
+  n8n_license_secret_name = local.n8n_license_key_uses_secret_ref ? var.n8n_license_key_secret_ref.name : try(kubernetes_secret.n8n_license[0].metadata[0].name, null)
+  n8n_license_secret_key  = local.n8n_license_key_uses_secret_ref ? var.n8n_license_key_secret_ref.key : "license-key"
+
+  n8n_encryption_secret_name = local.n8n_encryption_key_uses_secret_ref ? var.n8n_encryption_key_secret_ref.name : try(kubernetes_secret.n8n_encryption_key[0].metadata[0].name, null)
+
+  postgres_password_secret_name = local.postgres_password_uses_secret_ref ? var.postgres_password_secret_ref.name : try(kubernetes_secret.n8n_db[0].metadata[0].name, null)
+  postgres_password_secret_key  = local.postgres_password_uses_secret_ref ? var.postgres_password_secret_ref.key : "password"
+
+  redis_password_secret_name = local.redis_password_uses_secret_ref ? var.redis_password_secret_ref.name : try(kubernetes_secret.n8n_redis[0].metadata[0].name, null)
+  redis_password_secret_key  = local.redis_password_uses_secret_ref ? var.redis_password_secret_ref.key : "password"
+}
+
+# ── Ignored-input diagnostics ────────────────────────────────────────────────
+# Non-failing warnings for existing-resource references or attestations
+# supplied while the corresponding layer remains module-managed. Hard
+# failures for incomplete customer-managed contracts live on the
+# existing_* variables themselves in variables.tf.
+check "existing_aks_reference_ignored_when_module_managed" {
+  assert {
+    condition = var.create_aks ? (
+      var.existing_aks_cluster_name == null &&
+      var.existing_aks_resource_group_name == null &&
+      !var.existing_aks_cluster_prerequisites_confirmed
+    ) : true
+    error_message = "existing_aks_cluster_name, existing_aks_resource_group_name, or existing_aks_cluster_prerequisites_confirmed is set while create_aks is true, so the module creates and uses its own AKS cluster and these references are ignored. Set create_aks = false to target the existing cluster, or clear the inert references."
+  }
+}
+
+check "existing_blob_reference_ignored_when_module_managed" {
+  assert {
+    condition = var.create_blob_storage ? (
+      var.existing_blob_storage_account_name == null &&
+      var.existing_blob_container_name == null &&
+      var.existing_blob_container_id == null &&
+      var.existing_blob_endpoint == null &&
+      !var.existing_blob_prerequisites_confirmed
+    ) : true
+    error_message = "An existing_blob_* reference or existing_blob_prerequisites_confirmed is set while create_blob_storage is true, so the module creates and uses its own Blob storage account and container and these references are ignored. Set create_blob_storage = false to target the existing container, or clear the inert references."
+  }
+}
+
+check "existing_keda_prerequisites_ignored_when_module_managed" {
+  assert {
+    condition     = var.install_keda ? !var.existing_keda_prerequisites_confirmed : true
+    error_message = "existing_keda_prerequisites_confirmed is set while install_keda is true, so the module installs and manages KEDA itself and the attestation is ignored. Set install_keda = false to use the existing installation, or clear the inert attestation."
+  }
 }

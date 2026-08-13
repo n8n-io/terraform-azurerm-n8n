@@ -49,9 +49,21 @@ jobs:
       fail-fast: false
       matrix:
         # Only directories whose README.md carries a <!-- BEGIN_TF_DOCS -->
-        # block. The two TLS submodules are intentionally excluded (their
-        # READMEs are hand-written without an auto-generated reference table).
-        target: [".", "examples/small", "examples/medium", "examples/large", "examples/split-ingress"]
+        # block. The two TLS submodules and modules/controllers are
+        # intentionally excluded (their READMEs are hand-written without an
+        # auto-generated reference table).
+        target:
+          [
+            ".",
+            "examples/small",
+            "examples/medium",
+            "examples/large",
+            "examples/split-ingress",
+            "examples/customer-managed-cluster",
+            "examples/customer-managed-redis",
+            "examples/customer-managed-storage",
+            "examples/customer-managed-everything",
+          ]
     steps:
       - uses: actions/checkout@v4
 
@@ -75,7 +87,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/small", "examples/medium", "examples/large", "examples/split-ingress"]
+        target:
+          [
+            ".",
+            "modules/controllers",
+            "modules/tls-letsencrypt",
+            "modules/tls-self-signed",
+            "examples/small",
+            "examples/medium",
+            "examples/large",
+            "examples/split-ingress",
+            "examples/customer-managed-cluster",
+            "examples/customer-managed-redis",
+            "examples/customer-managed-storage",
+            "examples/customer-managed-everything",
+          ]
     steps:
       - uses: actions/checkout@v4
 
@@ -112,7 +138,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/small", "examples/medium", "examples/large", "examples/split-ingress"]
+        target:
+          [
+            ".",
+            "modules/controllers",
+            "modules/tls-letsencrypt",
+            "modules/tls-self-signed",
+            "examples/small",
+            "examples/medium",
+            "examples/large",
+            "examples/split-ingress",
+            "examples/customer-managed-cluster",
+            "examples/customer-managed-redis",
+            "examples/customer-managed-storage",
+            "examples/customer-managed-everything",
+          ]
     steps:
       - uses: actions/checkout@v4
 
@@ -144,7 +184,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "modules/tls-letsencrypt", "modules/tls-self-signed", "examples/small", "examples/medium", "examples/large", "examples/split-ingress"]
+        target:
+          [
+            ".",
+            "modules/controllers",
+            "modules/tls-letsencrypt",
+            "modules/tls-self-signed",
+            "examples/small",
+            "examples/medium",
+            "examples/large",
+            "examples/split-ingress",
+            "examples/customer-managed-cluster",
+            "examples/customer-managed-redis",
+            "examples/customer-managed-storage",
+            "examples/customer-managed-everything",
+          ]
     # All targets share the single .tflint.hcl at the module root. tflint
     # reads TFLINT_CONFIG_FILE before falling back to ./.tflint.hcl, so each
     # example cell can reuse the root config without a duplicate.

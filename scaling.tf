@@ -6,9 +6,11 @@
 # This module therefore owns the webhook HPA directly while the chart renders
 # the independent main HPA. Workers remain queue-depth driven through KEDA.
 resource "kubernetes_horizontal_pod_autoscaler_v2" "n8n_webhook" {
+  count = var.n8n_webhook_hpa_enabled ? 1 : 0
+
   metadata {
     name      = "n8n-webhook-processor"
-    namespace = kubernetes_namespace.n8n.metadata[0].name
+    namespace = local.n8n_namespace
   }
 
   spec {
@@ -58,6 +60,27 @@ resource "kubernetes_horizontal_pod_autoscaler_v2" "n8n_webhook" {
   }
 
   depends_on = [helm_release.n8n]
+}
+
+# n8n_webhook_hpa_enabled = false leaves the caller responsible for scaling
+# the webhook-processor Deployment. Helm still renders it at
+# n8n_webhook_hpa_min_replicas (see webhookProcessor.replicaCount in
+# n8n.tf), so a platform-managed HPA has a stable Deployment to target.
+check "webhook_hpa_tuning_requires_module_managed_webhook_hpa" {
+  assert {
+    condition = var.n8n_webhook_hpa_enabled ? true : (
+      var.n8n_webhook_hpa_max_replicas == 8 &&
+      var.n8n_webhook_hpa_cpu_threshold == 65 &&
+      var.n8n_webhook_hpa_scale_up_stabilization_window_seconds == 0
+    )
+    error_message = join("", [
+      "An n8n_webhook_hpa_max_replicas, n8n_webhook_hpa_cpu_threshold, or ",
+      "n8n_webhook_hpa_scale_up_stabilization_window_seconds override is set while ",
+      "n8n_webhook_hpa_enabled = false. The module creates no webhook HPA in that mode, so ",
+      "none of these apply — n8n_webhook_hpa_min_replicas still sets the chart-rendered floor. ",
+      "Scaling above that floor is the caller-managed autoscaler's responsibility.",
+    ])
+  }
 }
 
 # ── Advisory AKS CPU capacity model ──────────────────────────────────────────
@@ -180,7 +203,11 @@ locals {
     var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
   )
 
-  n8n_capacity_model_readable = local.aks_node_vcpus_derived != null
+  # The capacity model assumes it owns both AKS node pools and their maximum
+  # counts (design.md decision 8). That assumption is only true when
+  # create_aks = true; an existing cluster's capacity is the caller's to size
+  # and monitor, so the diagnostic below stays silent in that mode.
+  n8n_capacity_model_readable = var.create_aks && local.aks_node_vcpus_derived != null
 }
 
 # A check emits a warning without blocking plan or apply. The model is
@@ -202,6 +229,35 @@ check "autoscaling_maxima_fit_aks_capacity" {
       "less ${local.aks_node_kube_reserved_cpu_millis}m AKS reservation and ${local.aks_node_daemon_cpu_millis}m daemon requests per node, ",
       "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima or CPU requests, or raise ",
       "aks_node_count_max or aks_node_vm_size. This diagnostic is advisory and does not fail the plan.",
+    ])
+  }
+}
+
+# Managed-cluster sizing/version/hardening inputs left at anything other than
+# their documented defaults while create_aks = false have no effect —
+# azurerm_kubernetes_cluster.n8n and its node pool do not exist in that mode,
+# and the capacity model above stays silent. The existing cluster's version,
+# node sizing, zones, API access, and upgrade surge are owned by whoever
+# created it. Mirrors `redis_tuning_requires_module_managed_redis`. KEEP
+# THESE LITERALS IN LOCKSTEP WITH variables.tf defaults.
+check "aks_tuning_requires_module_managed_aks" {
+  assert {
+    condition = var.create_aks ? true : (
+      var.aks_kubernetes_version == "1.35" &&
+      var.aks_node_vm_size == "Standard_D4s_v4" &&
+      var.aks_node_count_min == 2 &&
+      var.aks_node_count_max == 6 &&
+      var.aks_availability_zones == tolist(["1", "2", "3"]) &&
+      length(var.aks_api_authorized_ip_ranges) == 0 &&
+      var.aks_node_upgrade_max_surge == "10%" &&
+      var.aks_api_warmup_seconds == 90
+    )
+    error_message = join("", [
+      "An aks_kubernetes_version, aks_node_vm_size, aks_node_count_min, aks_node_count_max, ",
+      "aks_availability_zones, aks_api_authorized_ip_ranges, aks_node_upgrade_max_surge, or ",
+      "aks_api_warmup_seconds override is set while create_aks = false. The module creates no AKS ",
+      "cluster or node pool in that mode, so none of these apply — sizing, version, zones, API access, ",
+      "and upgrade behavior are properties of the existing cluster you supplied.",
     ])
   }
 }

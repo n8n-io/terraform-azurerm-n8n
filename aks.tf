@@ -29,6 +29,8 @@
 #     Storage in section 5) without static credentials.
 
 resource "azurerm_kubernetes_cluster" "n8n" {
+  count = var.create_aks ? 1 : 0
+
   name                = local.cluster_name
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -119,8 +121,10 @@ resource "azurerm_kubernetes_cluster" "n8n" {
 # to the system pool today (same SKU, same autoscaler bounds); split out
 # explicitly so a future story can taint it for n8n-only scheduling.
 resource "azurerm_kubernetes_cluster_node_pool" "n8n_user" {
+  count = var.create_aks ? 1 : 0
+
   name                  = "n8nuser"
-  kubernetes_cluster_id = azurerm_kubernetes_cluster.n8n.id
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.n8n[0].id
   vm_size               = var.aks_node_vm_size
   vnet_subnet_id        = var.aks_subnet_id
   zones                 = var.aks_availability_zones
@@ -170,11 +174,27 @@ resource "azurerm_user_assigned_identity" "n8n_workload" {
 # directly or transitively. The `triggers` map re-fires the gate when the
 # cluster is recreated.
 resource "time_sleep" "aks_api_warmup" {
+  count = var.create_aks ? 1 : 0
+
   create_duration = "${var.aks_api_warmup_seconds}s"
 
   triggers = {
-    cluster_id = azurerm_kubernetes_cluster.n8n.id
+    cluster_id = azurerm_kubernetes_cluster.n8n[0].id
   }
 
   depends_on = [azurerm_kubernetes_cluster.n8n]
+}
+
+# ── Existing AKS lookup ────────────────────────────────────────────────────
+# The only exception to the rule against inspecting customer-managed Azure
+# resources (design.md decision 2): workload federation needs the existing
+# cluster's OIDC issuer, and the root's stable outputs need connection
+# material. This reads identity/connection coordinates, not a security audit
+# of the cluster's configuration — that is what
+# existing_aks_cluster_prerequisites_confirmed attests to instead.
+data "azurerm_kubernetes_cluster" "existing" {
+  count = var.create_aks ? 0 : 1
+
+  name                = var.existing_aks_cluster_name
+  resource_group_name = var.existing_aks_resource_group_name
 }

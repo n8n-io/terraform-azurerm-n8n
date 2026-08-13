@@ -383,14 +383,14 @@ variable "postgres_external_username" {
 }
 
 variable "postgres_external_password" {
-  description = "Password for the external PostgreSQL endpoint specified by `postgres_external_host`. Required when `create_database = false`. Ignored otherwise (the module generates a random password for its managed Flexible Server)."
+  description = "Password for the external PostgreSQL endpoint specified by `postgres_external_host`. Required when `create_database = false`, unless `postgres_password_secret_ref` is set instead. Ignored when `create_database = true` (the module generates a random password for its managed Flexible Server)."
   type        = string
   default     = null
   sensitive   = true
 
   validation {
-    condition     = var.create_database || var.postgres_external_password != null
-    error_message = "postgres_external_password is required when create_database = false."
+    condition     = var.create_database ? true : ((var.postgres_external_password != null) != (var.postgres_password_secret_ref != null))
+    error_message = "Set exactly one of postgres_external_password or postgres_password_secret_ref when create_database = false."
   }
 }
 
@@ -494,10 +494,15 @@ variable "redis_external_username" {
 }
 
 variable "redis_external_password" {
-  description = "Password for the external Redis endpoint specified by `redis_external_host`. Optional — leave `null` to point at an unauthenticated external Redis (e.g. one that relies on network-level isolation instead of AUTH). Ignored when `create_redis = true` (the module reads the generated primary access key from its managed Azure Managed Redis instance)."
+  description = "Password for the external Redis endpoint specified by `redis_external_host`. Optional — leave `null` to point at an unauthenticated external Redis (e.g. one that relies on network-level isolation instead of AUTH), or set `redis_password_secret_ref` instead. Ignored when `create_redis = true` (the module reads the generated primary access key from its managed Azure Managed Redis instance)."
   type        = string
   default     = null
   sensitive   = true
+
+  validation {
+    condition     = !(var.redis_external_password != null && var.redis_password_secret_ref != null)
+    error_message = "Set at most one of redis_external_password or redis_password_secret_ref."
+  }
 }
 
 # ── Private Azure Blob storage ───────────────────────────────────────────
@@ -600,11 +605,14 @@ variable "appgw_subnet_id" {
 # ── Application Gateway ingress ──────────────────────────────────────────
 
 variable "create_ingress" {
-  description = "Create the module-managed Application Gateway, AGIC addon integration, Kubernetes Ingress, and eligible application DNS records. True by default. Set false for caller-owned routing such as split public-webhook and internal-admin gateways; AKS, n8n Services, and service-discovery outputs remain available."
+  description = "Create the module-managed Application Gateway, AGIC addon integration, Kubernetes Ingress, and eligible application DNS records. True by default. Set false for caller-owned routing such as split public-webhook and internal-admin gateways; AKS, n8n Services, and service-discovery outputs remain available. Must be false when create_aks = false — the module cannot manage the AGIC addon or Application Gateway on an AKS cluster it does not own."
   type        = bool
   default     = true
 
-  # no validation: a plain bool needs no additional constraint.
+  validation {
+    condition     = var.create_aks || !var.create_ingress
+    error_message = "create_ingress must be false when create_aks = false. The module cannot manage AGIC or Application Gateway on an existing AKS cluster; route the exported n8n service coordinates through an existing ingress controller instead."
+  }
 }
 
 variable "appgw_frontend_mode" {
@@ -2019,18 +2027,24 @@ variable "app_gateway_keyvault_role_assignment_enabled" {
 }
 
 variable "n8n_license_key" {
-  description = "n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF_VAR_n8n_license_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below."
+  description = "n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Leave null when n8n_license_key_secret_ref selects a caller-managed Kubernetes Secret instead — exactly one of the two must be set. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF_VAR_n8n_license_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below."
   type        = string
+  default     = null
   sensitive   = true
 
   validation {
-    condition     = length(var.n8n_license_key) > 0 && var.n8n_license_key != "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
+    condition     = (var.n8n_license_key != null) != (var.n8n_license_key_secret_ref != null)
+    error_message = "Set exactly one of n8n_license_key or n8n_license_key_secret_ref."
+  }
+
+  validation {
+    condition     = var.n8n_license_key == null || (length(var.n8n_license_key) > 0 && var.n8n_license_key != "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY")
     error_message = "n8n_license_key must be set to a real license key — the placeholder value from terraform.tfvars.example is not accepted. Get a key at https://n8n.io/pricing."
   }
 }
 
 variable "n8n_encryption_key" {
-  description = "Existing n8n encryption key to reuse — e.g. the backed-up key from another n8n installation whose PostgreSQL data this deployment restores. Leave null (the default) to generate a fresh 48-character key. n8n cannot decrypt credentials encrypted under a different key, so any restore of an existing n8n database MUST set this to that database's original key before the first apply. Marked sensitive — supply via environment variable (TF_VAR_n8n_encryption_key) or a secret-managed terraform.tfvars, and note the value resides in Terraform state either way."
+  description = "Existing n8n encryption key to reuse — e.g. the backed-up key from another n8n installation whose PostgreSQL data this deployment restores. Leave null (the default) to generate a fresh 48-character key. n8n cannot decrypt credentials encrypted under a different key, so any restore of an existing n8n database MUST set this to that database's original key before the first apply. Mutually exclusive with n8n_encryption_key_secret_ref. Marked sensitive — supply via environment variable (TF_VAR_n8n_encryption_key) or a secret-managed terraform.tfvars, and note the value resides in Terraform state either way."
   type        = string
   default     = null
   sensitive   = true
@@ -2038,5 +2052,304 @@ variable "n8n_encryption_key" {
   validation {
     condition     = var.n8n_encryption_key == null || length(coalesce(var.n8n_encryption_key, "x")) >= 10
     error_message = "n8n_encryption_key must be at least 10 characters when set (n8n self-generated keys are 24+ characters; this module generates 48). Leave it null to have the module generate one."
+  }
+
+  validation {
+    condition     = !(var.n8n_encryption_key != null && var.n8n_encryption_key_secret_ref != null)
+    error_message = "Set at most one of n8n_encryption_key or n8n_encryption_key_secret_ref."
+  }
+}
+
+# ── Customer-managed infrastructure ownership (add-customer-managed-modularity section 1) ──
+# Plan-known switches for every independently customer-manageable layer:
+# existing AKS, existing Blob storage, the n8n namespace, the KEDA
+# installation, the webhook HPA, and caller-managed Kubernetes Secret
+# references for workload credentials. Every switch defaults to module
+# ownership so the module's greenfield behavior is unchanged when a caller
+# sets none of these inputs. Literal booleans (never inferred from whether an
+# existing-resource reference is null) keep every downstream `count`
+# expression plan-known — see design.md decision 1. Sections 2–6 gate the
+# corresponding resources and wire these references into effective locals;
+# this section only establishes the input contract.
+
+variable "create_aks" {
+  description = "When true (the default), the module creates and manages the AKS cluster, its node pools, the API warm-up gate, and AGIC/ingress-related cluster identity. Set to false to deploy onto an existing AKS cluster supplied via existing_aks_cluster_name and existing_aks_resource_group_name — existing_aks_cluster_prerequisites_confirmed must then be true, and create_ingress must be false because the module cannot manage AGIC on a cluster it does not own. Kept as a static boolean rather than inferring ownership from a nullable reference because count expressions cannot depend on values computed at apply time."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "existing_aks_cluster_name" {
+  description = "Name of an existing AKS cluster to deploy onto. Required when create_aks = false. Ignored when create_aks = true. The module reads this cluster's OIDC issuer and connection coordinates through a data source; it does not create, modify, or manage the cluster itself."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.create_aks || var.existing_aks_cluster_name != null
+    error_message = "existing_aks_cluster_name is required when create_aks = false."
+  }
+}
+
+variable "existing_aks_resource_group_name" {
+  description = "Resource group of the existing AKS cluster named by existing_aks_cluster_name. Required when create_aks = false. Ignored when create_aks = true. May differ from var.resource_group_name."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.create_aks || var.existing_aks_resource_group_name != null
+    error_message = "existing_aks_resource_group_name is required when create_aks = false."
+  }
+}
+
+variable "existing_aks_cluster_prerequisites_confirmed" {
+  description = "Attestation required when create_aks = false, confirming that the existing AKS cluster has the OIDC issuer and workload identity enabled, has schedulable capacity and node autoscaling managed by the caller, is reachable with a supported Kubernetes version and provider access, and has no namespace, service account, Helm release, or cluster-scoped KEDA object name that conflicts with this module's resources. Terraform cannot verify any of these conditions itself — setting this to true is the caller's assertion that they are met. Ignored when create_aks = true."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = var.create_aks || var.existing_aks_cluster_prerequisites_confirmed
+    error_message = "existing_aks_cluster_prerequisites_confirmed must be true when create_aks = false."
+  }
+}
+
+variable "create_blob_storage" {
+  description = "When true (the default), the module creates and manages the private Blob storage account, container, private DNS zone and link, private endpoint, and lifecycle policy. Set to false to use an existing Blob storage account and container supplied via existing_blob_storage_account_name, existing_blob_container_name, existing_blob_container_id, and existing_blob_endpoint — existing_blob_prerequisites_confirmed must then be true. The module still grants its n8n workload identity container-scoped data-plane access to the supplied container when automatic authentication is selected. Kept as a static boolean rather than inferring ownership from a nullable reference because count expressions cannot depend on values computed at apply time."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "existing_blob_storage_account_name" {
+  description = "Name of an existing Azure Storage account holding the private Blob container n8n uses for binary and execution data. Required when create_blob_storage = false. Ignored when create_blob_storage = true. The module does not create, modify, or inspect this account."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.create_blob_storage || var.existing_blob_storage_account_name != null
+    error_message = "existing_blob_storage_account_name is required when create_blob_storage = false."
+  }
+
+  validation {
+    condition     = var.existing_blob_storage_account_name == null ? true : can(regex("^[a-z0-9]{3,24}$", var.existing_blob_storage_account_name))
+    error_message = "existing_blob_storage_account_name must be null or a valid Azure Storage account name containing 3-24 lowercase letters or digits."
+  }
+}
+
+variable "existing_blob_container_name" {
+  description = "Name of the existing private Blob container n8n uses for binary and execution data. Required when create_blob_storage = false. Ignored when create_blob_storage = true."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.create_blob_storage || var.existing_blob_container_name != null
+    error_message = "existing_blob_container_name is required when create_blob_storage = false."
+  }
+
+  validation {
+    condition = var.existing_blob_container_name == null ? true : (
+      can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.existing_blob_container_name)) &&
+      !strcontains(var.existing_blob_container_name, "--")
+    )
+    error_message = "existing_blob_container_name must be null or a valid Azure Blob container name containing 3-63 lowercase letters, digits, or single hyphens, starting and ending with a letter or digit."
+  }
+}
+
+variable "existing_blob_container_id" {
+  description = "Resource ID of the existing Blob container named by existing_blob_container_name, used to scope the n8n workload identity's Storage Blob Data Contributor role assignment when automatic authentication is selected. Required when create_blob_storage = false. Ignored when create_blob_storage = true. Kept separate from the account and container names because the role-assignment scope must be known without a data-source lookup, and it may sit in a different resource group or subscription than var.resource_group_name — the applying identity needs role-assignment permission at this scope."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.create_blob_storage || var.existing_blob_container_id != null
+    error_message = "existing_blob_container_id is required when create_blob_storage = false."
+  }
+
+  validation {
+    condition = var.existing_blob_container_id == null ? true : can(regex(
+      "^/subscriptions/.+/resourceGroups/.+/providers/Microsoft\\.Storage/storageAccounts/.+/blobServices/default/containers/.+$",
+      var.existing_blob_container_id,
+    ))
+    error_message = "existing_blob_container_id must be null or a fully qualified Azure Blob container resource ID."
+  }
+
+  validation {
+    condition = var.existing_blob_container_id == null ? true : (
+      var.existing_blob_storage_account_name == null || var.existing_blob_container_name == null ? true : try(
+        lower(split("/", var.existing_blob_container_id)[8]) == lower(var.existing_blob_storage_account_name) &&
+        split("/", var.existing_blob_container_id)[12] == var.existing_blob_container_name,
+        false,
+      )
+    )
+    error_message = "existing_blob_container_id must identify the storage account and container supplied by existing_blob_storage_account_name and existing_blob_container_name."
+  }
+}
+
+variable "existing_blob_endpoint" {
+  description = "Blob service endpoint of the existing storage account named by existing_blob_storage_account_name, including scheme (for example https://account.blob.core.windows.net/). Required when create_blob_storage = false. Ignored when create_blob_storage = true."
+  type        = string
+  default     = null
+  sensitive   = true
+
+  validation {
+    condition     = var.create_blob_storage || var.existing_blob_endpoint != null
+    error_message = "existing_blob_endpoint is required when create_blob_storage = false."
+  }
+
+  validation {
+    condition     = var.existing_blob_endpoint == null ? true : can(regex("^https://[^[:space:]]+/$", var.existing_blob_endpoint))
+    error_message = "existing_blob_endpoint must be null or an HTTPS service endpoint ending in `/` with no whitespace."
+  }
+}
+
+variable "existing_blob_prerequisites_confirmed" {
+  description = "Attestation required when create_blob_storage = false, confirming that the existing Blob storage account and container have private networking and DNS resolution, encryption at rest, and retention configured outside this module, and are compatible with the selected credential mode. Terraform cannot verify any of these conditions itself — it does not inspect customer-managed Azure resources through data sources — setting this to true is the caller's assertion that they are met. Ignored when create_blob_storage = true."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = var.create_blob_storage || var.existing_blob_prerequisites_confirmed
+    error_message = "existing_blob_prerequisites_confirmed must be true when create_blob_storage = false."
+  }
+}
+
+variable "create_namespace" {
+  description = "When true (the default), the module creates the n8n Kubernetes namespace named by n8n_namespace. Set to false to deploy into an existing namespace the caller already created — the module never deletes a caller-owned namespace. Kept as a static boolean rather than inferring ownership from a nullable reference because count expressions cannot depend on values computed at apply time."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "n8n_namespace" {
+  description = "Name of the Kubernetes namespace n8n's Secrets, ServiceAccount, and Helm release live in. The module creates this namespace when create_namespace = true (the default); when create_namespace = false, it must already exist and this value is used as-is."
+  type        = string
+  default     = "n8n"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.n8n_namespace)) && length(var.n8n_namespace) <= 63
+    error_message = "n8n_namespace must be a valid Kubernetes namespace name: 1-63 lowercase alphanumeric characters or hyphens, starting and ending with an alphanumeric character."
+  }
+}
+
+variable "install_keda" {
+  description = "When true (the default), the module installs KEDA into the cluster through modules/controllers (namespace plus Helm release). Set to false when KEDA is already installed — either by a direct caller of modules/controllers or by another process — existing_keda_prerequisites_confirmed must then be true. The chart-rendered worker ScaledObject and the root TriggerAuthentication are unaffected by this switch."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "keda_namespace" {
+  description = "Name of the Kubernetes namespace KEDA's operator and CRDs live in. Created when install_keda = true (the default) and this module owns the installation; when install_keda = false, KEDA must already be running in this namespace."
+  type        = string
+  default     = "keda"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.keda_namespace)) && length(var.keda_namespace) <= 63
+    error_message = "keda_namespace must be a valid Kubernetes namespace name: 1-63 lowercase alphanumeric characters or hyphens, starting and ending with an alphanumeric character."
+  }
+}
+
+variable "existing_keda_prerequisites_confirmed" {
+  description = "Attestation required when install_keda = false, confirming that KEDA and its CRDs (including TriggerAuthentication) are already installed and ready in keda_namespace, either by a direct caller of modules/controllers ordered with depends_on or by another process. Terraform cannot verify CRD readiness at plan time — setting this to true is the caller's assertion that it is met. Ignored when install_keda = true."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = var.install_keda || var.existing_keda_prerequisites_confirmed
+    error_message = "existing_keda_prerequisites_confirmed must be true when install_keda = false."
+  }
+}
+
+variable "keda_chart_repository" {
+  description = "Helm chart repository URL for the KEDA chart, passed through to modules/controllers. Override for a private mirror of the kedacore charts (for example an internal ChartMuseum or ACR Helm registry) when the cluster cannot reach the public kedacore.github.io repository."
+  type        = string
+  default     = "https://kedacore.github.io/charts"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^(https|oci)://[^[:space:]]+$", var.keda_chart_repository))
+    error_message = "keda_chart_repository must be an https:// or oci:// URL with no whitespace."
+  }
+}
+
+variable "n8n_webhook_hpa_enabled" {
+  description = "When true (the default), the module creates the webhook-processor HPA in scaling.tf. Set to false when a caller manages webhook-processor scaling independently — the chart still sets webhook replicas to n8n_webhook_hpa_min_replicas so the caller has a stable deployment to scale, and every webhook service output remains available."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "n8n_license_key_secret_ref" {
+  description = "Existing Kubernetes Secret name and key holding the n8n Enterprise license key, for callers who manage this credential outside Terraform. Mutually exclusive with n8n_license_key — exactly one must be set. The module does not read the Secret's value; Terraform renders only the name and key into the n8n chart."
+  type = object({
+    name = string
+    key  = string
+  })
+  default = null
+
+  validation {
+    condition     = var.n8n_license_key_secret_ref == null ? true : (trimspace(var.n8n_license_key_secret_ref.name) != "" && trimspace(var.n8n_license_key_secret_ref.key) != "")
+    error_message = "n8n_license_key_secret_ref.name and .key must be non-empty when set."
+  }
+}
+
+variable "n8n_encryption_key_secret_ref" {
+  description = "Existing Kubernetes Secret carrying the n8n encryption key, for callers who manage this credential outside Terraform — for example a key backed up from another n8n installation. Mutually exclusive with n8n_encryption_key. Different in shape from n8n_license_key_secret_ref: the chart's secretRefs.existingSecret (n8n.tf) names one Secret that n8n reads FOUR keys from — N8N_ENCRYPTION_KEY, N8N_HOST, N8N_PORT, and N8N_PROTOCOL — so this replaces kubernetes_secret.n8n_encryption_key entirely, and your Secret must carry every one of them: N8N_HOST is var.n8n_domain, N8N_PORT is \"5678\", N8N_PROTOCOL is \"http\". key must be exactly \"N8N_ENCRYPTION_KEY\" — the chart hardcodes this key name and honors no override, unlike n8n_license_key_secret_ref's key. When set, the n8n_encryption_key output is null because Terraform does not know the value. The module does not read the Secret's value."
+  type = object({
+    name = string
+    key  = string
+  })
+  default = null
+
+  validation {
+    condition     = var.n8n_encryption_key_secret_ref == null ? true : trimspace(var.n8n_encryption_key_secret_ref.name) != ""
+    error_message = "n8n_encryption_key_secret_ref.name must be non-empty when set."
+  }
+
+  validation {
+    condition     = var.n8n_encryption_key_secret_ref == null ? true : var.n8n_encryption_key_secret_ref.key == "N8N_ENCRYPTION_KEY"
+    error_message = "n8n_encryption_key_secret_ref.key must be exactly \"N8N_ENCRYPTION_KEY\". The chart's secretRefs.existingSecret reads this exact key name from the referenced Secret and takes no override."
+  }
+}
+
+variable "postgres_password_secret_ref" {
+  description = "Existing Kubernetes Secret name and key holding the external PostgreSQL password, for callers who manage this credential outside Terraform. Applies only to the external database path (create_database = false) — the module-managed PostgreSQL Flexible Server always generates and manages its own password. Mutually exclusive with postgres_external_password; exactly one must be set when create_database = false. The module does not read the Secret's value."
+  type = object({
+    name = string
+    key  = string
+  })
+  default = null
+
+  validation {
+    condition     = var.postgres_password_secret_ref == null ? true : (trimspace(var.postgres_password_secret_ref.name) != "" && trimspace(var.postgres_password_secret_ref.key) != "")
+    error_message = "postgres_password_secret_ref.name and .key must be non-empty when set."
+  }
+
+  validation {
+    condition     = var.create_database ? var.postgres_password_secret_ref == null : true
+    error_message = "postgres_password_secret_ref is ignored when create_database = true; the module always generates and manages the PostgreSQL password for its own server."
+  }
+}
+
+variable "redis_password_secret_ref" {
+  description = "Existing Kubernetes Secret name and key holding the external Redis password, for callers who manage this credential outside Terraform. Applies only to the external Redis path (create_redis = false) — the module-managed Azure Managed Redis instance always uses its own generated access key. Mutually exclusive with redis_external_password. The module does not read the Secret's value."
+  type = object({
+    name = string
+    key  = string
+  })
+  default = null
+
+  validation {
+    condition     = var.redis_password_secret_ref == null ? true : (trimspace(var.redis_password_secret_ref.name) != "" && trimspace(var.redis_password_secret_ref.key) != "")
+    error_message = "redis_password_secret_ref.name and .key must be non-empty when set."
+  }
+
+  validation {
+    condition     = var.create_redis ? var.redis_password_secret_ref == null : true
+    error_message = "redis_password_secret_ref is ignored when create_redis = true; the module always uses its managed Azure Managed Redis access key."
   }
 }

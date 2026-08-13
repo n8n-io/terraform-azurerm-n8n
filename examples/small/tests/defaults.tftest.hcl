@@ -53,7 +53,7 @@ run "small_tier_plan" {
 
   assert {
     condition = output.tier_configuration == {
-      aks_node_vm_size         = "Standard_D2s_v7"
+      aks_node_vm_size         = "Standard_D2s_v5"
       aks_availability_zones   = tolist(["1", "2", "3"])
       aks_node_count_min       = 2
       aks_node_count_max       = 6

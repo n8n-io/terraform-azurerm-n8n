@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 # ── KEDA TriggerAuthentication ────────────────────────────────────────────────
-# The TriggerAuthentication CRD is installed by helm_release.keda during this
-# same apply. hashicorp/kubernetes_manifest validates CRDs at plan time and
+# The TriggerAuthentication CRD is installed by module.controllers' KEDA Helm
+# release during this same apply. hashicorp/kubernetes_manifest validates CRDs at plan time and
 # therefore forces a two-pass apply on a fresh cluster. kubectl_manifest defers
 # schema resolution to apply time. The manifest contains only references to the
 # Redis Secret, never a credential value.
@@ -18,7 +18,7 @@ resource "kubectl_manifest" "keda_trigger_authentication" {
   yaml_body = local.keda_trigger_authentication_yaml
 
   depends_on = [
-    helm_release.keda,
+    module.controllers,
     kubernetes_secret.n8n_redis,
   ]
 }

@@ -46,6 +46,8 @@ When Azure stores current or historical execution bundles, keep `azure_blob_cont
 
 Workload identity is the default. The module renders the storage account and container names with `N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT=true`. The n8n service account uses `DefaultAzureCredential`, and its user-assigned managed identity receives `Storage Blob Data Contributor` on the managed container.
 
+This section assumes `create_blob_storage = true` (the default). With `create_blob_storage = false`, the module grants that same role assignment scoped to the caller-supplied `existing_blob_container_id` instead of creating the account or container itself — see [`docs/customer-managed-infrastructure.md`](./customer-managed-infrastructure.md#blob-storage-create_blob_storage) for the full reference and attestation contract.
+
 Terraform's own storage data-plane authentication is separate from the n8n workload identity. Configure the calling `azurerm` provider with `storage_use_azuread = true`, and grant the applying identity `Storage Blob Data Contributor` on the target resource group or storage account before the module creates its private container. The complete examples provision this role and wait for RBAC propagation. Without both settings, AzureRM attempts shared-key access even though the secure default disables storage-account keys, or Entra authentication fails with HTTP 403.
 
 Compatibility credentials are explicit opt-ins:

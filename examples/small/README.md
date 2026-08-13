@@ -6,7 +6,7 @@ A low-traffic production starting point and evaluation deployment. It creates th
 
 | Concern | Configuration |
 |---|---|
-| AKS | Two pools, `Standard_D2s_v7`, 2 to 6 nodes per pool |
+| AKS | Two pools, `Standard_D2s_v5`, 2 to 6 nodes per pool |
 | n8n | Main 2 to 6, webhook 2 to 8, workers 1 to 10 |
 | PostgreSQL | `GP_Standard_D2s_v3`, 32 GB, 7-day backups |
 | Redis | `Balanced_B0`, single replica |
@@ -89,7 +89,7 @@ See [the tier comparison](../README.md) before choosing this size.
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_aks_api_authorized_ip_ranges"></a> [aks\_api\_authorized\_ip\_ranges](#input\_aks\_api\_authorized\_ip\_ranges) | Operator and CI IPv4 CIDRs allowed to reach the public AKS API. Empty leaves it unrestricted and is not recommended for production. | `list(string)` | `[]` | no |
 | <a name="input_aks_availability_zones"></a> [aks\_availability\_zones](#input\_aks\_availability\_zones) | Availability zones used by both AKS node pools. Restrict this list when the selected VM SKU is unavailable in one or more regional zones. | `list(string)` | <pre>[<br/>  "1",<br/>  "2",<br/>  "3"<br/>]</pre> | no |
-| <a name="input_aks_node_vm_size"></a> [aks\_node\_vm\_size](#input\_aks\_node\_vm\_size) | Azure VM SKU for both AKS node pools. Confirm regional and zonal availability for the selected subscription before applying. | `string` | `"Standard_D2s_v7"` | no |
+| <a name="input_aks_node_vm_size"></a> [aks\_node\_vm\_size](#input\_aks\_node\_vm\_size) | Azure VM SKU for both AKS node pools. Confirm regional and zonal availability for the selected subscription before applying. | `string` | `"Standard_D2s_v5"` | no |
 | <a name="input_common_tags"></a> [common\_tags](#input\_common\_tags) | Additional Azure tags applied to example and module resources. | `map(string)` | `{}` | no |
 | <a name="input_friendly_name_prefix"></a> [friendly\_name\_prefix](#input\_friendly\_name\_prefix) | Lowercase alphanumeric prefix used for Azure resource names. Change it to avoid globally unique name collisions. | `string` | `"n8nsmall"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region for the example. Confirm that the selected AKS, PostgreSQL, Redis, zone, and storage SKUs are available there. | `string` | `"eastus"` | no |

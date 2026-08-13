@@ -281,67 +281,67 @@ run "aks_cluster_resources_in_plan" {
   command = plan
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.name == local.cluster_name
+    condition     = azurerm_kubernetes_cluster.n8n[0].name == local.cluster_name
     error_message = "AKS cluster name must equal local.cluster_name."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.oidc_issuer_enabled == true
+    condition     = azurerm_kubernetes_cluster.n8n[0].oidc_issuer_enabled == true
     error_message = "AKS cluster must have the OIDC issuer enabled (required for n8n workload identity federation)."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.workload_identity_enabled == true
+    condition     = azurerm_kubernetes_cluster.n8n[0].workload_identity_enabled == true
     error_message = "AKS cluster must have workload identity enabled."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.identity[0].type == "SystemAssigned"
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "SystemAssigned"
     error_message = "AKS cluster identity must be SystemAssigned."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.default_node_pool[0].vm_size == var.aks_node_vm_size
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].vm_size == var.aks_node_vm_size
     error_message = "default_node_pool.vm_size must equal var.aks_node_vm_size."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.default_node_pool[0].vnet_subnet_id == var.aks_subnet_id
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].vnet_subnet_id == var.aks_subnet_id
     error_message = "default_node_pool.vnet_subnet_id must equal var.aks_subnet_id."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.default_node_pool[0].min_count == var.aks_node_count_min
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].min_count == var.aks_node_count_min
     error_message = "default_node_pool.min_count must equal var.aks_node_count_min."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.default_node_pool[0].max_count == var.aks_node_count_max
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].max_count == var.aks_node_count_max
     error_message = "default_node_pool.max_count must equal var.aks_node_count_max."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.default_node_pool[0].zones == toset(var.aks_availability_zones)
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].zones == toset(var.aks_availability_zones)
     error_message = "default_node_pool.zones must equal var.aks_availability_zones (default [\"1\", \"2\", \"3\"])."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.default_node_pool[0].temporary_name_for_rotation == "systemtemp"
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].temporary_name_for_rotation == "systemtemp"
     error_message = "The default AKS pool must declare a temporary rotation name so callers can update VM size, zones, or other rotation-required properties."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.default_node_pool[0].upgrade_settings[0].max_surge == var.aks_node_upgrade_max_surge
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].upgrade_settings[0].max_surge == var.aks_node_upgrade_max_surge
     error_message = "default_node_pool.upgrade_settings.max_surge must equal var.aks_node_upgrade_max_surge (default \"10%\")."
   }
 
   assert {
-    condition     = length(azurerm_kubernetes_cluster.n8n.api_server_access_profile) == 0
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].api_server_access_profile) == 0
     error_message = "api_server_access_profile block must be omitted when var.aks_api_authorized_ip_ranges is empty (the default) so the AKS API server keeps its default access profile."
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user.name == "n8nuser"
+    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].name == "n8nuser"
     error_message = "n8n_user node pool name must be 'n8nuser'."
   }
 
@@ -357,13 +357,13 @@ run "aks_cluster_resources_in_plan" {
 
   # ── time_sleep.aks_api_warmup ──────────────────────────────────────────
   assert {
-    condition     = time_sleep.aks_api_warmup.create_duration == "${var.aks_api_warmup_seconds}s"
-    error_message = "time_sleep.aks_api_warmup.create_duration must equal '${var.aks_api_warmup_seconds}s' (the var.aks_api_warmup_seconds knob)."
+    condition     = time_sleep.aks_api_warmup[0].create_duration == "${var.aks_api_warmup_seconds}s"
+    error_message = "time_sleep.aks_api_warmup[0].create_duration must equal '${var.aks_api_warmup_seconds}s' (the var.aks_api_warmup_seconds knob)."
   }
 
   assert {
-    condition     = time_sleep.aks_api_warmup.create_duration == "90s"
-    error_message = "time_sleep.aks_api_warmup.create_duration default must be 90s."
+    condition     = time_sleep.aks_api_warmup[0].create_duration == "90s"
+    error_message = "time_sleep.aks_api_warmup[0].create_duration default must be 90s."
   }
 }
 
@@ -375,7 +375,7 @@ run "aks_api_authorized_ranges_render_when_supplied" {
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.n8n.api_server_access_profile[0].authorized_ip_ranges == toset(["203.0.113.0/24"])
+    condition     = azurerm_kubernetes_cluster.n8n[0].api_server_access_profile[0].authorized_ip_ranges == toset(["203.0.113.0/24"])
     error_message = "api_server_access_profile.authorized_ip_ranges must render the supplied CIDR list when non-empty."
   }
 }
@@ -905,7 +905,7 @@ run "private_blob_storage_resources_in_plan" {
   command = plan
 
   override_resource {
-    target          = azurerm_storage_container.n8n
+    target          = azurerm_storage_container.n8n[0]
     override_during = plan
     values = {
       id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles/blobServices/default/containers/n8n-data"
@@ -913,67 +913,67 @@ run "private_blob_storage_resources_in_plan" {
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n.name == local.storage_account_name
+    condition     = azurerm_storage_account.n8n[0].name == local.storage_account_name
     error_message = "Storage account name must equal local.storage_account_name."
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n.public_network_access_enabled == false
+    condition     = azurerm_storage_account.n8n[0].public_network_access_enabled == false
     error_message = "Storage account public network access must be disabled."
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n.allow_nested_items_to_be_public == false
+    condition     = azurerm_storage_account.n8n[0].allow_nested_items_to_be_public == false
     error_message = "Storage account must prohibit public nested items."
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n.https_traffic_only_enabled == true && azurerm_storage_account.n8n.min_tls_version == "TLS1_2"
+    condition     = azurerm_storage_account.n8n[0].https_traffic_only_enabled == true && azurerm_storage_account.n8n[0].min_tls_version == "TLS1_2"
     error_message = "Storage account must require HTTPS and TLS 1.2 or later."
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n.shared_access_key_enabled == false
+    condition     = azurerm_storage_account.n8n[0].shared_access_key_enabled == false
     error_message = "Storage shared-key access must be disabled on the default managed-identity-only path."
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n.account_replication_type == var.storage_account_replication_type
+    condition     = azurerm_storage_account.n8n[0].account_replication_type == var.storage_account_replication_type
     error_message = "Storage account replication must equal var.storage_account_replication_type."
   }
 
   assert {
-    condition     = azurerm_storage_container.n8n.name == var.azure_blob_container_name && azurerm_storage_container.n8n.container_access_type == "private"
+    condition     = azurerm_storage_container.n8n[0].name == var.azure_blob_container_name && azurerm_storage_container.n8n[0].container_access_type == "private"
     error_message = "The managed Blob container must use the configured name and private access."
   }
 
   assert {
-    condition     = azurerm_private_dns_zone.blob.name == "privatelink.blob.core.windows.net"
+    condition     = azurerm_private_dns_zone.blob[0].name == "privatelink.blob.core.windows.net"
     error_message = "Blob private DNS zone must be privatelink.blob.core.windows.net."
   }
 
   assert {
-    condition     = azurerm_private_dns_zone_virtual_network_link.blob.virtual_network_id == var.vnet_id
+    condition     = azurerm_private_dns_zone_virtual_network_link.blob[0].virtual_network_id == var.vnet_id
     error_message = "Blob private DNS zone must link to var.vnet_id."
   }
 
   assert {
-    condition     = azurerm_private_endpoint.blob.subnet_id == var.private_endpoint_subnet_id
+    condition     = azurerm_private_endpoint.blob[0].subnet_id == var.private_endpoint_subnet_id
     error_message = "Blob private endpoint must attach to var.private_endpoint_subnet_id."
   }
 
   assert {
-    condition     = azurerm_private_endpoint.blob.private_service_connection[0].subresource_names[0] == "blob"
+    condition     = azurerm_private_endpoint.blob[0].private_service_connection[0].subresource_names[0] == "blob"
     error_message = "Blob private endpoint must target the blob subresource."
   }
 
   assert {
-    condition     = azurerm_role_assignment.n8n_blob_data_contributor.role_definition_name == "Storage Blob Data Contributor"
+    condition     = azurerm_role_assignment.n8n_blob_data_contributor[0].role_definition_name == "Storage Blob Data Contributor"
     error_message = "The n8n workload identity must receive Storage Blob Data Contributor for list, read, write, properties, copy, and delete operations."
   }
 
   assert {
-    condition     = azurerm_role_assignment.n8n_blob_data_contributor.scope == azurerm_storage_container.n8n.id
+    condition     = azurerm_role_assignment.n8n_blob_data_contributor[0].scope == azurerm_storage_container.n8n[0].id
     error_message = "The Blob data role assignment must be scoped to the managed container rather than the whole storage account."
   }
 
@@ -1039,7 +1039,7 @@ run "blob_connection_string_compatibility_path" {
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n.shared_access_key_enabled == true
+    condition     = azurerm_storage_account.n8n[0].shared_access_key_enabled == true
     error_message = "Supplying a connection string must enable shared-key access on the managed account."
   }
 
@@ -1062,7 +1062,7 @@ run "blob_account_key_compatibility_path" {
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n.shared_access_key_enabled == true
+    condition     = azurerm_storage_account.n8n[0].shared_access_key_enabled == true
     error_message = "Supplying an account key must enable shared-key access on the managed account."
   }
 
@@ -1149,32 +1149,32 @@ run "controllers_and_base_n8n_release_in_plan" {
   command = plan
 
   assert {
-    condition     = kubernetes_namespace.keda.metadata[0].name == local.keda_namespace
-    error_message = "The KEDA namespace must use local.keda_namespace."
+    condition     = module.controllers.keda_namespace == local.keda_namespace && module.controllers.keda_installed == true
+    error_message = "The root must call modules/controllers with local.keda_namespace and install KEDA by default."
   }
 
   assert {
-    condition     = helm_release.keda.version == var.keda_chart_version && helm_release.keda.wait && helm_release.keda.atomic && helm_release.keda.cleanup_on_fail
-    error_message = "The KEDA release must use the pinned chart and preserve wait, atomic, and cleanup safeguards."
+    condition     = module.controllers.keda_release_name == "keda"
+    error_message = "The default root plan must install the KEDA Helm release through modules/controllers."
   }
 
   assert {
-    condition     = kubernetes_namespace.n8n.metadata[0].name == local.n8n_namespace && kubernetes_namespace.n8n.timeouts.delete == "5m"
+    condition     = kubernetes_namespace.n8n[0].metadata[0].name == local.n8n_namespace && kubernetes_namespace.n8n[0].timeouts.delete == "5m"
     error_message = "The n8n namespace must use the root namespace local and preserve its bounded delete timeout."
   }
 
   assert {
-    condition     = kubernetes_secret.n8n_db.metadata[0].namespace == kubernetes_namespace.n8n.metadata[0].name
-    error_message = "n8n Secrets must derive their namespace from kubernetes_namespace.n8n."
+    condition     = kubernetes_secret.n8n_db[0].metadata[0].namespace == local.n8n_namespace
+    error_message = "n8n Secrets must derive their namespace from local.n8n_namespace."
   }
 
   assert {
-    condition     = kubernetes_secret.n8n_redis.metadata[0].name == local.n8n_redis_secret_name
+    condition     = kubernetes_secret.n8n_redis[0].metadata[0].name == local.n8n_redis_secret_name
     error_message = "The Redis Secret name must match the KEDA TriggerAuthentication reference local."
   }
 
   assert {
-    condition     = contains(keys(kubernetes_secret.n8n_license.data), "license-key")
+    condition     = contains(keys(kubernetes_secret.n8n_license[0].data), "license-key")
     error_message = "The license Secret must expose the key used by license.existingSecret."
   }
 
@@ -1183,7 +1183,7 @@ run "controllers_and_base_n8n_release_in_plan" {
   # random_password result is apply-time-unknown. The caller-supplied path is
   # asserted in run "caller_supplied_encryption_key_reaches_the_encryption_secret".
   assert {
-    condition     = random_password.n8n_encryption_key.length == 48 && random_password.n8n_encryption_key.special
+    condition     = random_password.n8n_encryption_key[0].length == 48 && random_password.n8n_encryption_key[0].special
     error_message = "The n8n encryption key must retain 48 characters with special-character entropy."
   }
 
@@ -1198,7 +1198,7 @@ run "controllers_and_base_n8n_release_in_plan" {
   }
 
   assert {
-    condition     = kubernetes_secret.n8n_encryption_key.data.N8N_PROTOCOL == "http"
+    condition     = kubernetes_secret.n8n_encryption_key[0].data.N8N_PROTOCOL == "http"
     error_message = "n8n must listen over HTTP behind the TLS-terminating Application Gateway."
   }
 
@@ -1245,7 +1245,7 @@ run "external_authenticated_redis_is_shared_by_n8n_and_keda" {
   }
 
   assert {
-    condition     = kubernetes_secret.n8n_redis.data.username == "n8n_app" && kubernetes_secret.n8n_redis.data.password == "synthetic-external-redis-password"
+    condition     = kubernetes_secret.n8n_redis[0].data.username == "n8n_app" && kubernetes_secret.n8n_redis[0].data.password == "synthetic-external-redis-password"
     error_message = "The Redis Secret must hold the complete external authentication contract."
   }
 
@@ -1328,7 +1328,7 @@ run "external_unauthenticated_redis_omits_authentication_references" {
   }
 
   assert {
-    condition     = length(kubernetes_secret.n8n_redis.data) == 0 && !local.redis_authentication_enabled
+    condition     = length(kubernetes_secret.n8n_redis[0].data) == 0 && !local.redis_authentication_enabled
     error_message = "An unauthenticated external Redis endpoint must create no credential data and activate no auth reference."
   }
 
@@ -1342,8 +1342,8 @@ run "base_release_outputs_match_chart_service_contract" {
   command = plan
 
   assert {
-    condition     = output.n8n_namespace == kubernetes_namespace.n8n.metadata[0].name
-    error_message = "n8n_namespace must derive from the managed namespace resource."
+    condition     = output.n8n_namespace == local.n8n_namespace
+    error_message = "n8n_namespace must derive from the effective namespace local."
   }
 
   assert {
@@ -1376,7 +1376,7 @@ run "caller_supplied_encryption_key_reaches_the_encryption_secret" {
   }
 
   assert {
-    condition     = kubernetes_secret.n8n_encryption_key.data.N8N_ENCRYPTION_KEY == var.n8n_encryption_key
+    condition     = kubernetes_secret.n8n_encryption_key[0].data.N8N_ENCRYPTION_KEY == var.n8n_encryption_key
     error_message = "The encryption Secret must carry the caller-supplied key so a database restore decrypts with the original key."
   }
 }
@@ -2145,7 +2145,7 @@ run "azure_binary_defaults_and_disabled_observability_render" {
   }
 
   override_resource {
-    target          = azurerm_storage_account.n8n
+    target          = azurerm_storage_account.n8n[0]
     override_during = plan
     values = {
       id                    = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles"
@@ -2155,7 +2155,7 @@ run "azure_binary_defaults_and_disabled_observability_render" {
   }
 
   override_resource {
-    target          = azurerm_storage_container.n8n
+    target          = azurerm_storage_container.n8n[0]
     override_during = plan
     values = {
       id   = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles/blobServices/default/containers/n8n-data"
@@ -2231,7 +2231,7 @@ run "azure_execution_mode_is_independent_from_binary_mode" {
   }
 
   override_resource {
-    target          = azurerm_storage_account.n8n
+    target          = azurerm_storage_account.n8n[0]
     override_during = plan
     values = {
       id                    = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles"
@@ -2241,7 +2241,7 @@ run "azure_execution_mode_is_independent_from_binary_mode" {
   }
 
   override_resource {
-    target          = azurerm_storage_container.n8n
+    target          = azurerm_storage_container.n8n[0]
     override_during = plan
     values = {
       id   = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles/blobServices/default/containers/n8n-data"
@@ -2284,7 +2284,7 @@ run "connection_string_auth_takes_precedence" {
   }
 
   override_resource {
-    target          = azurerm_storage_account.n8n
+    target          = azurerm_storage_account.n8n[0]
     override_during = plan
     values = {
       id                    = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles"
@@ -2294,7 +2294,7 @@ run "connection_string_auth_takes_precedence" {
   }
 
   override_resource {
-    target          = azurerm_storage_container.n8n
+    target          = azurerm_storage_container.n8n[0]
     override_during = plan
     values = {
       id   = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles/blobServices/default/containers/n8n-data"
@@ -2453,7 +2453,7 @@ run "observability_controls_render_on_all_pods" {
   }
 
   override_resource {
-    target          = azurerm_storage_account.n8n
+    target          = azurerm_storage_account.n8n[0]
     override_during = plan
     values = {
       id                    = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles"
@@ -2463,7 +2463,7 @@ run "observability_controls_render_on_all_pods" {
   }
 
   override_resource {
-    target          = azurerm_storage_container.n8n
+    target          = azurerm_storage_container.n8n[0]
     override_during = plan
     values = {
       id   = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/n8ntestn8nfiles/blobServices/default/containers/n8n-data"
@@ -2622,19 +2622,19 @@ run "workload_autoscalers_and_replica_floors_render" {
 
   assert {
     condition = (
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].scale_target_ref[0].name == "n8n-webhook-processor" &&
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].min_replicas == 2 &&
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].max_replicas == 8 &&
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].metric[0].resource[0].target[0].average_utilization == 65
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].scale_target_ref[0].name == "n8n-webhook-processor" &&
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].min_replicas == 2 &&
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].max_replicas == 8 &&
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].metric[0].resource[0].target[0].average_utilization == 65
     )
     error_message = "The module-managed webhook HPA must target only the webhook Deployment with the configured scaling bounds."
   }
 
   assert {
     condition = (
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].behavior[0].scale_up[0].stabilization_window_seconds == 0 &&
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].behavior[0].scale_up[0].select_policy == "Max" &&
-      length(kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].behavior[0].scale_up[0].policy) == 2
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].behavior[0].scale_up[0].stabilization_window_seconds == 0 &&
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].behavior[0].scale_up[0].select_policy == "Max" &&
+      length(kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].behavior[0].scale_up[0].policy) == 2
     )
     error_message = "The webhook HPA must preserve immediate default scale-up and Kubernetes' default scale-up policies."
   }
@@ -2691,8 +2691,8 @@ run "raised_autoscaler_floors_drive_helm_replica_counts" {
       yamldecode(helm_release.n8n.values[0]).multiMain.replicas == 3 &&
       yamldecode(helm_release.n8n.values[0]).queueMode.workerReplicaCount == 5 &&
       yamldecode(helm_release.n8n.values[0]).webhookProcessor.replicaCount == 4 &&
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].min_replicas == 4 &&
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].behavior[0].scale_up[0].stabilization_window_seconds == 300
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].min_replicas == 4 &&
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].behavior[0].scale_up[0].stabilization_window_seconds == 300
     )
     error_message = "Raised floors and the webhook stabilization window must reach both Helm and the module-owned HPA."
   }
@@ -2817,7 +2817,7 @@ run "unknown_vm_sku_silences_advisory_capacity_check" {
     condition = (
       local.aks_node_vcpus_derived == null &&
       !local.n8n_capacity_model_readable &&
-      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook.spec[0].max_replicas == 8
+      kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].max_replicas == 8
     )
     error_message = "A syntactically valid VM SKU outside the reviewed map must suppress only the advisory check and leave the plan intact."
   }
@@ -2834,7 +2834,7 @@ run "public_application_gateway_ingress_renders_by_default" {
       length(azurerm_public_ip.appgw) == 1 &&
       length(azurerm_user_assigned_identity.appgw_tls_cert) == 1 &&
       length(azurerm_user_assigned_identity.agic) == 1 &&
-      length(azurerm_kubernetes_cluster.n8n.ingress_application_gateway) == 1 &&
+      length(azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway) == 1 &&
       length(kubernetes_ingress_v1.n8n) == 1
     )
     error_message = "Managed ingress defaults must create the public gateway, identities, AKS AGIC addon, and Kubernetes Ingress."
@@ -2949,7 +2949,7 @@ run "disabled_ingress_creates_no_gateway_or_controller_resources" {
       length(azurerm_web_application_firewall_policy.appgw) == 0 &&
       length(azurerm_user_assigned_identity.appgw_tls_cert) == 0 &&
       length(azurerm_user_assigned_identity.agic) == 0 &&
-      length(azurerm_kubernetes_cluster.n8n.ingress_application_gateway) == 0 &&
+      length(azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway) == 0 &&
       length(kubernetes_ingress_v1.n8n) == 0
     )
     error_message = "create_ingress = false must omit Application Gateway, public IP, NSG, identities, AGIC integration, and Ingress."
@@ -3393,4 +3393,1029 @@ run "rejects_malformed_additional_host" {
   }
 
   expect_failures = [var.n8n_additional_domains]
+}
+
+# ── Section 1 (add-customer-managed-modularity): ownership contracts ───────
+# Every new create_*/install_* switch defaults to module ownership, every
+# existing-resource reference is required only when its switch is false,
+# every credential source pair is mutually exclusive, and every ignored
+# reference on the module-managed path warns without failing the plan.
+
+run "customer_managed_ownership_switches_default_to_module_managed" {
+  command = plan
+
+  assert {
+    condition     = var.create_aks == true
+    error_message = "create_aks must default to true."
+  }
+
+  assert {
+    condition     = var.create_blob_storage == true
+    error_message = "create_blob_storage must default to true."
+  }
+
+  assert {
+    condition     = var.create_namespace == true
+    error_message = "create_namespace must default to true."
+  }
+
+  assert {
+    condition     = var.install_keda == true
+    error_message = "install_keda must default to true."
+  }
+
+  assert {
+    condition     = var.n8n_webhook_hpa_enabled == true
+    error_message = "n8n_webhook_hpa_enabled must default to true."
+  }
+
+  assert {
+    condition     = var.n8n_namespace == "n8n"
+    error_message = "n8n_namespace must default to 'n8n'."
+  }
+
+  assert {
+    condition     = var.keda_namespace == "keda"
+    error_message = "keda_namespace must default to 'keda'."
+  }
+
+  assert {
+    condition     = var.keda_chart_repository == "https://kedacore.github.io/charts"
+    error_message = "keda_chart_repository must default to the public kedacore charts repository."
+  }
+
+  assert {
+    condition     = local.effective_aks_cluster_name == azurerm_kubernetes_cluster.n8n[0].name
+    error_message = "local.effective_aks_cluster_name must resolve to the module-managed cluster name by default."
+  }
+
+  assert {
+    condition     = local.effective_blob_container_name == azurerm_storage_container.n8n[0].name
+    error_message = "local.effective_blob_container_name must resolve to the module-managed container name by default."
+  }
+
+  assert {
+    condition     = local.n8n_license_key_uses_secret_ref == false
+    error_message = "local.n8n_license_key_uses_secret_ref must be false when n8n_license_key_secret_ref is not set."
+  }
+
+  assert {
+    condition     = local.n8n_encryption_key_uses_secret_ref == false
+    error_message = "local.n8n_encryption_key_uses_secret_ref must be false when n8n_encryption_key_secret_ref is not set."
+  }
+}
+
+run "rejects_malformed_n8n_namespace" {
+  command = plan
+
+  variables {
+    n8n_namespace = "Not_Valid"
+  }
+
+  expect_failures = [var.n8n_namespace]
+}
+
+run "rejects_malformed_keda_namespace" {
+  command = plan
+
+  variables {
+    keda_namespace = "Not_Valid"
+  }
+
+  expect_failures = [var.keda_namespace]
+}
+
+run "rejects_malformed_keda_chart_repository" {
+  command = plan
+
+  variables {
+    keda_chart_repository = "not-a-url"
+  }
+
+  expect_failures = [var.keda_chart_repository]
+}
+
+# ── Existing AKS contract ───────────────────────────────────────────────────
+
+run "rejects_existing_aks_missing_cluster_name" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_aks_cluster_name]
+}
+
+run "rejects_existing_aks_missing_resource_group_name" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_cluster_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_aks_resource_group_name]
+}
+
+run "rejects_existing_aks_unconfirmed_prerequisites" {
+  command = plan
+
+  variables {
+    create_aks                       = false
+    create_ingress                   = false
+    existing_aks_cluster_name        = "shared-aks"
+    existing_aks_resource_group_name = "shared-aks-rg"
+  }
+
+  expect_failures = [var.existing_aks_cluster_prerequisites_confirmed]
+}
+
+run "warns_when_existing_aks_reference_is_ignored" {
+  command = plan
+
+  variables {
+    existing_aks_cluster_name = "shared-aks"
+  }
+
+  expect_failures = [check.existing_aks_reference_ignored_when_module_managed]
+}
+
+run "existing_aks_plan_creates_no_managed_resources" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n) == 0
+    error_message = "No azurerm_kubernetes_cluster.n8n instance must be created when create_aks = false."
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster_node_pool.n8n_user) == 0
+    error_message = "No azurerm_kubernetes_cluster_node_pool.n8n_user instance must be created when create_aks = false."
+  }
+
+  assert {
+    condition     = length(time_sleep.aks_api_warmup) == 0
+    error_message = "No time_sleep.aks_api_warmup instance must be created when create_aks = false; the existing cluster's API is assumed already warm."
+  }
+
+  assert {
+    condition     = length(data.azurerm_kubernetes_cluster.existing) == 1
+    error_message = "data.azurerm_kubernetes_cluster.existing must be read exactly once when create_aks = false."
+  }
+
+  assert {
+    condition     = local.effective_aks_cluster_name == var.existing_aks_cluster_name
+    error_message = "local.effective_aks_cluster_name must resolve to the supplied existing_aks_cluster_name when create_aks = false."
+  }
+
+  assert {
+    condition     = local.effective_aks_resource_group_name == var.existing_aks_resource_group_name
+    error_message = "local.effective_aks_resource_group_name must resolve to the supplied existing_aks_resource_group_name when create_aks = false."
+  }
+
+  assert {
+    condition     = local.effective_aks_oidc_issuer_url == data.azurerm_kubernetes_cluster.existing[0].oidc_issuer_url
+    error_message = "local.effective_aks_oidc_issuer_url must resolve to the existing cluster data source's oidc_issuer_url when create_aks = false."
+  }
+
+  assert {
+    condition     = azurerm_federated_identity_credential.n8n_workload.issuer == local.effective_aks_oidc_issuer_url
+    error_message = "The n8n workload federated identity credential must use the effective AKS OIDC issuer URL regardless of create_aks."
+  }
+
+  assert {
+    condition     = local.n8n_capacity_model_readable == false
+    error_message = "The advisory AKS capacity model must stay silent (unreadable) when create_aks = false; the existing cluster's capacity is caller-owned."
+  }
+}
+
+run "rejects_managed_ingress_on_existing_aks" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.create_ingress]
+}
+
+run "warns_when_aks_tuning_is_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_node_vm_size                             = "Standard_D8s_v4"
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+# ── Customer-managed Blob contract ──────────────────────────────────────────
+
+run "rejects_existing_blob_missing_account_name" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_blob_storage_account_name]
+}
+
+run "rejects_existing_blob_missing_container_name" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_blob_container_name]
+}
+
+run "rejects_existing_blob_missing_container_id" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_blob_container_id]
+}
+
+run "rejects_malformed_existing_blob_container_id" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "not-a-container-id"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_blob_container_id]
+}
+
+run "rejects_existing_blob_container_id_for_different_account" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/othern8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_blob_container_id]
+}
+
+run "rejects_existing_blob_container_id_for_different_container" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/other-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_blob_container_id]
+}
+
+run "rejects_existing_blob_missing_endpoint" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  expect_failures = [var.existing_blob_endpoint]
+}
+
+run "rejects_existing_blob_unconfirmed_prerequisites" {
+  command = plan
+
+  variables {
+    create_blob_storage                = false
+    existing_blob_storage_account_name = "sharedn8nfiles"
+    existing_blob_container_name       = "n8n-data"
+    existing_blob_container_id         = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint             = "https://sharedn8nfiles.blob.core.windows.net/"
+  }
+
+  expect_failures = [var.existing_blob_prerequisites_confirmed]
+}
+
+run "warns_when_existing_blob_reference_is_ignored" {
+  command = plan
+
+  variables {
+    existing_blob_storage_account_name = "sharedn8nfiles"
+  }
+
+  expect_failures = [check.existing_blob_reference_ignored_when_module_managed]
+}
+
+run "accepts_full_customer_managed_blob_contract" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  assert {
+    condition     = local.effective_blob_storage_account_name == "sharedn8nfiles"
+    error_message = "local.effective_blob_storage_account_name must use the caller-supplied account name when create_blob_storage is false."
+  }
+
+  assert {
+    condition     = local.effective_blob_container_id == var.existing_blob_container_id
+    error_message = "local.effective_blob_container_id must use the caller-supplied container ID when create_blob_storage is false."
+  }
+}
+
+run "existing_blob_plan_creates_no_managed_resources" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  assert {
+    condition     = length(azurerm_storage_account.n8n) == 0
+    error_message = "No azurerm_storage_account.n8n instance must be created when create_blob_storage = false."
+  }
+
+  assert {
+    condition     = length(azurerm_storage_container.n8n) == 0
+    error_message = "No azurerm_storage_container.n8n instance must be created when create_blob_storage = false."
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone.blob) == 0
+    error_message = "No azurerm_private_dns_zone.blob instance must be created when create_blob_storage = false."
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone_virtual_network_link.blob) == 0
+    error_message = "No azurerm_private_dns_zone_virtual_network_link.blob instance must be created when create_blob_storage = false."
+  }
+
+  assert {
+    condition     = length(azurerm_private_endpoint.blob) == 0
+    error_message = "No azurerm_private_endpoint.blob instance must be created when create_blob_storage = false."
+  }
+
+  assert {
+    condition     = length(azurerm_storage_management_policy.n8n_binary) == 0
+    error_message = "No azurerm_storage_management_policy.n8n_binary instance must be created when create_blob_storage = false."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.n8n_blob_data_contributor) == 1
+    error_message = "The n8n workload identity's role assignment must still be created, scoped to the supplied existing_blob_container_id, because automatic authentication is selected by default."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.n8n_blob_data_contributor[0].scope == var.existing_blob_container_id
+    error_message = "The Blob data role assignment must be scoped to local.effective_blob_container_id, not a module-managed container, on the customer-managed path."
+  }
+
+  assert {
+    condition     = nonsensitive(local.azure_blob_connection).account_name == var.existing_blob_storage_account_name
+    error_message = "local.azure_blob_connection must render the supplied existing_blob_storage_account_name into every n8n pod environment."
+  }
+
+  assert {
+    condition     = nonsensitive(local.azure_blob_connection).endpoint == var.existing_blob_endpoint
+    error_message = "local.azure_blob_connection must render the supplied existing_blob_endpoint into every n8n pod environment."
+  }
+
+  assert {
+    condition = (
+      length(local.azure_blob_endpoint_env) == 1 &&
+      nonsensitive(local.azure_blob_endpoint_env[0].name) == "N8N_EXTERNAL_STORAGE_AZURE_ENDPOINT" &&
+      nonsensitive(local.azure_blob_endpoint_env[0].value) == var.existing_blob_endpoint
+    )
+    error_message = "The n8n Helm environment must render existing_blob_endpoint as N8N_EXTERNAL_STORAGE_AZURE_ENDPOINT on the customer-managed Blob path."
+  }
+}
+
+run "existing_blob_with_compatibility_credential_omits_role_assignment" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+    azure_blob_account_key                = "synthetic-storage-account-key"
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.n8n_blob_data_contributor) == 0
+    error_message = "The n8n workload identity's role assignment must be omitted when a compatibility credential is supplied, because n8n does not use workload identity for Blob access in that mode."
+  }
+}
+
+run "warns_when_blob_tuning_is_inert_on_existing_storage" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "sharedn8nfiles"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/shared-rg/providers/Microsoft.Storage/storageAccounts/sharedn8nfiles/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint                = "https://sharedn8nfiles.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+    storage_account_replication_type      = "ZRS"
+  }
+
+  expect_failures = [check.blob_tuning_requires_module_managed_blob_storage]
+}
+
+run "module_managed_blob_storage_is_unchanged_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_storage_account.n8n) == 1
+    error_message = "Exactly one azurerm_storage_account.n8n instance must be created by default (create_blob_storage = true)."
+  }
+
+  assert {
+    condition     = length(azurerm_storage_container.n8n) == 1
+    error_message = "Exactly one azurerm_storage_container.n8n instance must be created by default."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.n8n_blob_data_contributor) == 1
+    error_message = "The n8n workload identity's role assignment must still be created by default."
+  }
+
+  assert {
+    condition     = local.effective_blob_container_name == azurerm_storage_container.n8n[0].name
+    error_message = "local.effective_blob_container_name must resolve to the module-managed container's name by default."
+  }
+}
+
+# ── KEDA installation contract ──────────────────────────────────────────────
+
+run "rejects_install_keda_false_unconfirmed_prerequisites" {
+  command = plan
+
+  variables {
+    install_keda = false
+  }
+
+  expect_failures = [var.existing_keda_prerequisites_confirmed]
+}
+
+run "warns_when_existing_keda_prerequisites_are_ignored" {
+  command = plan
+
+  variables {
+    existing_keda_prerequisites_confirmed = true
+  }
+
+  expect_failures = [check.existing_keda_prerequisites_ignored_when_module_managed]
+}
+
+run "accepts_install_keda_false_with_confirmed_prerequisites" {
+  command = plan
+
+  variables {
+    install_keda                          = false
+    existing_keda_prerequisites_confirmed = true
+  }
+
+  assert {
+    condition     = var.install_keda == false
+    error_message = "install_keda must be settable to false when prerequisites are confirmed."
+  }
+
+  assert {
+    condition     = module.controllers.keda_installed == false && module.controllers.keda_release_name == null
+    error_message = "modules/controllers must create no KEDA release when install_keda = false, and its release output must be null."
+  }
+
+  # The chart-rendered worker ScaledObject and the root TriggerAuthentication
+  # are unaffected by install_keda — only the controller installation itself
+  # is skipped (design.md decision 7).
+  assert {
+    condition     = strcontains(local.keda_trigger_authentication_yaml, "\"kind\": \"TriggerAuthentication\"")
+    error_message = "The root TriggerAuthentication manifest must still render when install_keda = false."
+  }
+}
+
+run "passes_custom_keda_chart_settings_through_to_controllers" {
+  command = plan
+
+  variables {
+    keda_chart_repository = "https://mirror.example.com/keda-charts"
+    keda_chart_version    = "2.16.1"
+  }
+
+  assert {
+    condition     = module.controllers.keda_release_name == "keda"
+    error_message = "modules/controllers must still install KEDA when only the chart repository and version are overridden."
+  }
+}
+
+# ── Caller-managed namespace and webhook HPA ────────────────────────────────
+
+run "rejects_malformed_namespace_when_caller_managed" {
+  command = plan
+
+  variables {
+    create_namespace = false
+    n8n_namespace    = "Not_Valid"
+  }
+
+  expect_failures = [var.n8n_namespace]
+}
+
+run "caller_managed_namespace_creates_no_namespace_resource" {
+  command = plan
+
+  variables {
+    create_namespace = false
+    n8n_namespace    = "platform-n8n"
+  }
+
+  assert {
+    condition     = length(kubernetes_namespace.n8n) == 0
+    error_message = "No kubernetes_namespace.n8n instance must be created when create_namespace = false."
+  }
+
+  assert {
+    condition     = local.n8n_namespace == "platform-n8n"
+    error_message = "local.n8n_namespace must resolve to the caller-supplied n8n_namespace regardless of create_namespace."
+  }
+
+  assert {
+    condition     = kubernetes_secret.n8n_db[0].metadata[0].namespace == "platform-n8n"
+    error_message = "n8n Secrets must target the caller-managed namespace when create_namespace = false."
+  }
+
+  assert {
+    condition     = helm_release.n8n.namespace == "platform-n8n"
+    error_message = "The n8n Helm release must target the caller-managed namespace when create_namespace = false."
+  }
+
+  assert {
+    condition     = kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].metadata[0].namespace == "platform-n8n"
+    error_message = "The webhook HPA must target the caller-managed namespace when create_namespace = false."
+  }
+
+  assert {
+    condition     = output.n8n_namespace == "platform-n8n"
+    error_message = "n8n_namespace output must reflect the caller-managed namespace when create_namespace = false."
+  }
+}
+
+run "module_managed_namespace_is_unchanged_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(kubernetes_namespace.n8n) == 1
+    error_message = "Exactly one kubernetes_namespace.n8n instance must be created by default (create_namespace = true)."
+  }
+
+  assert {
+    condition     = kubernetes_namespace.n8n[0].metadata[0].name == "n8n"
+    error_message = "The module-managed namespace must default to 'n8n'."
+  }
+}
+
+run "disabled_webhook_hpa_creates_no_hpa_resource" {
+  command = plan
+
+  variables {
+    n8n_webhook_hpa_enabled    = false
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = length(kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook) == 0
+    error_message = "No kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook instance must be created when n8n_webhook_hpa_enabled = false."
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).webhookProcessor.replicaCount == var.n8n_webhook_hpa_min_replicas
+    error_message = "The chart-rendered webhook replica floor must still be set to n8n_webhook_hpa_min_replicas when the module-managed HPA is disabled."
+  }
+}
+
+run "warns_when_webhook_hpa_tuning_is_ignored" {
+  command = plan
+
+  variables {
+    n8n_webhook_hpa_enabled      = false
+    n8n_webhook_hpa_max_replicas = 20
+  }
+
+  expect_failures = [check.webhook_hpa_tuning_requires_module_managed_webhook_hpa]
+}
+
+run "module_managed_webhook_hpa_is_unchanged_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook) == 1
+    error_message = "Exactly one kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook instance must be created by default (n8n_webhook_hpa_enabled = true)."
+  }
+}
+
+# ── Caller-managed Kubernetes Secret credential references ─────────────────
+
+run "rejects_neither_license_key_nor_secret_ref" {
+  command = plan
+
+  variables {
+    n8n_license_key = null
+  }
+
+  expect_failures = [var.n8n_license_key]
+}
+
+run "rejects_both_license_key_and_secret_ref" {
+  command = plan
+
+  variables {
+    n8n_license_key            = "test-license-key-value"
+    n8n_license_key_secret_ref = { name = "n8n-license", key = "license-key" }
+  }
+
+  expect_failures = [var.n8n_license_key]
+}
+
+run "accepts_license_key_secret_ref_alone" {
+  command = plan
+
+  variables {
+    n8n_license_key            = null
+    n8n_license_key_secret_ref = { name = "n8n-license", key = "license-key" }
+  }
+
+  assert {
+    condition     = local.n8n_license_key_uses_secret_ref == true
+    error_message = "local.n8n_license_key_uses_secret_ref must be true when n8n_license_key_secret_ref is set."
+  }
+}
+
+run "rejects_empty_license_key_secret_ref_fields" {
+  command = plan
+
+  variables {
+    n8n_license_key            = null
+    n8n_license_key_secret_ref = { name = "", key = "license-key" }
+  }
+
+  expect_failures = [var.n8n_license_key_secret_ref]
+}
+
+run "rejects_both_encryption_key_and_secret_ref" {
+  command = plan
+
+  variables {
+    n8n_encryption_key            = "supplied-encryption-key-value"
+    n8n_encryption_key_secret_ref = { name = "n8n-encryption", key = "N8N_ENCRYPTION_KEY" }
+  }
+
+  expect_failures = [var.n8n_encryption_key]
+}
+
+run "accepts_encryption_key_secret_ref_alone" {
+  command = plan
+
+  variables {
+    n8n_encryption_key_secret_ref = { name = "n8n-encryption", key = "N8N_ENCRYPTION_KEY" }
+  }
+
+  assert {
+    condition     = local.n8n_encryption_key_uses_secret_ref == true
+    error_message = "local.n8n_encryption_key_uses_secret_ref must be true when n8n_encryption_key_secret_ref is set."
+  }
+}
+
+run "rejects_postgres_password_secret_ref_with_managed_database" {
+  command = plan
+
+  variables {
+    postgres_password_secret_ref = { name = "postgres-password", key = "password" }
+  }
+
+  expect_failures = [var.postgres_password_secret_ref]
+}
+
+run "rejects_postgres_external_neither_password_nor_secret_ref" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = null
+  }
+
+  expect_failures = [var.postgres_external_password]
+}
+
+run "rejects_postgres_external_both_password_and_secret_ref" {
+  command = plan
+
+  variables {
+    create_database              = false
+    postgres_external_host       = "external-pg.example.com"
+    postgres_external_username   = "n8n"
+    postgres_external_password   = "external-password-value"
+    postgres_password_secret_ref = { name = "postgres-password", key = "password" }
+  }
+
+  expect_failures = [var.postgres_external_password]
+}
+
+run "accepts_postgres_external_secret_ref_alone" {
+  command = plan
+
+  variables {
+    create_database              = false
+    postgres_external_host       = "external-pg.example.com"
+    postgres_external_username   = "n8n"
+    postgres_external_password   = null
+    postgres_password_secret_ref = { name = "postgres-password", key = "password" }
+  }
+
+  assert {
+    condition     = local.postgres_password_uses_secret_ref == true
+    error_message = "local.postgres_password_uses_secret_ref must be true when postgres_password_secret_ref is set on the external database path."
+  }
+}
+
+run "rejects_redis_password_secret_ref_with_managed_redis" {
+  command = plan
+
+  variables {
+    redis_password_secret_ref = { name = "redis-password", key = "password" }
+  }
+
+  expect_failures = [var.redis_password_secret_ref]
+}
+
+run "rejects_redis_external_both_password_and_secret_ref" {
+  command = plan
+
+  variables {
+    create_redis              = false
+    redis_external_host       = "external-redis.example.com"
+    redis_external_password   = "external-password-value"
+    redis_password_secret_ref = { name = "redis-password", key = "password" }
+  }
+
+  expect_failures = [var.redis_external_password]
+}
+
+run "accepts_redis_external_secret_ref_alone" {
+  command = plan
+
+  variables {
+    create_redis              = false
+    redis_external_host       = "external-redis.example.com"
+    redis_password_secret_ref = { name = "redis-password", key = "password" }
+  }
+
+  assert {
+    condition     = local.redis_password_uses_secret_ref == true
+    error_message = "local.redis_password_uses_secret_ref must be true when redis_password_secret_ref is set on the external Redis path."
+  }
+}
+
+# ── Caller-managed workload Secret rendering (section 5) ────────────────────
+# Complements the local-selection assertions above with resource-count and
+# chart-rendering proof for every generated, literal, and caller-managed
+# Secret branch — the module never creates a Secret it does not own, and the
+# chart always points at whichever Secret currently backs each credential.
+
+run "rejects_encryption_key_secret_ref_wrong_key" {
+  command = plan
+
+  variables {
+    n8n_encryption_key_secret_ref = { name = "n8n-encryption", key = "some-other-key" }
+  }
+
+  expect_failures = [var.n8n_encryption_key_secret_ref]
+}
+
+run "rejects_empty_encryption_key_secret_ref_name" {
+  command = plan
+
+  variables {
+    n8n_encryption_key_secret_ref = { name = "", key = "N8N_ENCRYPTION_KEY" }
+  }
+
+  expect_failures = [var.n8n_encryption_key_secret_ref]
+}
+
+run "license_key_secret_ref_creates_no_managed_secret" {
+  command = plan
+
+  variables {
+    n8n_license_key            = null
+    n8n_license_key_secret_ref = { name = "platform-n8n-license", key = "license-key" }
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_license) == 0
+    error_message = "kubernetes_secret.n8n_license must not exist when n8n_license_key_secret_ref is set."
+  }
+
+  assert {
+    condition     = local.n8n_license_secret_name == "platform-n8n-license" && local.n8n_license_secret_key == "license-key"
+    error_message = "local.n8n_license_secret_name/_key must reflect n8n_license_key_secret_ref when set."
+  }
+}
+
+run "encryption_key_secret_ref_creates_no_managed_secret_or_random_password" {
+  command = plan
+
+  variables {
+    n8n_encryption_key_secret_ref = { name = "platform-n8n-encryption", key = "N8N_ENCRYPTION_KEY" }
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_encryption_key) == 0
+    error_message = "kubernetes_secret.n8n_encryption_key must not exist when n8n_encryption_key_secret_ref is set."
+  }
+
+  assert {
+    condition     = length(random_password.n8n_encryption_key) == 0
+    error_message = "random_password.n8n_encryption_key must not be generated when n8n_encryption_key_secret_ref is set."
+  }
+
+  assert {
+    condition     = local.n8n_encryption_key == null
+    error_message = "local.n8n_encryption_key must be null when n8n_encryption_key_secret_ref is set — Terraform never reads the caller-managed Secret's value."
+  }
+
+  assert {
+    condition     = local.n8n_encryption_secret_name == "platform-n8n-encryption"
+    error_message = "local.n8n_encryption_secret_name must reflect n8n_encryption_key_secret_ref when set."
+  }
+}
+
+run "postgres_password_secret_ref_creates_no_managed_secret_and_helm_matches" {
+  command = plan
+
+  variables {
+    create_database              = false
+    postgres_external_host       = "external-pg.example.com"
+    postgres_external_username   = "n8n"
+    postgres_external_password   = null
+    postgres_password_secret_ref = { name = "platform-n8n-db-password", key = "pgpass" }
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_db) == 0
+    error_message = "kubernetes_secret.n8n_db must not exist when postgres_password_secret_ref is set."
+  }
+
+  assert {
+    condition     = local.postgres_password_secret_name == "platform-n8n-db-password" && local.postgres_password_secret_key == "pgpass"
+    error_message = "local.postgres_password_secret_name/_key must reflect postgres_password_secret_ref when set."
+  }
+
+  assert {
+    condition     = local.postgres_connection.password == null
+    error_message = "local.postgres_connection.password must be null when postgres_password_secret_ref is set — Terraform never reads the caller-managed Secret's value."
+  }
+}
+
+run "redis_password_secret_ref_creates_no_managed_secret_and_helm_matches" {
+  command = plan
+
+  variables {
+    create_redis              = false
+    redis_external_host       = "external-redis.example.com"
+    redis_password_secret_ref = { name = "platform-n8n-redis-password", key = "redispass" }
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_redis) == 0
+    error_message = "kubernetes_secret.n8n_redis must not exist when redis_password_secret_ref is set and no username is configured."
+  }
+
+  assert {
+    condition     = local.redis_password_secret_name == "platform-n8n-redis-password" && local.redis_password_secret_key == "redispass"
+    error_message = "local.redis_password_secret_name/_key must reflect redis_password_secret_ref when set."
+  }
+
+  assert {
+    condition     = local.redis_connection.password == null
+    error_message = "local.redis_connection.password must be null when redis_password_secret_ref is set — Terraform never reads the caller-managed Secret's value."
+  }
+
+  assert {
+    condition     = local.redis_password_present == true
+    error_message = "local.redis_password_present must stay true when redis_password_secret_ref is set, so the TriggerAuthentication and Helm redis.passwordSecret block still render."
+  }
+
+  assert {
+    condition     = strcontains(local.keda_trigger_authentication_yaml, "platform-n8n-redis-password") && strcontains(local.keda_trigger_authentication_yaml, "redispass")
+    error_message = "The KEDA TriggerAuthentication manifest must reference the caller-managed Redis Secret's name and key when redis_password_secret_ref is set."
+  }
+}
+
+run "redis_password_secret_ref_with_username_still_creates_secret_for_username" {
+  command = plan
+
+  variables {
+    create_redis              = false
+    redis_external_host       = "external-redis.example.com"
+    redis_external_username   = "n8n_app"
+    redis_password_secret_ref = { name = "platform-n8n-redis-password", key = "redispass" }
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_redis) == 1
+    error_message = "kubernetes_secret.n8n_redis must still exist to carry the username when redis_password_secret_ref is set alongside redis_external_username."
+  }
+
+  assert {
+    condition     = kubernetes_secret.n8n_redis[0].data.username == "n8n_app" && !contains(keys(kubernetes_secret.n8n_redis[0].data), "password")
+    error_message = "kubernetes_secret.n8n_redis must carry only the username when the password comes from a caller-managed Secret reference."
+  }
+
+  assert {
+    condition     = strcontains(local.keda_trigger_authentication_yaml, "platform-n8n-redis-password")
+    error_message = "The KEDA TriggerAuthentication manifest's password entry must still reference the caller-managed Redis Secret even when a module-managed Secret exists for the username."
+  }
 }

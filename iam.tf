@@ -43,7 +43,7 @@ resource "azurerm_role_assignment" "agic_addon_rg_reader" {
 
   scope                = data.azurerm_resource_group.n8n[0].id
   role_definition_name = "Reader"
-  principal_id         = azurerm_kubernetes_cluster.n8n.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+  principal_id         = azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
 }
 
 # ── Federated identity credential (AKS workload identity → n8n SA) ──────
@@ -68,6 +68,6 @@ resource "azurerm_federated_identity_credential" "n8n_workload" {
   name                      = "${var.friendly_name_prefix}-n8n-workload-fed"
   user_assigned_identity_id = azurerm_user_assigned_identity.n8n_workload.id
   audience                  = ["api://AzureADTokenExchange"]
-  issuer                    = azurerm_kubernetes_cluster.n8n.oidc_issuer_url
+  issuer                    = local.effective_aks_oidc_issuer_url
   subject                   = "system:serviceaccount:${local.n8n_namespace}:${local.n8n_service_account_name}"
 }

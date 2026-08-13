@@ -28,6 +28,62 @@ examples, and the version-history framing ahead of the module's first public
 release (`0.1.0`) — see [`CHANGELOG.md`](./CHANGELOG.md). The "What this repo
 is" / "File layout" sections below describe the current shape.
 
+## `add-customer-managed-modularity` in progress
+
+This change (`openspec/changes/add-customer-managed-modularity/`) is adding
+caller-managed AKS, Blob storage, namespace, KEDA, webhook HPA, and Kubernetes
+Secret ownership. Its section 1 established the input contract convention every
+later section follows: a non-nullable `create_*`/`install_*` switch defaults to
+`true`, each corresponding `existing_*` reference or `*_prerequisites_confirmed`
+attestation is required only when its switch is `false` (validated on the
+reference variable itself, never inferred from a nullable reference), and a
+non-failing `check` block in `locals.tf` warns when a reference is supplied
+while the switch stays `true`. Caller-managed Kubernetes Secret references use
+typed `object({ name = string, key = string })` variables that are mutually
+exclusive with their literal/generated credential counterpart. Section 1 also
+added `local.effective_*` selector locals (AKS cluster/resource group, Blob
+account/container/ID/endpoint) whose module-managed branch still points at the
+currently-unconditional resources — sections 2 and 6 gate those resources
+behind `count` and update the selector locals to index into them. Until those
+sections land, `tflint`'s `terraform_unused_declarations` rule flags the new
+switches/locals as unused; this is expected mid-change and is resolved by the
+sections that consume them, not by this section. Section 2 gated the AKS
+cluster, node pool, API warm-up gate, and AGIC-dependent identities behind
+`create_aks`, added the `data.azurerm_kubernetes_cluster.existing` lookup and
+its `effective_aks_*` locals, and required `create_ingress = false` whenever
+`create_aks = false` (the module cannot manage AGIC on a cluster it does not
+own). A `check` block comparing a `list(string)` variable against a bracketed
+literal (e.g. `var.aks_availability_zones == ["1", "2", "3"]`) always
+evaluates false — Terraform's `==` requires matching concrete types, and a
+bracketed literal is a tuple, not a list. Wrap the literal in `tolist(...)`
+(or `toset(...)` when the attribute itself is a set) before comparing.
+Checkov's graph-based checks (e.g. `CKV_AZURE_136`, `CKV2_AZURE_31`) can
+report the same underlying resource under both its unindexed and `[0]`
+addresses once a second top-level resource in the module gains a `count`
+ternary; this is a soft-fail graph-rendering artifact, not a new curated
+finding, and does not need a suppression. Section 3 extracted KEDA into
+`modules/controllers/` (namespace + Helm release behind its own
+`install_keda` switch) and replaced root `kubernetes_namespace.keda` /
+`helm_release.keda` with an unconditional `module "controllers"` call —
+`install_keda` (added in section 1) controls whether the submodule's own
+resources exist, so the root's call shape never changes between the
+module-managed and externally-installed paths. `kubectl_manifest
+.keda_trigger_authentication` and `helm_release.n8n` both moved their
+`depends_on` edge from `helm_release.keda` to `module.controllers` — a
+direct submodule caller must add the same edge from its own CRD-backed
+resources to its `module.controllers` call, since none of those resources
+reference an output the submodule produces. Terraform test `run` blocks can
+assert directly on `module.<name>.<output>` (e.g.
+`module.controllers.keda_release_name`), which is cleaner than reaching into
+the submodule's resource addresses from the root's own test suite. The
+submodule's README and inputs/outputs tables are hand-maintained (matching
+the existing `modules/tls-letsencrypt/` and `modules/tls-self-signed/`
+pattern) because the `terraform-docs` CI matrix does not cover submodules
+yet — section 9.1 adds `modules/controllers` (and the two TLS helpers) to
+that matrix and to `openspec/init.sh`; don't add it earlier without also
+wiring the generated-docs check, or the hand-written tables can drift
+unnoticed.
+
 **Storage and workload integration.** Root `storage.tf` owns the private
 Azure Blob container, its private endpoint, and private DNS zone — Blob is
 the module's only durable binary/execution-data backend. `shared_access_key_enabled`
@@ -35,7 +91,24 @@ on the storage account derives solely from the retained connection-string/
 account-key compatibility inputs; workload identity is otherwise the only
 authentication path. Root `helm_release.n8n` merges `local.n8n_extra_volumes` /
 `local.n8n_extra_volume_mounts` at the chart's top level so every pod family
-receives caller-supplied typed volumes.
+receives caller-supplied typed volumes. Section 6 gated every `storage.tf`
+resource (account, container, private DNS zone/link, private endpoint,
+lifecycle policy) behind `create_blob_storage`, matching the AKS `[0]`-index
+shape from section 2. `azurerm_role_assignment.n8n_blob_data_contributor` is
+scoped to `local.effective_blob_container_id` (module-managed container or
+`existing_blob_container_id`) and gated on `local.azure_blob_connection.auth_auto_detect`
+rather than on `create_blob_storage` — it exists whenever automatic
+authentication is selected, on either branch, and is omitted only for the
+connection-string/account-key compatibility modes. `local.azure_blob_connection.endpoint`
+keeps `var.azure_blob_endpoint` as an override that short-circuits
+`local.effective_blob_endpoint` on both branches — collapsing it into
+`effective_blob_endpoint` directly breaks the existing sovereign-cloud
+endpoint override test, since `effective_blob_endpoint`'s two branches key
+off `create_blob_storage`, not off whether the override is set. A
+`blob_tuning_requires_module_managed_blob_storage` check (mirroring
+`aks_tuning_requires_module_managed_aks`) warns when `storage_account_replication_type`
+or `azure_blob_binary_retention_days` is left non-default while
+`create_blob_storage = false`, since neither has an effect in that mode.
 
 **Combined provider graph.** The root declares all six providers the former
 two-tier composition used across both submodules (`azurerm`, `kubernetes`,
@@ -114,6 +187,29 @@ and stays behind the same ingress gate. The Let's Encrypt helper normalizes
 its canonical name and subject alternative names to lowercase and requires
 every name to use its one Azure DNS challenge zone.
 
+**Documentation and contributor contracts.** Section 8 added
+[`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md) —
+the single place documenting the ownership convention (non-nullable
+`create_*`/`install_*` switch, required `existing_*`/`*_prerequisites_confirmed`
+inputs, never-inferred-from-nullable-reference), every layer's exact
+reference contract, direct `modules/controllers` composition, the
+existing-AKS provider-wiring rule (wire `kubernetes`/`helm`/`kubectl` against
+the caller's own cluster resource or data source, never against
+`module.n8n.aks_kube_config`, when `create_aks = false`), the excluded
+AWS-only capabilities (keyless n8n Azure Key Vault external secrets, IAM
+permission boundaries, AWS KMS controls, RDS snapshot restoration, EBS CSI
+ownership), and the pre-release state-breaking upgrade boundary (no `moved`
+blocks; back up the encryption key and durable data; recreate). Root
+`README.md` gained a "Customer-managed infrastructure" section that
+summarizes the same convention and links that doc, and the Blob-storage row
+of the managed-service-topologies table now shows the `create_blob_storage =
+false` reference inputs instead of the stale "Always module-managed" text
+from before section 6. `docs/troubleshooting.md`, `docs/destroy-cleanup.md`,
+`docs/post-deployment.md`, and `docs/data-storage.md` each gained a
+customer-managed cross-reference at the point where their existing content's
+assumption (module-owned AKS, module-owned namespace, module-owned Blob)
+stops holding, rather than restating the whole contract inline.
+
 **Sizing examples.** `examples/small`, `examples/medium`, and `examples/large`
 call the resource-bearing root directly and own their Azure foundations. Keep
 each example self-contained. The large tier intentionally owns PostgreSQL so
@@ -125,6 +221,26 @@ Keep each tier's mocked test and
 caller-owned Application Gateways. Non-Azure DNS-01 validation (Cloudflare,
 GoDaddy) is documented, not demonstrated by a runnable example — see the
 "DNS-01 providers" section of `modules/tls-letsencrypt/README.md`.
+
+**Offline verification (section 9).** `openspec/init.sh` and every job matrix
+in `.github/workflows/terraform-tests.yml` (`docs`, `validate`, `test`,
+`tflint`) enumerate `modules/controllers` and all four
+`examples/customer-managed-*` roots alongside the existing sizing examples
+and TLS submodules — `checkov` needs no matrix entry since it always scans
+the whole repo from `.`. `modules/controllers`, like the two TLS helpers, is
+intentionally absent from the `docs` matrix (hand-maintained README, no
+`<!-- BEGIN_TF_DOCS -->` block). tflint's `terraform_unused_declarations`
+rule only inspects `.tf` files, so a local read solely by a
+`tests/*.tftest.hcl` assertion (e.g. `local.effective_aks_resource_group_name`,
+kept for a future AKS-resource-group-scoped consumer) reads as unused from
+tflint's perspective even though `terraform test` exercises it — suppress
+with a `# tflint-ignore: terraform_unused_declarations` comment (see the
+precedent in both TLS submodules' `variables.tf`) rather than deleting a
+local a test still asserts on. All four new provider-lock refreshes
+(`examples/customer-managed-*`) needed a real `terraform providers lock
+-platform=...` run — they were created with only the host platform's hashes
+tracked, unlike every pre-existing root/example/submodule lock file, which
+already carried all three platforms.
 
 ## What this repo is
 
@@ -194,7 +310,8 @@ Azure foundations and call the resource-bearing root directly.
 The module follows the [standard module
 structure](https://developer.hashicorp.com/terraform/language/modules/develop/structure)
 expected by the Terraform Registry: one resource-bearing root, one file per
-concern, no nested `module` calls at the root.
+concern, and one deliberate nested call to the directly composable
+`modules/controllers` KEDA submodule.
 
 | File / dir                        | Purpose                                                     |
 | --------------------------------- | ----------------------------------------------------------- |
@@ -442,15 +559,17 @@ terraform validate
 terraform test -verbose         # plan-time, no Azure creds needed
 tflint --init && tflint --format compact
 
-# TLS helper submodules
-for dir in modules/tls-self-signed modules/tls-letsencrypt; do
+# Helper submodules
+for dir in modules/controllers modules/tls-self-signed modules/tls-letsencrypt; do
   terraform -chdir="$dir" init -backend=false
   terraform -chdir="$dir" validate
   terraform -chdir="$dir" test -verbose
 done
 
 # Examples
-for dir in examples/small examples/medium examples/large examples/split-ingress; do
+for dir in examples/small examples/medium examples/large examples/split-ingress \
+  examples/customer-managed-cluster examples/customer-managed-redis \
+  examples/customer-managed-storage examples/customer-managed-everything; do
   terraform -chdir="$dir" init -backend=false
   terraform -chdir="$dir" validate
   terraform -chdir="$dir" test -verbose
@@ -464,11 +583,16 @@ terraform-docs .
 terraform-docs examples/small
 terraform-docs examples/medium
 terraform-docs examples/large
+terraform-docs examples/split-ingress
+terraform-docs examples/customer-managed-cluster
+terraform-docs examples/customer-managed-redis
+terraform-docs examples/customer-managed-storage
+terraform-docs examples/customer-managed-everything
 ```
 
-`./init.sh` runs the offline subset of this loop (fmt, init, validate, test)
-across the root, both TLS submodules, and all four examples in one command —
-safe to run repeatedly, no Azure credentials required.
+`./openspec/init.sh` runs the offline subset of this loop (fmt, init, validate,
+test) across the root, all three submodules, and all eight examples in one
+command — safe to run repeatedly, no Azure credentials required.
 
 After running any `terraform init`, clean up `.terraform/` before committing
 — it is gitignored and `init` will recreate it. `.terraform.lock.hcl` is the
@@ -478,9 +602,11 @@ requirement. After adding or bumping a provider, refresh every lock file for
 all three supported platforms and commit the result:
 
 ```bash
-for dir in . modules/tls-self-signed modules/tls-letsencrypt \
+for dir in . modules/controllers modules/tls-self-signed modules/tls-letsencrypt \
   examples/small examples/medium examples/large \
-  examples/split-ingress; do
+  examples/split-ingress examples/customer-managed-cluster \
+  examples/customer-managed-redis examples/customer-managed-storage \
+  examples/customer-managed-everything; do
   terraform -chdir="$dir" providers lock \
     -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64
 done
@@ -537,9 +663,9 @@ assertion.
 - Don't configure providers inside the module. `versions.tf` declares
   `required_providers`; provider configuration is the caller's job (see
   `examples/small/providers.tf`).
-- Don't introduce nested `module` calls inside the module root. This module is
-  intentionally flat so registry consumers can read it top to bottom. Examples
-  may call helper modules; the module root may not.
+- Don't introduce nested `module` calls inside the module root beyond the
+  deliberate `modules/controllers` KEDA composition in `controllers.tf`. Keep
+  all other concerns flat so registry consumers can read the root top to bottom.
 - Don't drop networking into the module root. The caller passes `vnet_id`
   and the five subnet IDs; only the private DNS zones (Postgres, Redis, Blob)
   are module-owned.

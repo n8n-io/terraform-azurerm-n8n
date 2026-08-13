@@ -5,9 +5,12 @@
 
 # Generated fallback only — local.n8n_encryption_key prefers a caller-supplied
 # var.n8n_encryption_key (database-restore path) and falls back to this
-# resource. The resource always exists so switching between the two paths
-# never destroys state or churns addresses.
+# resource on the module-managed path. Gated to zero when
+# n8n_encryption_key_secret_ref selects a caller-managed Secret instead —
+# Terraform then has no key value to generate a fallback for.
 resource "random_password" "n8n_encryption_key" {
+  count = (var.n8n_encryption_key == null && !local.n8n_encryption_key_uses_secret_ref) ? 1 : 0
+
   length           = 48
   special          = true
   override_special = "!#$%&*()-_=+[]{}<>:?"
@@ -16,7 +19,10 @@ resource "random_password" "n8n_encryption_key" {
 locals {
   # Single source of truth for the key that wraps every credential n8n stores.
   # Consumed by the encryption Secret below and the n8n_encryption_key output.
-  n8n_encryption_key = coalesce(var.n8n_encryption_key, random_password.n8n_encryption_key.result)
+  # Explicitly null when n8n_encryption_key_secret_ref is set: the module
+  # never reads the caller-managed Secret's value, so there is no effective
+  # key value to expose.
+  n8n_encryption_key = local.n8n_encryption_key_uses_secret_ref ? null : coalesce(var.n8n_encryption_key, try(random_password.n8n_encryption_key[0].result, null))
 }
 
 resource "random_password" "n8n_task_runners_token" {
@@ -24,7 +30,15 @@ resource "random_password" "n8n_task_runners_token" {
   special = false
 }
 
+# Gated on create_namespace so callers who already own the n8n namespace
+# (platform-managed, or shared across teams) can point the module at it
+# without Terraform ever creating or deleting it. Every namespaced resource
+# and output below uses local.n8n_namespace (the caller-supplied or
+# module-chosen name) rather than this resource's attribute, so nothing
+# downstream depends on whether this module owns the namespace.
 resource "kubernetes_namespace" "n8n" {
+  count = var.create_namespace ? 1 : 0
+
   metadata {
     name = local.n8n_namespace
   }
@@ -46,7 +60,7 @@ resource "kubernetes_service_account_v1" "n8n" {
 
   metadata {
     name      = local.n8n_service_account_name
-    namespace = kubernetes_namespace.n8n.metadata[0].name
+    namespace = local.n8n_namespace
     annotations = {
       "azure.workload.identity/client-id" = azurerm_user_assigned_identity.n8n_workload.client_id
     }
@@ -61,50 +75,85 @@ resource "kubernetes_service_account_v1" "n8n" {
       name = image_pull_secret.value
     }
   }
+
+  depends_on = [kubernetes_namespace.n8n]
 }
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 
+# Gated to zero when postgres_password_secret_ref selects a caller-managed
+# Secret instead (external database path only — database.tf's validation
+# rejects setting it while create_database = true, since the module-managed
+# Flexible Server always generates and manages its own password).
 resource "kubernetes_secret" "n8n_db" {
+  count = local.postgres_password_uses_secret_ref ? 0 : 1
+
   metadata {
     name      = "n8n-db-secret"
-    namespace = kubernetes_namespace.n8n.metadata[0].name
+    namespace = local.n8n_namespace
   }
 
   data = {
     password = local.postgres_connection.password
   }
+
+  depends_on = [kubernetes_namespace.n8n]
 }
 
+# Created whenever a username is present (module-managed Redis never has one;
+# external Redis may) or the password itself is module-managed — i.e. skipped
+# entirely only when redis_password_secret_ref selects a caller-managed
+# Secret AND no username is configured, matching the "module SHALL not create
+# a Redis credential Secret" scenario. The rare combination of a plain
+# username alongside a caller-managed password Secret still gets this
+# resource, holding only the username; local.redis_password_secret_name
+# (locals.tf) points the password reference at the caller's Secret instead.
 resource "kubernetes_secret" "n8n_redis" {
+  count = (local.redis_username_present || !local.redis_password_uses_secret_ref) ? 1 : 0
+
   metadata {
     name      = local.n8n_redis_secret_name
-    namespace = kubernetes_namespace.n8n.metadata[0].name
+    namespace = local.n8n_namespace
   }
 
   type = "Opaque"
 
   data = merge(
     local.redis_username_present ? { username = local.redis_connection.username } : {},
-    local.redis_password_present ? { password = local.redis_connection.password } : {},
+    (local.redis_password_present && !local.redis_password_uses_secret_ref) ? { password = local.redis_connection.password } : {},
   )
+
+  depends_on = [kubernetes_namespace.n8n]
 }
 
+# Gated to zero when n8n_license_key_secret_ref selects a caller-managed
+# Secret instead.
 resource "kubernetes_secret" "n8n_license" {
+  count = local.n8n_license_key_uses_secret_ref ? 0 : 1
+
   metadata {
     name      = "n8n-license-secret"
-    namespace = kubernetes_namespace.n8n.metadata[0].name
+    namespace = local.n8n_namespace
   }
 
   data = {
     license-key = var.n8n_license_key
   }
+
+  depends_on = [kubernetes_namespace.n8n]
 }
 
+# Gated to zero when n8n_encryption_key_secret_ref selects a caller-managed
+# Secret instead — the chart's secretRefs.existingSecret names one Secret for
+# all four of these keys, so there is no way to keep this Secret around for
+# N8N_HOST/N8N_PORT/N8N_PROTOCOL while pointing the encryption key at a
+# caller-supplied Secret; the caller's own Secret must carry all four.
 resource "kubernetes_secret" "n8n_encryption_key" {
+  count = local.n8n_encryption_key_uses_secret_ref ? 0 : 1
+
   metadata {
     name      = "n8n-encryption-secret"
-    namespace = kubernetes_namespace.n8n.metadata[0].name
+    namespace = local.n8n_namespace
   }
 
   data = {
@@ -113,17 +162,21 @@ resource "kubernetes_secret" "n8n_encryption_key" {
     N8N_PORT           = tostring(local.n8n_service_port)
     N8N_PROTOCOL       = "http"
   }
+
+  depends_on = [kubernetes_namespace.n8n]
 }
 
 resource "kubernetes_secret" "n8n_task_runners" {
   metadata {
     name      = local.n8n_task_runners_secret_name
-    namespace = kubernetes_namespace.n8n.metadata[0].name
+    namespace = local.n8n_namespace
   }
 
   data = {
     N8N_RUNNERS_AUTH_TOKEN = random_password.n8n_task_runners_token.result
   }
+
+  depends_on = [kubernetes_namespace.n8n]
 }
 
 # ── Helm release ──────────────────────────────────────────────────────────────
@@ -137,7 +190,7 @@ resource "helm_release" "n8n" {
   repository      = "oci://ghcr.io/n8n-io/n8n-helm-chart"
   chart           = "n8n"
   version         = var.n8n_chart_version
-  namespace       = kubernetes_namespace.n8n.metadata[0].name
+  namespace       = local.n8n_namespace
   wait            = true
   timeout         = var.n8n_helm_timeout
   atomic          = true
@@ -152,8 +205,8 @@ resource "helm_release" "n8n" {
     license = {
       enabled = true
       existingSecret = {
-        name = kubernetes_secret.n8n_license.metadata[0].name
-        key  = "license-key"
+        name = local.n8n_license_secret_name
+        key  = local.n8n_license_secret_key
       }
     }
 
@@ -197,8 +250,8 @@ resource "helm_release" "n8n" {
         rejectUnauthorized = contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
       }
       passwordSecret = {
-        name = kubernetes_secret.n8n_db.metadata[0].name
-        key  = "password"
+        name = local.postgres_password_secret_name
+        key  = local.postgres_password_secret_key
       }
     }
 
@@ -211,8 +264,8 @@ resource "helm_release" "n8n" {
       tls         = local.redis_connection.tls_enabled
       }, local.redis_password_present ? {
       passwordSecret = {
-        name = kubernetes_secret.n8n_redis.metadata[0].name
-        key  = "password"
+        name = local.redis_password_secret_name
+        key  = local.redis_password_secret_key
       }
     } : {})
 
@@ -229,7 +282,7 @@ resource "helm_release" "n8n" {
     }
 
     secretRefs = {
-      existingSecret = kubernetes_secret.n8n_encryption_key.metadata[0].name
+      existingSecret = local.n8n_encryption_secret_name
     }
 
     service = {
@@ -298,9 +351,7 @@ resource "helm_release" "n8n" {
           [
             { name = "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME", value = local.azure_blob_connection.container_name },
           ],
-          var.azure_blob_endpoint == null ? [] : [
-            { name = "N8N_EXTERNAL_STORAGE_AZURE_ENDPOINT", value = local.azure_blob_connection.endpoint },
-          ],
+          local.azure_blob_endpoint_env,
           local.azure_blob_connection.connection_string != null ? [
             { name = "N8N_EXTERNAL_STORAGE_AZURE_CONNECTION_STRING", value = local.azure_blob_connection.connection_string },
             ] : concat(
@@ -472,7 +523,8 @@ resource "helm_release" "n8n" {
   }))]
 
   depends_on = [
-    helm_release.keda,
+    kubernetes_namespace.n8n,
+    module.controllers,
     kubectl_manifest.keda_trigger_authentication,
     azurerm_federated_identity_credential.n8n_workload,
     kubernetes_service_account_v1.n8n,

@@ -5,7 +5,7 @@ The sizing examples use the same single root module and differ only where worklo
 | Decision | Small | Medium | Large |
 |---|---|---|---|
 | Intended use | Evaluation and low traffic | Sustained production traffic | High-volume, connection-heavy production |
-| AKS VM | `Standard_D2s_v7` | `Standard_D8s_v5` | `Standard_D16s_v5` |
+| AKS VM | `Standard_D2s_v5` | `Standard_D8s_v5` | `Standard_D16s_v5` |
 | Nodes per pool | 2 to 6 | 3 to 10 | 5 to 20 |
 | Main replicas | 2 to 6 | 3 to 16 | 6 to 60 |
 | Webhook replicas | 2 to 8 | 4 to 24 | 20 to 80 |
@@ -22,11 +22,22 @@ These tiers are reference configurations, not throughput or cost guarantees. Wor
 
 ## Topology examples
 
-One further example is small-sized and focuses on a single decision instead of workload scale:
+These examples are small-sized and each focuses on a single decision instead of workload scale:
 
 | Example | What it demonstrates |
 |---|---|
 | [`split-ingress`](./split-ingress/) | Two Application Gateways instead of one: a public gateway that serves only webhook traffic, and a private gateway that serves the editor UI and everything else, each with its own standalone AGIC install. |
+
+## Customer-managed infrastructure examples
+
+Four further examples each demonstrate one or more ownership boundaries the `customer-managed-infrastructure` capability supports — deploying onto Azure and Kubernetes infrastructure the module does not create or manage. See `docs/customer-managed-infrastructure.md` in the module root for the full ownership convention these examples exercise.
+
+| Example | Ownership boundary |
+|---|---|
+| [`customer-managed-cluster`](./customer-managed-cluster/) | Existing AKS cluster (`create_aks = false`), with caller-owned ingress since the module cannot manage AGIC on a cluster it does not own. PostgreSQL, Redis, and Blob storage remain module-managed. |
+| [`customer-managed-redis`](./customer-managed-redis/) | External Redis endpoint (`create_redis = false`) and a caller-managed Kubernetes Secret for its password. AKS, PostgreSQL, Blob storage, and ingress remain module-managed. |
+| [`customer-managed-storage`](./customer-managed-storage/) | Existing private Blob storage account and container (`create_blob_storage = false`), with the module still granting its own workload identity access to the supplied container. AKS, PostgreSQL, Redis, and ingress remain module-managed. |
+| [`customer-managed-everything`](./customer-managed-everything/) | Every boundary at once: existing AKS, external PostgreSQL and Redis, existing Blob storage, an existing namespace and Secrets, a direct `modules/controllers` composition, caller-owned ingress, and a caller-owned webhook HPA. |
 
 For a publicly trusted certificate validated against a non-Azure DNS provider
 (Cloudflare, GoDaddy, etc.) instead of the self-signed certificates these

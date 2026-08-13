@@ -32,9 +32,9 @@ crash.log
 crash.*.log
 
 # Agent loop-runner state — local working files, never part of a release
-progress.txt
 skills-lock.json
 logs/
+openspec/logs/
 
 # Local override files (used for temporary dev changes — not for sharing)
 override.tf

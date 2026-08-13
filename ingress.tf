@@ -277,7 +277,7 @@ resource "azurerm_role_assignment" "agic_addon_appgw_contributor" {
 
   scope                = azurerm_application_gateway.n8n[0].id
   role_definition_name = "Contributor"
-  principal_id         = azurerm_kubernetes_cluster.n8n.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+  principal_id         = azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
 }
 
 resource "azurerm_role_assignment" "agic_addon_appgw_tls_uami_operator" {
@@ -285,7 +285,7 @@ resource "azurerm_role_assignment" "agic_addon_appgw_tls_uami_operator" {
 
   scope                = azurerm_user_assigned_identity.appgw_tls_cert[0].id
   role_definition_name = "Managed Identity Operator"
-  principal_id         = azurerm_kubernetes_cluster.n8n.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+  principal_id         = azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
 }
 
 resource "azurerm_role_assignment" "agic_addon_appgw_subnet_network_contributor" {
@@ -293,7 +293,7 @@ resource "azurerm_role_assignment" "agic_addon_appgw_subnet_network_contributor"
 
   scope                = var.appgw_subnet_id
   role_definition_name = "Network Contributor"
-  principal_id         = azurerm_kubernetes_cluster.n8n.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+  principal_id         = azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
 }
 
 # ── AGIC-managed Kubernetes Ingress ──────────────────────────────────────────
@@ -305,7 +305,7 @@ resource "kubernetes_ingress_v1" "n8n" {
 
   metadata {
     name        = "n8n-ingress"
-    namespace   = kubernetes_namespace.n8n.metadata[0].name
+    namespace   = local.n8n_namespace
     annotations = local.appgw_ingress_annotations
   }
 
@@ -361,6 +361,7 @@ resource "kubernetes_ingress_v1" "n8n" {
   }
 
   depends_on = [
+    kubernetes_namespace.n8n,
     azurerm_role_assignment.agic_addon_appgw_contributor,
     azurerm_role_assignment.agic_addon_appgw_tls_uami_operator,
     azurerm_role_assignment.agic_addon_appgw_subnet_network_contributor,

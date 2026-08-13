@@ -4,6 +4,8 @@ This guide covers how to cleanly tear down the n8n infrastructure with `terrafor
 
 Every workaround below is grounded in a real failure mode the prototype hit while iterating on the module — see [`troubleshooting.md`](./troubleshooting.md) for the create-time counterparts.
 
+The destroy order below assumes every layer is module-managed (the defaults). On a customer-managed AKS cluster, namespace, or KEDA installation, `terraform destroy` removes only the resources this module created — it does not, and must not, delete a caller-owned namespace or the caller's own AKS cluster. See [`docs/customer-managed-infrastructure.md`](./customer-managed-infrastructure.md) for exactly which resources move outside the module's ownership on each customer-managed path, and note the KEDA `ScaledObject` finalizer hazard documented in [`modules/controllers/README.md`](../modules/controllers/README.md#the-ownership-change-finalizer-hazard) before changing `install_keda` on an already-applied stack.
+
 ## Before you destroy
 
 Back up everything you cannot regenerate. The encryption key in particular is unrecoverable once state is gone.
@@ -41,7 +43,7 @@ The full module dependency graph drives the teardown order:
 2. `helm_release.n8n` uninstalls. The chart's `wait = true, atomic = true, cleanup_on_fail = true` settings drive an orderly pod scale-down inside the release.
 3. The `kubernetes_secret.n8n_*` Secrets, the AKS workload-identity federated credential, and KEDA's `TriggerAuthentication` are removed.
 4. `kubernetes_namespace.n8n` is removed (its `delete` timeout is 5 minutes — see [`n8n.tf`](../n8n.tf) — to absorb any namespace-finalizer cleanup that lingers).
-5. `helm_release.keda`, then `kubernetes_namespace.keda`.
+5. `module.controllers`' Helm release, then its Kubernetes namespace (skipped entirely when `install_keda = false` selected an externally managed KEDA installation).
 6. The `time_sleep.aks_api_warmup` and `time_sleep.n8n_helm_settle` gates are removed from state — both are bootstrap-only and have no destroy-time side effects.
 7. `azurerm_application_gateway.n8n`, `azurerm_public_ip.appgw`, then the AKS cluster and the user node pool.
 8. Postgres, Redis (private endpoint then Managed Redis instance), the private DNS zones and their VNet links.

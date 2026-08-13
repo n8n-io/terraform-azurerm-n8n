@@ -4,6 +4,8 @@ Failure modes observed in real `terraform apply` runs against this module — sy
 
 If you hit something not covered here, open an issue with the resource address that failed and the last 50 lines of `terraform apply` output.
 
+Every recipe below assumes the module-managed AKS, namespace, and KEDA paths (the defaults). On a customer-managed layer (`create_aks = false`, `create_namespace = false`, or `install_keda = false`), the failure surfaces the same way but the fix is usually on the caller's side of the boundary — see [`docs/customer-managed-infrastructure.md`](./customer-managed-infrastructure.md) for what each attestation actually requires before assuming a module bug.
+
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
 **Symptom**
