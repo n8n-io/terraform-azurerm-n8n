@@ -6,6 +6,36 @@ If you hit something not covered here, open an issue with the resource address t
 
 Every recipe below assumes the module-managed AKS, namespace, and KEDA paths (the defaults). On a customer-managed layer (`create_aks = false`, `create_namespace = false`, or `install_keda = false`), the failure surfaces the same way but the fix is usually on the caller's side of the boundary — see [`docs/customer-managed-infrastructure.md`](./customer-managed-infrastructure.md) for what each attestation actually requires before assuming a module bug.
 
+## `terraform apply`: AKS cluster creation fails with `AvailabilityZoneNotSupported`
+
+**Symptom**
+
+`azurerm_kubernetes_cluster.n8n` fails to create with something like:
+
+```
+Error: creating Kubernetes Cluster ...: unexpected status 400 (400 Bad Request) with response:
+{
+  "code": "AvailabilityZoneNotSupported",
+  "message": "The zone(s) '2' for resource 'system' is not supported. The supported zones for location 'germanywestcentral' are '1,3'",
+  "subcode": "",
+  "target": "agentPoolProfile.availabilityZone"
+}
+```
+
+**Root cause**
+
+`var.aks_availability_zones` defaults to `["1", "2", "3"]`, but not every region/VM-SKU/subscription combination supports all three zones for AKS node pools (observed against `germanywestcentral` with `Standard_D2s_v5` in at least one subscription). This may be a subscription- or SKU-level constraint rather than a fixed regional limitation, so don't take the exact zone list above as gospel for every account. Confirm current zone support with `az aks list-vm-skus --location <region> --query "[?name=='<vm size>']"` or the Azure documentation before applying.
+
+**Resolution**
+
+Restrict `aks_availability_zones` to the zones your subscription/SKU/region combination actually supports:
+
+```hcl
+aks_availability_zones = ["1", "3"]
+```
+
+Every example already exposes this variable for exactly this reason (see the `aks_availability_zones` input description). Re-running `terraform apply` after the fix picks up cleanly: resources created before the AKS failure (e.g. the Application Gateway) are left untouched and reused.
+
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
 **Symptom**
