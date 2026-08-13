@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and replace every placeholder.
+
+n8n_domain      = "n8n.example.com"
+n8n_license_key = "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
+
+# Restrict the AKS API to operator and CI egress addresses in production.
+# aks_api_authorized_ip_ranges = ["203.0.113.10/32"]
+
+# Change this if another deployment already uses the same Azure names.
+# friendly_name_prefix = "n8ncmc"
+
+# common_tags = {
+#   Environment = "production"
+#   Owner       = "platform-team"
+# }

@@ -1,0 +1,257 @@
+# TLS certificate rotation
+
+This guide documents how to rotate the App Gateway TLS certificate after
+the Phase 4 R4.3 refactor (registry-hardening US-012). The root module
+no longer issues certs — `var.app_gateway_tls_cert_secret_id` is a
+versioned Key Vault Secret URI the caller supplies, sourced from one of
+three places:
+
+- `modules/tls-letsencrypt/` — Let's Encrypt cert via DNS-01 against an
+  Azure DNS zone (production self-service).
+- `modules/tls-self-signed/` — module-generated cert via `hashicorp/tls`
+  (lab / internal-only).
+- A caller-managed Key Vault Secret — your own PFX import (via your PKI /
+  DigiCert / Sectigo / internal AD CS chain) into a Key Vault you own.
+  No module-side cert state.
+
+`azurerm_application_gateway.n8n.ssl_certificate.key_vault_secret_id`
+([`ingress.tf`](../ingress.tf)) reads `var.app_gateway_tls_cert_secret_id`
+directly. The App Gateway fetches the cert as a Key Vault **secret
+reference** at runtime via `azurerm_user_assigned_identity.appgw_tls_cert`,
+which holds **Key Vault Secrets User** on the vault — every rotation flow
+comes down to "write a new cert version into the Key Vault secret name
+the URI points at" and AGIC reconciles the gateway against the new
+version. The path differs per source in *how* that new version is
+produced.
+
+## Before you rotate
+
+Capture the current state so you can roll back if the new cert breaks the
+listener. Replace `<vault>` and `<secret>` with the values from your
+existing `var.app_gateway_tls_cert_secret_id`:
+
+```bash
+KV_NAME=<vault>
+SECRET_NAME=<secret>
+
+# Save the current cert version (rollback target)
+CURRENT_VERSION=$(az keyvault certificate show \
+  --vault-name "$KV_NAME" --name "$SECRET_NAME" \
+  --query 'attributes.version' -o tsv)
+echo "Current cert version: $CURRENT_VERSION" | tee /tmp/n8n-tls-rollback.txt
+
+# Save the current PFX out (rollback artifact, optional but recommended)
+az keyvault secret download \
+  --vault-name "$KV_NAME" --name "$SECRET_NAME" \
+  --file /tmp/n8n-tls-rollback.pfx --encoding base64
+```
+
+If the App Gateway is currently serving valid traffic, also note
+`terraform output -raw appgw_public_ip` and run a quick
+`curl -fsSL https://<n8n_domain>/healthz` against it before rotation —
+that's your "before" baseline.
+
+The App Gateway picks up the new cert version automatically once it lands
+in the same Key Vault secret. AGIC's reconcile interval is ~30 s; expect
+a 1–2 minute window from the new cert version landing in KV to the
+gateway serving it.
+
+## Rotate via `modules/tls-self-signed/`
+
+The self-signed cert is issued by `hashicorp/tls` inside the submodule
+and valid for `var.validity_period_hours` (default 8760 — 1 year) with
+`early_renewal_hours = 720` — Terraform plans a replacement 30 days
+before expiry whenever `terraform apply` runs against the submodule.
+
+**To force a rotation now:**
+
+```bash
+# Tainting forces replacement on next apply. Resource addresses are
+# nested under the module path that contains the submodule call.
+terraform taint 'module.tls.tls_self_signed_cert.self_signed'
+terraform taint 'module.tls.tls_private_key.self_signed'
+
+terraform apply
+```
+
+`terraform apply` regenerates the private key + cert pair and uploads a
+new version of the submodule-managed Key Vault certificate. The
+submodule's `app_gateway_tls_cert_secret_id` output gets a new versioned
+URI; `module.n8n` re-reads it and `azurerm_application_gateway.n8n`
+plans an in-place update on the listener. AGIC reconciles within ~30 s
+and the App Gateway serves the new cert.
+
+**To stay on auto-renewal:** do nothing. The next `terraform apply` after
+the renewal window opens (30 days before expiry) will replace the cert.
+CI's nightly plan or the next ops apply picks it up.
+
+**Verify after rotation:**
+
+```bash
+echo | openssl s_client -servername "$(terraform output -raw n8n_url | sed 's|https://||')" \
+  -connect "$(terraform output -raw appgw_public_ip):443" 2>/dev/null \
+  | openssl x509 -noout -dates -fingerprint -sha256
+```
+
+The `notBefore` line should be within the last few minutes; the SHA-256
+fingerprint should differ from the rollback artifact.
+
+## Rotate via `modules/tls-letsencrypt/`
+
+The Let's Encrypt cert is issued by `acme_certificate.n8n` inside the
+submodule via DNS-01 challenge against the Azure DNS zone authoritative
+for `var.domain_name`. The acme provider tracks `min_days_remaining = 30`
+by default — Terraform reissues the cert 30 days before expiry on the
+next apply.
+
+**Prerequisites for rotation** (same as initial issuance):
+
+- `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` /
+  `AZURE_SUBSCRIPTION_ID` env vars (or DefaultAzureCredential) on the
+  apply host so the lego library inside the acme provider can write the
+  validation TXT record.
+- The principal those creds resolve to must hold **DNS Zone Contributor**
+  on the Azure DNS zone authoritative for the cert's CN.
+
+**To force a rotation now:**
+
+```bash
+terraform taint 'module.tls.acme_certificate.n8n'
+terraform apply
+```
+
+The acme provider runs the DNS-01 challenge again, Let's Encrypt issues
+a fresh PKCS#12, and the submodule's
+`azurerm_key_vault_certificate.letsencrypt` uploads it as a new version
+of its Key Vault certificate. The submodule's
+`app_gateway_tls_cert_secret_id` output gets a new versioned URI;
+`module.n8n` re-reads it and the App Gateway listener picks up the new
+version automatically.
+
+**To rotate the ACME account key** (separate from the cert — the account
+key authenticates to Let's Encrypt):
+
+```bash
+terraform taint 'module.tls.tls_private_key.acme_account'
+terraform taint 'module.tls.acme_registration.n8n'
+terraform taint 'module.tls.acme_certificate.n8n'
+terraform apply
+```
+
+This issues a brand-new ACME account, registers it, and re-issues the
+cert. Use sparingly — the old account is left dangling at Let's Encrypt
+(no harm, but no automated cleanup).
+
+**To switch between Let's Encrypt staging and production:** configure the
+calling root's `provider "acme"` block with the desired `server_url`, as shown
+in [`modules/tls-letsencrypt/README.md`](../modules/tls-letsencrypt/README.md),
+then run `terraform apply`. Staging certificates are not trusted by browsers
+but exercise the issuance path without rate-limit consumption.
+
+**Verify after rotation:** same `openssl s_client` snippet as the
+self-signed rotation. The issuer should be `R3` (Let's Encrypt) or
+`E1` / `E2` (newer issuers), not the legacy `R10` / `R11` chain.
+
+## Rotate a BYO (caller-managed) cert
+
+The cert is supplied entirely by the caller via a Key Vault Secret URI
+the caller writes new versions into. Rotation is **out-of-band of this
+module** — the module re-reads `var.app_gateway_tls_cert_secret_id` on
+each apply and feeds whatever version is current into the App Gateway
+listener.
+
+**To rotate now:**
+
+1. Obtain the new PFX from your PKI / CA (DigiCert, Sectigo, internal AD
+   CS, etc.). The PFX must contain both the leaf certificate and its
+   private key.
+
+2. Import the new PFX as a new version of the existing Key Vault
+   certificate / secret — for example via the Azure CLI:
+
+   ```bash
+   az keyvault certificate import \
+     --vault-name <vault> \
+     --name <secret> \
+     --file /path/to/new-cert.pfx \
+     --password '<password-for-new-pfx>'   # omit for unencrypted PFXes
+   ```
+
+   This creates a new version under the same `<secret>` name. Capture
+   the new versioned secret URI:
+
+   ```bash
+   NEW_SECRET_URI=$(az keyvault secret show \
+     --vault-name <vault> --name <secret> \
+     --query id -o tsv)
+   ```
+
+3. Update `var.app_gateway_tls_cert_secret_id` to the new URI and
+   re-apply:
+
+   ```bash
+   export TF_VAR_app_gateway_tls_cert_secret_id="$NEW_SECRET_URI"
+   terraform apply
+   ```
+
+   Terraform plans an in-place update on the App Gateway listener's
+   `ssl_certificate.key_vault_secret_id`. The module is otherwise
+   unchanged — no cert resources to refresh.
+
+4. The App Gateway picks up the new version automatically within ~2
+   minutes of the apply.
+
+**To roll back to the previous PFX:** repoint
+`var.app_gateway_tls_cert_secret_id` at the previous version's URI (Key
+Vault never deletes versions automatically — `az keyvault certificate
+list-versions` will list all of them) and run `terraform apply` again.
+
+**Verify after rotation:**
+
+```bash
+echo | openssl s_client -servername "$(terraform output -raw n8n_url | sed 's|https://||')" \
+  -connect "$(terraform output -raw appgw_public_ip):443" 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+```
+
+Confirm `Issuer:` matches the CA that issued the new PFX and `notAfter`
+reflects the new validity window.
+
+## Switch between sources
+
+Switching the cert source (e.g. self-signed → Let's Encrypt, or
+self-signed → BYO) is supported: change the value supplied to
+`var.app_gateway_tls_cert_secret_id` and re-apply. The App Gateway
+listener is updated in place — no listener replacement, no traffic gap.
+
+If you're moving from the self-signed submodule to the LE submodule,
+the typical migration is:
+
+1. Add the LE submodule call to your root config alongside the self-signed
+   call. (Both can issue certs concurrently against the same shared Key
+   Vault as long as they use distinct `friendly_name_prefix` values.)
+2. Switch `module.n8n.app_gateway_tls_cert_secret_id` from
+   `module.tls_self_signed.app_gateway_tls_cert_secret_id` to
+   `module.tls_letsencrypt.app_gateway_tls_cert_secret_id`.
+3. Apply. The listener swaps over.
+4. Once you've verified the new cert is serving traffic, remove the
+   self-signed submodule call and apply again to clean up the now-unused
+   resources.
+
+The same pattern applies for any other source pair (e.g. LE → BYO):
+stage the new source, swap the var, apply, then clean up.
+
+## When rotation fails
+
+| Symptom                                                                                | Likely cause                                                                                                                                  | Fix                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser shows the OLD cert minutes after a successful apply                            | AGIC has not yet reconciled (~30 s window) OR the App Gateway's KV secret reference is pinned to a specific version (it should not be — verify) | Wait 2 min and re-test. If still stale, run `kubectl -n n8n rollout restart deployment/agic` to force AGIC to reconcile the listener.                                                                                                                        |
+| `azurerm_key_vault_certificate.<name>` apply (inside submodule) fails with `Forbidden` | The operator running `terraform apply` lost cert-import rights on the caller-supplied vault                                                  | Re-grant **Key Vault Certificates Officer** (RBAC mode) or `Create`, `Get`, `Import` on certs + `Get`, `Set` on secrets (access-policy mode) on the principal you authenticated as.                                                                          |
+| `acme_certificate.n8n` fails with `failed to find DNS zone for domain`                 | The Azure DNS zone authoritative for `var.domain_name` was renamed, deleted, or the DNS Zone Contributor role was revoked from the apply principal | Re-grant the role and re-run `terraform apply`. If the zone was renamed, point `var.domain_name` at the new authoritative zone or move the zone.                                                                                                              |
+| `acme_certificate.n8n` fails with `urn:ietf:params:acme:error:rateLimited`             | Hit Let's Encrypt's per-domain rate limit (50 certs / domain / week)                                                                          | Switch to `modules/tls-self-signed/` or a BYO cert until the limit window resets, OR set the LE submodule's `provider "acme"` block to `server_url = "https://acme-staging-v02.api.letsencrypt.org/directory"` for non-production rotations.                  |
+| App Gateway 502s after rotation                                                         | The new PFX bundle does not include the private key, or the leaf cert does not match `var.n8n_domain`                                         | Verify the PFX with `openssl pkcs12 -info -in /path/to/new-cert.pfx -noout` — it should list both a Certificate and a Private Key. Verify the SAN includes `var.n8n_domain`. Roll back via the recipe in **Before you rotate**.                                |
+
+If a rotation takes the listener offline and you cannot remediate within
+the SLA window, roll back fast by repointing
+`var.app_gateway_tls_cert_secret_id` at the previous version's URI you
+captured in the `Before you rotate` section, then re-apply.
