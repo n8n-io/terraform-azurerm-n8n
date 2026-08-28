@@ -12,8 +12,7 @@
 # DNS-01 challenge requirements (caller-side):
 #   - An Azure DNS zone (`var.dns_zone_name`) authoritative for `var.domain_name`
 #     in `var.dns_zone_resource_group_name`.
-#   - Standard AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET /
-#     AZURE_SUBSCRIPTION_ID env vars (or DefaultAzureCredential) on the apply
+#   - Azure credentials supported by lego's azuredns provider on the apply
 #     host so the lego library can write the validation TXT record.
 #   - The principal those creds resolve to must have `DNS Zone Contributor`
 #     on the zone.
@@ -40,7 +39,7 @@ resource "acme_certificate" "n8n" {
   ])
 
   dns_challenge {
-    provider = "azure"
+    provider = "azuredns"
 
     config = {
       AZURE_RESOURCE_GROUP = var.dns_zone_resource_group_name

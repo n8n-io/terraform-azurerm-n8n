@@ -67,12 +67,11 @@ run "submodule_plans_clean_with_defaults" {
     error_message = "The default certificate must cover only the normalized canonical domain."
   }
 
-  # DNS-01 challenge against Azure DNS. Provider plug-in must be `azure`
-  # (the lego identifier) — any other value silently disables the
-  # challenge-driver wiring and the cert never issues.
+  # DNS-01 challenge against Azure DNS. The supported lego provider identifier
+  # is `azuredns`; the deprecated identifier fails during provider setup.
   assert {
-    condition     = acme_certificate.n8n.dns_challenge[0].provider == "azure"
-    error_message = "acme_certificate.n8n.dns_challenge[0].provider must be 'azure' (the lego DNS-01 plugin name)"
+    condition     = acme_certificate.n8n.dns_challenge[0].provider == "azuredns"
+    error_message = "acme_certificate.n8n.dns_challenge[0].provider must be 'azuredns'"
   }
 
   # AZURE_RESOURCE_GROUP and AZURE_ZONE_NAME are wired from inputs into
