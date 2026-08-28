@@ -20,14 +20,14 @@ AKS's built-in `ingress_application_gateway` addon binds to exactly one Applicat
 
 Both gateways issue lab-grade self-signed certificates from `modules/tls-self-signed`, one per hostname, imported into one shared Key Vault. Replace both with real certificates before production use.
 
-## Known limitation: `WEBHOOK_URL`
+## Known limitation: `N8N_WEBHOOK_URL`
 
-The root module always derives n8n's `WEBHOOK_URL` (what n8n hands out in generated webhook, form, and MCP links) from `n8n_domain`, which this example serves on the **private** admin gateway. There is currently no root-module input to point `WEBHOOK_URL` at a different hostname, so out of the box n8n advertises webhook URLs on a host that is not reachable from the internet.
+The root module always derives n8n's `N8N_WEBHOOK_URL` (what n8n hands out in generated webhook, form, and MCP links) from `n8n_domain`, which this example serves on the **private** admin gateway. There is currently no root-module input to point `N8N_WEBHOOK_URL` at a different hostname, so out of the box n8n advertises webhook URLs on a host that is not reachable from the internet.
 
 The public gateway still routes every webhook prefix correctly (that is what the mocked tests in `tests/defaults.tftest.hcl` assert), so payload delivery to a URL you construct yourself against `webhook_base_url` (this example's output) works. What does not work without further changes is n8n's own UI copying a *directly usable* webhook URL. Workarounds:
 
 - Hand out `webhook_base_url` to external systems out of band instead of relying on n8n's generated links.
-- Track the root module's `n8n_extra_env` guard list (`WEBHOOK_URL` is currently reserved) for a future override input, or open an issue if you need this now.
+- Track the root module's `n8n_extra_env` guard list (`N8N_WEBHOOK_URL` is currently reserved) for a future override input, or open an issue if you need this now.
 
 ## Apply
 
@@ -147,6 +147,6 @@ Two Application Gateways cost roughly twice one, and this example runs two addit
 | <a name="output_namespace"></a> [namespace](#output\_namespace) | Kubernetes namespace n8n is deployed into. |
 | <a name="output_postgres_password"></a> [postgres\_password](#output\_postgres\_password) | Generated PostgreSQL administrator password. Back it up in a secret manager. |
 | <a name="output_webhook_appgw_fqdn"></a> [webhook\_appgw\_fqdn](#output\_webhook\_appgw\_fqdn) | FQDN of the public webhook Application Gateway. |
-| <a name="output_webhook_base_url"></a> [webhook\_base\_url](#output\_webhook\_base\_url) | Public base URL for webhooks, forms, and MCP. n8n's own WEBHOOK\_URL is not repointed here (the root module derives it from n8n\_domain), so hand this URL to external systems out of band. See the README caveat on this limitation. |
+| <a name="output_webhook_base_url"></a> [webhook\_base\_url](#output\_webhook\_base\_url) | Public base URL for webhooks, forms, and MCP. n8n's own N8N\_WEBHOOK\_URL is not repointed here (the root module derives it from n8n\_domain), so hand this URL to external systems out of band. See the README caveat on this limitation. |
 | <a name="output_webhook_path_prefixes"></a> [webhook\_path\_prefixes](#output\_webhook\_path\_prefixes) | Path prefixes routed to the webhook processors on the public gateway. Sourced from the module so this example cannot drift from what n8n actually serves. |
 <!-- END_TF_DOCS -->

@@ -1954,7 +1954,7 @@ variable "n8n_extra_env" {
 # added in section 12; n8n runtime controls are added in section 7 onward.
 
 variable "n8n_domain" {
-  description = "Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `WEBHOOK_URL` / `N8N_HOST` from this value."
+  description = "Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `N8N_WEBHOOK_URL` / `N8N_HOST` from this value."
   type        = string
 
   validation {
@@ -1964,7 +1964,7 @@ variable "n8n_domain" {
 }
 
 variable "n8n_additional_domains" {
-  description = "Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n_domain. n8n_domain remains canonical for N8N_HOST, WEBHOOK_URL, and the editor URL. The supplied Key Vault certificate must cover every name."
+  description = "Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n_domain. n8n_domain remains canonical for N8N_HOST, N8N_WEBHOOK_URL, and the editor URL. The supplied Key Vault certificate must cover every name."
   type        = list(string)
   default     = []
   nullable    = false

@@ -1468,9 +1468,12 @@ run "runtime_controls_defaults_render_in_helm_values" {
     condition = (
       yamldecode(helm_release.n8n.values[0]).config.timezone == "UTC" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_LEVEL"]) == "info" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_OUTPUT"]) == "console"
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_OUTPUT"]) == "console" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://n8n.example.com" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_PROXY_HOPS"]) == "1" &&
+      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "WEBHOOK_URL"]) == 0
     )
-    error_message = "Timezone and logging defaults must render into the shared chart configuration."
+    error_message = "Timezone, logging, canonical webhook URL, and one trusted proxy hop must render into the shared chart configuration without the deprecated WEBHOOK_URL name."
   }
 
   assert {

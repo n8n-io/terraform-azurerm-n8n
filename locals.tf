@@ -173,11 +173,14 @@ locals {
     "N8N_PERSONALIZATION_ENABLED",
     "N8N_PORT",
     "N8N_PROTOCOL",
+    "N8N_PROXY_HOPS",
     "N8N_REINSTALL_MISSING_PACKAGES",
     "N8N_TEMPLATES_ENABLED",
+    "N8N_WEBHOOK_URL",
     "N8N_WEBHOOK_TIMEOUT",
     "OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS",
     "TZ",
+    # Keep the deprecated name reserved so callers cannot configure both forms.
     "WEBHOOK_URL",
   ]
 
