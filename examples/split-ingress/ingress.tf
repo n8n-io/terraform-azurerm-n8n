@@ -209,7 +209,9 @@ resource "azurerm_application_gateway" "admin" {
   name                = "${var.friendly_name_prefix}-admin-appgw"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
-  http2_enabled       = true
+  # Application Gateway HTTP/2 intermittently resets the editor's large
+  # initial asset burst, leaving the UI blank on otherwise healthy backends.
+  http2_enabled = false
 
   sku {
     name     = "Standard_v2"

@@ -2844,6 +2844,11 @@ run "public_application_gateway_ingress_renders_by_default" {
   }
 
   assert {
+    condition     = azurerm_application_gateway.n8n[0].http2_enabled == false
+    error_message = "The Application Gateway frontend must keep HTTP/2 disabled to prevent intermittent editor asset resets."
+  }
+
+  assert {
     condition = (
       azurerm_public_ip.appgw[0].allocation_method == "Static" &&
       azurerm_public_ip.appgw[0].sku == "Standard" &&
