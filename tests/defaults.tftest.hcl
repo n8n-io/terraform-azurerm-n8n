@@ -1468,9 +1468,12 @@ run "runtime_controls_defaults_render_in_helm_values" {
     condition = (
       yamldecode(helm_release.n8n.values[0]).config.timezone == "UTC" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_LEVEL"]) == "info" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_OUTPUT"]) == "console"
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_OUTPUT"]) == "console" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://n8n.example.com" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_PROXY_HOPS"]) == "1" &&
+      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "WEBHOOK_URL"]) == 0
     )
-    error_message = "Timezone and logging defaults must render into the shared chart configuration."
+    error_message = "Timezone, logging, canonical webhook URL, and one trusted proxy hop must render into the shared chart configuration without the deprecated WEBHOOK_URL name."
   }
 
   assert {
@@ -2838,6 +2841,11 @@ run "public_application_gateway_ingress_renders_by_default" {
       length(kubernetes_ingress_v1.n8n) == 1
     )
     error_message = "Managed ingress defaults must create the public gateway, identities, AKS AGIC addon, and Kubernetes Ingress."
+  }
+
+  assert {
+    condition     = azurerm_application_gateway.n8n[0].http2_enabled == false
+    error_message = "The Application Gateway frontend must keep HTTP/2 disabled to prevent intermittent editor asset resets."
   }
 
   assert {
