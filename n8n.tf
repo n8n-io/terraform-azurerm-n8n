@@ -33,9 +33,11 @@ resource "random_password" "n8n_task_runners_token" {
 # Gated on create_namespace so callers who already own the n8n namespace
 # (platform-managed, or shared across teams) can point the module at it
 # without Terraform ever creating or deleting it. Every namespaced resource
-# and output below uses local.n8n_namespace (the caller-supplied or
-# module-chosen name) rather than this resource's attribute, so nothing
-# downstream depends on whether this module owns the namespace.
+# below uses local.n8n_namespace (the caller-supplied or module-chosen name)
+# rather than this resource's attribute, so nothing downstream depends on
+# whether this module owns the namespace. The one exception is the
+# n8n_namespace output (outputs.tf), which reads this resource on the
+# module-managed path so caller-owned Secrets gain a dependency edge on it.
 resource "kubernetes_namespace" "n8n" {
   count = var.create_namespace ? 1 : 0
 

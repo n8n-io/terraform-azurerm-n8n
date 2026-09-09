@@ -4291,6 +4291,13 @@ run "caller_managed_namespace_creates_no_namespace_resource" {
     error_message = "n8n Secrets must target the caller-managed namespace when create_namespace = false."
   }
 
+  # With no namespace resource to read, the output must fall back to the
+  # caller-supplied name rather than indexing into the empty resource.
+  assert {
+    condition     = output.n8n_namespace == "platform-n8n"
+    error_message = "The n8n_namespace output must resolve to the caller-supplied name when create_namespace = false."
+  }
+
   assert {
     condition     = helm_release.n8n.namespace == "platform-n8n"
     error_message = "The n8n Helm release must target the caller-managed namespace when create_namespace = false."
