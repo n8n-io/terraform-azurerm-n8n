@@ -2058,6 +2058,278 @@ run "rejects_reserved_additional_environment_names" {
   expect_failures = [var.n8n_extra_env]
 }
 
+# ── Credential overwrites (caller-managed Secret reference) ──────────────────
+
+run "credentials_overwrite_secret_ref_defaults_to_null" {
+  command = plan
+
+  assert {
+    condition = (
+      var.n8n_credentials_overwrite_secret_ref == null &&
+      length(local.n8n_credentials_overwrite_env) == 0 &&
+      length(local.n8n_extra_volumes) == 0 &&
+      length(local.n8n_extra_volume_mounts) == 0
+    )
+    error_message = "The credential overwrite Secret reference must default to null and emit no environment variable, volume, or mount."
+  }
+}
+
+run "credentials_overwrite_secret_ref_wires_default_key" {
+  command = plan
+
+  # External PostgreSQL/Redis plus the workload-identity override make the
+  # whole Helm values string plan-known, so the last assert can decode it
+  # (same setup as custom_image_volumes_and_environment_render_on_all_pods).
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = local.n8n_extra_volumes == [
+      {
+        name = "credentials-overwrite"
+        secret = {
+          secretName = "n8n-credentials-overwrite"
+          items = [
+            {
+              key  = "credentials-overwrite.json"
+              path = "credentials-overwrite.json"
+            },
+          ]
+        }
+      },
+    ]
+    error_message = "The managed volume must project only the default credential overwrite key from the caller-managed Secret."
+  }
+
+  assert {
+    condition = local.n8n_extra_volume_mounts == [
+      {
+        name      = "credentials-overwrite"
+        mountPath = "/etc/n8n/credentials-overwrite"
+        readOnly  = true
+      },
+    ]
+    error_message = "The credential overwrite Secret must be mounted read-only at its dedicated directory."
+  }
+
+  assert {
+    condition = (
+      length(local.n8n_credentials_overwrite_env) == 1 &&
+      local.n8n_credentials_overwrite_env[0].name == "CREDENTIALS_OVERWRITE_DATA_FILE" &&
+      local.n8n_credentials_overwrite_env[0].value == "/etc/n8n/credentials-overwrite/credentials-overwrite.json"
+    )
+    error_message = "CREDENTIALS_OVERWRITE_DATA_FILE must point at the projected default key."
+  }
+
+  # The locals above are what the chart values are built from; this closes the
+  # loop on the rendered Helm contract so a future refactor of n8n.tf cannot
+  # silently drop the env entry, the volume, or the mount from the release.
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "CREDENTIALS_OVERWRITE_DATA_FILE"]) == "/etc/n8n/credentials-overwrite/credentials-overwrite.json" &&
+      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "CREDENTIALS_OVERWRITE_DATA"]) == 0 &&
+      one([for volume in yamldecode(helm_release.n8n.values[0]).extraVolumes : volume.secret.secretName if volume.name == "credentials-overwrite"]) == "n8n-credentials-overwrite" &&
+      one([for mount in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : mount.readOnly if mount.name == "credentials-overwrite"]) == true
+    )
+    error_message = "The rendered Helm values must carry CREDENTIALS_OVERWRITE_DATA_FILE, the credentials-overwrite Secret volume, and its read-only mount, and must not carry CREDENTIALS_OVERWRITE_DATA."
+  }
+}
+
+run "credentials_overwrite_secret_ref_wires_custom_key" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+      key  = "shared_oauth.json"
+    }
+  }
+
+  assert {
+    condition = (
+      local.n8n_extra_volumes[0].secret.items[0].key == "shared_oauth.json" &&
+      local.n8n_extra_volumes[0].secret.items[0].path == "shared_oauth.json" &&
+      local.n8n_credentials_overwrite_env[0].value == "/etc/n8n/credentials-overwrite/shared_oauth.json"
+    )
+    error_message = "A custom Secret key must drive both the projected filename and CREDENTIALS_OVERWRITE_DATA_FILE."
+  }
+}
+
+run "credentials_overwrite_secret_ref_appends_after_caller_volumes" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = { name = "n8n-credentials-overwrite" }
+    n8n_extra_volumes                    = [{ name = "custom-nodes", config_map = { name = "custom-nodes" } }]
+    n8n_extra_volume_mounts              = [{ name = "custom-nodes", mount_path = "/opt/n8n-nodes" }]
+  }
+
+  assert {
+    condition = (
+      length(local.n8n_extra_volumes) == 2 &&
+      local.n8n_extra_volumes[0].name == "custom-nodes" &&
+      local.n8n_extra_volumes[1].name == "credentials-overwrite" &&
+      length(local.n8n_extra_volume_mounts) == 2 &&
+      local.n8n_extra_volume_mounts[0].mountPath == "/opt/n8n-nodes" &&
+      local.n8n_extra_volume_mounts[1].mountPath == "/etc/n8n/credentials-overwrite"
+    )
+    error_message = "Caller-supplied volumes and mounts must be preserved in order, with the managed credential overwrite entries appended last."
+  }
+}
+
+run "credentials_overwrite_secret_ref_rejects_invalid_secret_name" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "N8N Credentials"
+    }
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_secret_ref_rejects_invalid_key" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+      key  = "nested/credentials.json"
+    }
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_escape_hatch_remains_valid_when_reference_is_null" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+
+    n8n_extra_env = [
+      {
+        name  = "CREDENTIALS_OVERWRITE_DATA_FILE"
+        value = "/existing/credentials-overwrite.json"
+      },
+    ]
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  # The plan completing without expect_failures is what proves the validation
+  # leaves the escape hatch alone while the reference is null. The assert adds
+  # the other half: the module emits no CREDENTIALS_OVERWRITE_DATA_FILE of its
+  # own, so the caller's entry is the only one in the rendered env list.
+  assert {
+    condition = (
+      length(local.n8n_credentials_overwrite_env) == 0 &&
+      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "CREDENTIALS_OVERWRITE_DATA_FILE"]) == 1
+    )
+    error_message = "With the Secret reference unset, the module must not emit its own CREDENTIALS_OVERWRITE_DATA_FILE next to the caller's escape-hatch entry."
+  }
+}
+
+run "credentials_overwrite_secret_ref_rejects_overwrite_env_conflict" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_env = [
+      { name = "CREDENTIALS_OVERWRITE_DATA", value = "{}" },
+    ]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_secret_ref_rejects_overwrite_file_env_conflict" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_env = [
+      { name = "CREDENTIALS_OVERWRITE_DATA_FILE", value = "/existing/credentials-overwrite.json" },
+    ]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_secret_ref_rejects_volume_name_conflict" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_volumes = [
+      { name = "credentials-overwrite", secret = { secret_name = "existing-overwrite" } },
+    ]
+    n8n_extra_volume_mounts = [
+      { name = "credentials-overwrite", mount_path = "/existing/credentials-overwrite" },
+    ]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_secret_ref_rejects_mount_path_conflict" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_volumes = [
+      { name = "existing-overwrite", secret = { secret_name = "existing-overwrite" } },
+    ]
+    n8n_extra_volume_mounts = [
+      { name = "existing-overwrite", mount_path = "/etc/n8n/credentials-overwrite" },
+    ]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
 run "warns_when_custom_extensions_have_no_backing_content" {
   command = plan
 

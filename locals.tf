@@ -103,46 +103,88 @@ locals {
   # Translate typed snake_case volume inputs to the Kubernetes camelCase shape
   # accepted by the chart's all-pod extra volume values. Kubernetes expects an
   # integer defaultMode, while callers supply an octal string to avoid decimal
-  # interpretation by Terraform.
-  n8n_extra_volumes = [
-    for volume in var.n8n_extra_volumes : merge(
-      { name = volume.name },
-      volume.config_map == null ? {} : {
-        configMap = merge(
-          { name = volume.config_map.name },
-          volume.config_map.default_mode == null ? {} : {
-            defaultMode = parseint(volume.config_map.default_mode, 8)
-          },
-        )
-      },
-      volume.secret == null ? {} : {
-        secret = merge(
-          { secretName = volume.secret.secret_name },
-          volume.secret.default_mode == null ? {} : {
-            defaultMode = parseint(volume.secret.default_mode, 8)
-          },
-        )
-      },
-      volume.persistent_volume_claim == null ? {} : {
-        persistentVolumeClaim = merge(
-          { claimName = volume.persistent_volume_claim.claim_name },
-          volume.persistent_volume_claim.read_only == null ? {} : {
-            readOnly = volume.persistent_volume_claim.read_only
-          },
-        )
-      },
-    )
-  ]
-
-  n8n_extra_volume_mounts = [
-    for mount in var.n8n_extra_volume_mounts : merge(
+  # interpretation by Terraform. Caller entries keep their order; the managed
+  # credential-overwrite Secret volume and its read-only mount are appended
+  # last when n8n_credentials_overwrite_secret_ref is set. That volume projects
+  # only the selected key, so the pod never sees the Secret's other keys, and
+  # the module never reads the payload itself.
+  n8n_extra_volumes = concat(
+    [
+      for volume in var.n8n_extra_volumes : merge(
+        { name = volume.name },
+        volume.config_map == null ? {} : {
+          configMap = merge(
+            { name = volume.config_map.name },
+            volume.config_map.default_mode == null ? {} : {
+              defaultMode = parseint(volume.config_map.default_mode, 8)
+            },
+          )
+        },
+        volume.secret == null ? {} : {
+          secret = merge(
+            { secretName = volume.secret.secret_name },
+            volume.secret.default_mode == null ? {} : {
+              defaultMode = parseint(volume.secret.default_mode, 8)
+            },
+          )
+        },
+        volume.persistent_volume_claim == null ? {} : {
+          persistentVolumeClaim = merge(
+            { claimName = volume.persistent_volume_claim.claim_name },
+            volume.persistent_volume_claim.read_only == null ? {} : {
+              readOnly = volume.persistent_volume_claim.read_only
+            },
+          )
+        },
+      )
+    ],
+    var.n8n_credentials_overwrite_secret_ref == null ? [] : [
       {
-        name      = mount.name
-        mountPath = mount.mount_path
-        readOnly  = mount.read_only
+        name = "credentials-overwrite"
+        secret = {
+          secretName = var.n8n_credentials_overwrite_secret_ref.name
+          items = [
+            {
+              key  = var.n8n_credentials_overwrite_secret_ref.key
+              path = var.n8n_credentials_overwrite_secret_ref.key
+            },
+          ]
+        }
       },
-      mount.sub_path == null ? {} : { subPath = mount.sub_path },
-    )
+    ],
+  )
+
+  n8n_extra_volume_mounts = concat(
+    [
+      for mount in var.n8n_extra_volume_mounts : merge(
+        {
+          name      = mount.name
+          mountPath = mount.mount_path
+          readOnly  = mount.read_only
+        },
+        mount.sub_path == null ? {} : { subPath = mount.sub_path },
+      )
+    ],
+    var.n8n_credentials_overwrite_secret_ref == null ? [] : [
+      {
+        name      = "credentials-overwrite"
+        mountPath = "/etc/n8n/credentials-overwrite"
+        readOnly  = true
+      },
+    ],
+  )
+
+  # CREDENTIALS_OVERWRITE_DATA_FILE is deliberately absent from
+  # local.n8n_managed_env_names below: the variable validation on
+  # n8n_credentials_overwrite_secret_ref rejects it (and
+  # CREDENTIALS_OVERWRITE_DATA) in n8n_extra_env only while the reference is
+  # set, so callers who already deliver the file through the escape hatches
+  # keep working until they opt into the dedicated input.
+  n8n_credentials_overwrite_env = var.n8n_credentials_overwrite_secret_ref == null ? [] : [
+    {
+      name  = "CREDENTIALS_OVERWRITE_DATA_FILE"
+      value = "/etc/n8n/credentials-overwrite/${var.n8n_credentials_overwrite_secret_ref.key}"
+    },
   ]
 
   # The chart appends config.extraEnv after its own environment variables, and

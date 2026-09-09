@@ -423,6 +423,21 @@ resource "helm_release" "n8n" {
         !var.n8n_personalization_enabled ? [
           { name = "N8N_PERSONALIZATION_ENABLED", value = "false" },
         ] : [],
+        # File-based credential overwrites from a caller-managed Secret. The
+        # matching volume and read-only mount are assembled in locals.tf and
+        # rendered onto all three n8n pod types below. This is n8n's generic
+        # "<VAR>_FILE" convention (readEnv in @n8n/config), not a dedicated
+        # setting, and readEnv prefers CREDENTIALS_OVERWRITE_DATA over the
+        # _FILE variant wherever it appears in the env list, so Kubernetes'
+        # last-wins ordering is not the whole story here. The input validation
+        # rejects both names in n8n_extra_env while this entry is active for
+        # exactly that reason.
+        local.n8n_credentials_overwrite_env,
+        # Caller-supplied escape hatch, appended last. Kubernetes resolves
+        # duplicate env names last-wins, so this would override anything above
+        # it; var.n8n_extra_env is validated against local.n8n_managed_env_names
+        # and local.n8n_managed_env_prefixes (variables.tf) so it cannot shadow
+        # a module- or chart-managed connection/identity/storage/license var.
         var.n8n_extra_env,
       )
     }

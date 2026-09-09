@@ -12,6 +12,7 @@ An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this m
 - [Prerequisites](#prerequisites)
 - [Usage](#usage)
 - [Runtime and workload controls](#runtime-and-workload-controls)
+- [Credential overwrites](#credential-overwrites)
 - [Managed-service topologies](#managed-service-topologies)
 - [Customer-managed infrastructure](#customer-managed-infrastructure)
 - [Ingress, DNS, and TLS](#ingress-dns-and-tls)
@@ -140,6 +141,64 @@ Beyond the base multi-main topology, this module ports the AWS sibling's operato
 - **Azure Key Vault external secrets** — the infrastructure boundary and prerequisites for n8n's own Azure Key Vault external-secrets integration are documented in [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md); this module does not manage the Entra application or workflow credentials that feature needs.
 
 n8n application version `2.29.0` or later is required for the Azure binary/execution-data modes; the module's default (`n8n_image_tag = "2.35.0"`) already meets that floor, and applying a version below it fails validation.
+
+## Credential overwrites
+
+n8n [credential overwrites](https://docs.n8n.io/administer/manage-credentials/credential-overwrites/)
+let operators preconfigure shared credential fields and hide those fields from
+users. Supply the JSON through a caller-managed Kubernetes Secret:
+
+```hcl
+resource "kubernetes_secret_v1" "credentials_overwrite" {
+  metadata {
+    name      = "n8n-credentials-overwrite"
+    namespace = module.n8n.n8n_namespace
+  }
+
+  data = {
+    "credentials-overwrite.json" = var.credentials_overwrite_json
+  }
+}
+
+module "n8n" {
+  # ...other inputs...
+
+  n8n_credentials_overwrite_secret_ref = {
+    name = kubernetes_secret_v1.credentials_overwrite.metadata[0].name
+    # key defaults to "credentials-overwrite.json"
+  }
+}
+```
+
+The module mounts only the selected key read-only at
+`/etc/n8n/credentials-overwrite/<key>` on main, worker, and webhook-processor
+pods, then sets `CREDENTIALS_OVERWRITE_DATA_FILE` to that file. That variable
+is n8n's generic `_FILE` suffix, which reads any configuration value from a
+file path, rather than a dedicated setting, so it does not appear by name in
+n8n's environment variable reference. Passing the Secret resource's name
+attribute also makes the Helm release depend on the Secret, so a single apply
+creates them in the required order.
+
+The module accepts the Secret name and key, not the JSON. The payload therefore
+does not enter this module's Helm values or managed resources. If the caller
+creates the Secret with Terraform as above, the payload can still be stored in
+the caller's root state.
+
+n8n reads the file at startup. Updating the Secret does not restart any pods,
+and the module cannot calculate a rollout checksum without reading the payload
+back into state. Restart all three deployments after every rotation:
+
+```bash
+kubectl rollout restart \
+  deployment/n8n-main \
+  deployment/n8n-worker \
+  deployment/n8n-webhook-processor \
+  -n <namespace>
+```
+
+`CREDENTIALS_OVERWRITE_PERSISTENCE` is separate and remains out of scope.
+Persistence applies to overwrites submitted through n8n's HTTP endpoint and can
+supersede static file data.
 
 ## Managed-service topologies
 
@@ -377,6 +436,7 @@ This module does not:
 | <a name="input_n8n_chart_version"></a> [n8n\_chart\_version](#input\_n8n\_chart\_version) | n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default follows the AWS sibling's validated 1.10 chart line. | `string` | `"1.10.0"` | no |
 | <a name="input_n8n_community_packages_prevent_loading"></a> [n8n\_community\_packages\_prevent\_loading](#input\_n8n\_community\_packages\_prevent\_loading) | Prevent installed community packages from loading at runtime without uninstalling them. | `bool` | `false` | no |
 | <a name="input_n8n_community_packages_registry"></a> [n8n\_community\_packages\_registry](#input\_n8n\_community\_packages\_registry) | Optional HTTP or HTTPS npm registry used for community-package installation. Null leaves n8n on its public registry default. Custom registries require the matching Enterprise entitlement. | `string` | `null` | no |
+| <a name="input_n8n_credentials_overwrite_secret_ref"></a> [n8n\_credentials\_overwrite\_secret\_ref](#input\_n8n\_credentials\_overwrite\_secret\_ref) | Existing Kubernetes Secret containing n8n credential overwrite JSON. The<br/>module mounts only the selected key, read-only, at<br/>/etc/n8n/credentials-overwrite/<key> on main, worker, and webhook-processor<br/>pods and sets CREDENTIALS\_OVERWRITE\_DATA\_FILE to that path. name is the<br/>Secret's name in var.n8n\_namespace; key defaults to<br/>"credentials-overwrite.json". The module accepts only this reference and<br/>never reads the JSON, so the payload does not enter this module's Helm values<br/>or managed resources. If Terraform creates the Secret, its payload can still<br/>enter the caller's state.<br/><br/>n8n reads the file at startup. Updating the caller-managed Secret does not<br/>roll pods, and the module cannot add a content checksum without reading the<br/>payload into state. After each rotation, manually restart n8n-main,<br/>n8n-worker, and n8n-webhook-processor. CREDENTIALS\_OVERWRITE\_PERSISTENCE is<br/>intentionally outside this file-based feature.<br/><br/>When this input is set, n8n\_extra\_env may not set<br/>CREDENTIALS\_OVERWRITE\_DATA or CREDENTIALS\_OVERWRITE\_DATA\_FILE,<br/>n8n\_extra\_volumes may not use the reserved name "credentials-overwrite",<br/>and n8n\_extra\_volume\_mounts may not use the reserved mount path<br/>"/etc/n8n/credentials-overwrite". Null preserves the escape-hatch behavior<br/>and rendered Helm values from before this input existed. | <pre>object({<br/>    name = string<br/>    key  = optional(string, "credentials-overwrite.json")<br/>  })</pre> | `null` | no |
 | <a name="input_n8n_custom_extensions_path"></a> [n8n\_custom\_extensions\_path](#input\_n8n\_custom\_extensions\_path) | Optional canonical absolute path that every n8n application container scans for custom nodes, such as /opt/n8n-nodes. A custom image or an extra volume mount must put content at this path. Only one path is supported because n8n's semicolon-separated paths overwrite one another under the CUSTOM package key. The path must stay outside /home/node/.n8n, which the chart shadows on main pods. | `string` | `null` | no |
 | <a name="input_n8n_domain"></a> [n8n\_domain](#input\_n8n\_domain) | Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `N8N_WEBHOOK_URL` / `N8N_HOST` from this value. | `string` | n/a | yes |
 | <a name="input_n8n_encryption_key"></a> [n8n\_encryption\_key](#input\_n8n\_encryption\_key) | Existing n8n encryption key to reuse — e.g. the backed-up key from another n8n installation whose PostgreSQL data this deployment restores. Leave null (the default) to generate a fresh 48-character key. n8n cannot decrypt credentials encrypted under a different key, so any restore of an existing n8n database MUST set this to that database's original key before the first apply. Mutually exclusive with n8n\_encryption\_key\_secret\_ref. Marked sensitive — supply via environment variable (TF\_VAR\_n8n\_encryption\_key) or a secret-managed terraform.tfvars, and note the value resides in Terraform state either way. | `string` | `null` | no |

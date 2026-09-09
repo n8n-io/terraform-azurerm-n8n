@@ -5,6 +5,29 @@ All notable changes to this module are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `n8n_credentials_overwrite_secret_ref`: mounts one key from a
+  caller-managed Kubernetes Secret read-only on main, worker, and webhook
+  processor pods and points `CREDENTIALS_OVERWRITE_DATA_FILE` at it. The module
+  accepts only the Secret name and key, so the credential overwrite JSON does
+  not enter its Helm values or managed resources. The input defaults to `null`,
+  preserving existing behavior.
+
+  When set, plan-time validation rejects `CREDENTIALS_OVERWRITE_DATA` and
+  `CREDENTIALS_OVERWRITE_DATA_FILE` in `n8n_extra_env`, the managed
+  `credentials-overwrite` volume name in `n8n_extra_volumes`, and the managed
+  `/etc/n8n/credentials-overwrite` path in `n8n_extra_volume_mounts`. These
+  names remain available through the escape hatches while the new input is
+  null, preserving existing configurations.
+
+  n8n reads overwrite data at startup. Rotating the caller-managed Secret does
+  not roll pods because the module deliberately does not read or hash the
+  payload. Restart the `n8n-main`, `n8n-worker`, and
+  `n8n-webhook-processor` deployments manually after rotation.
+
 ## [0.1.0] — First release
 
 Initial public release of `terraform-azurerm-n8n`: a single resource-bearing
@@ -56,4 +79,5 @@ per concern, no nested `module` calls.
   `docs/troubleshooting.md`, `docs/destroy-cleanup.md`,
   `docs/tls-rotation.md`.
 
+[Unreleased]: https://github.com/n8n-io/terraform-azurerm-n8n/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/n8n-io/terraform-azurerm-n8n/releases/tag/v0.1.0
