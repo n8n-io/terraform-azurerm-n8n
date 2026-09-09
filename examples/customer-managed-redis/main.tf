@@ -15,16 +15,10 @@
 # remain module-managed to isolate this example to the Redis ownership
 # boundary alone.
 #
-# Ordering note: kubernetes_secret.redis_password below is created in the
-# module-managed n8n namespace (module.n8n.n8n_namespace), so it necessarily
-# lands only once that namespace exists — but nothing forces it to land
-# BEFORE the n8n Helm release inside module.n8n starts. On a from-scratch
-# first apply this can occasionally lose the race: Helm's atomic = true
-# setting rolls back cleanly if pods can't start because the Secret is not
-# yet present, and a second `terraform apply` then succeeds because the
-# Secret already exists. This mirrors the general constraint any
-# caller-managed Kubernetes Secret reference carries when the namespace and
-# workload are both created in the same apply as the Secret itself.
+# Ordering note: module.n8n.n8n_namespace depends on the module-managed
+# namespace. The Secret uses that output as its namespace, and the module call
+# uses the Secret's name in redis_password_secret_ref. These references order
+# the namespace, Secret, and n8n Helm release during one apply.
 
 locals {
   common_tags = merge({

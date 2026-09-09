@@ -139,7 +139,16 @@ Secrets, so root Terraform takes over the n8n ServiceAccount only when
 moves the workload-identity federated subject with it. Inputs contain existing
 Secret names only, never registry credentials. Keep `local.n8n_managed_env_names` and
 `local.n8n_managed_env_prefixes` synchronized with every environment variable
-the module or chart owns before adding to `config.extraEnv`.
+the module or chart owns before adding to `config.extraEnv`. The one deliberate
+exception is `CREDENTIALS_OVERWRITE_DATA_FILE`: `n8n_credentials_overwrite_secret_ref`
+(ported from `terraform-aws-n8n` PR #119) appends a `credentials-overwrite`
+Secret volume, a read-only mount at `/etc/n8n/credentials-overwrite`, and that
+env var after the caller's `n8n_extra_volumes` / `n8n_extra_volume_mounts`
+entries, but its conflict checks (`CREDENTIALS_OVERWRITE_DATA[_FILE]` in
+`n8n_extra_env`, the reserved volume name and mount path) live as validations on
+the new variable and fire only while it is non-null, so callers already
+delivering the file through the escape hatches keep working. The module never
+reads the Secret's payload, so Secret rotation needs a manual rollout restart.
 
 **Data and observability configuration.** Root `n8n.tf` renders binary mode,
 historical binary modes, execution-data mode, Azure connection, metrics,

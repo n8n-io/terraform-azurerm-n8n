@@ -19,7 +19,9 @@ Every Azure and Kubernetes layer the module can hand off to a caller is handed o
 
 The module still creates the n8n workload identity and its Blob role assignment (design.md decision 3), and still renders the KEDA `TriggerAuthentication` and the chart's worker `ScaledObject` (design.md decision 6) — those are the only two Kubernetes-facing things the module keeps regardless of `install_keda`.
 
-Because the namespace is caller-managed here — unlike `examples/customer-managed-redis`, where the namespace stays module-managed — every Secret this example creates (`n8n-license`, `n8n-encryption-key`, the PostgreSQL and Redis password Secrets) lands in that namespace before `module "n8n"` is ever called. There is no first-apply ordering race the way `examples/customer-managed-redis` documents.
+The caller-managed namespace is created before every Secret in this example.
+The module's explicit dependencies then place `module "n8n"` after the n8n
+license, encryption-key, PostgreSQL password, and Redis password Secrets.
 
 `module "controllers"` is called directly, exactly the shape a platform team composing KEDA once across more than one workload root would use. `module "n8n"`'s `depends_on = [module.controllers]` preserves the install and destroy ordering a direct caller must provide — see `docs/customer-managed-infrastructure.md` in the module root for the full contract, including the destroy-time `ScaledObject` finalizer hazard.
 

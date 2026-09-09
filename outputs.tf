@@ -140,7 +140,16 @@ output "n8n_encryption_key" {
 
 output "n8n_namespace" {
   description = "Kubernetes namespace containing the n8n workload — the module-created namespace when create_namespace = true (the default), or the caller-supplied existing namespace name when create_namespace = false."
-  value       = local.n8n_namespace
+  # On the create_namespace = true path this deliberately reads the resource
+  # attribute rather than the plan-time-constant local, so a caller's own
+  # kubernetes_* resources referencing this output (e.g. the caller-managed
+  # Secrets behind n8n_credentials_overwrite_secret_ref or
+  # redis_password_secret_ref) get a dependency edge on the namespace. Without
+  # it Terraform schedules them concurrently with the namespace on a cold
+  # apply and they fail with `namespaces "n8n" not found`. The value is the
+  # same string either way; only the graph edge differs. Mirrors the AWS
+  # sibling's `namespace` output.
+  value = var.create_namespace ? kubernetes_namespace.n8n[0].metadata[0].name : local.n8n_namespace
 }
 
 output "n8n_helm_release_name" {

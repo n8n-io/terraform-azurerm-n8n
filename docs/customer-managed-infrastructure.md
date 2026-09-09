@@ -184,21 +184,35 @@ private ChartMuseum or ACR Helm registry instead of reaching
 
 ### Kubernetes Secret references
 
-Four credentials support a caller-managed Kubernetes Secret reference in
-place of a Terraform-managed value, each shaped as
+Five inputs support a caller-managed Kubernetes Secret reference. The four
+credential references replace a Terraform-managed value and use
 `object({ name = string, key = string })`:
 
-| Credential | Secret-ref input | Mutually exclusive with |
+| Data | Secret-ref input | Conflicts with |
 |---|---|---|
 | n8n license key | `n8n_license_key_secret_ref` | `n8n_license_key` |
 | n8n encryption key | `n8n_encryption_key_secret_ref` | `n8n_encryption_key` |
 | External PostgreSQL password | `postgres_password_secret_ref` | `postgres_external_password` |
 | External Redis password | `redis_password_secret_ref` | `redis_external_password` |
+| n8n credential overwrite JSON | `n8n_credentials_overwrite_secret_ref` | `CREDENTIALS_OVERWRITE_DATA` or `CREDENTIALS_OVERWRITE_DATA_FILE` in `n8n_extra_env`; the reserved volume name `credentials-overwrite`; the reserved mount path `/etc/n8n/credentials-overwrite` |
+
+`n8n_credentials_overwrite_secret_ref` uses
+`object({ name = string, key = optional(string, "credentials-overwrite.json") })`.
+The module projects only the selected key into a read-only volume on every n8n
+application pod and sets `CREDENTIALS_OVERWRITE_DATA_FILE` to the mounted file.
+n8n reads the file at startup. Restart the `n8n-main`, `n8n-worker`, and
+`n8n-webhook-processor` deployments after the Secret payload changes.
 
 The module never reads a caller-managed Secret's value into Terraform. It
 renders only the Secret's **name and key** into the Helm chart's values (and,
 for the Redis password, into the KEDA `TriggerAuthentication` as well) —
 Terraform state never contains the underlying credential.
+
+When the module creates the n8n namespace, its `n8n_namespace` output depends
+on the namespace resource. A caller-managed Secret that uses this output as
+its namespace therefore waits for the namespace. Passing that Secret's name
+into one of the references above then makes the n8n Helm release wait for the
+Secret. This ordering supports a cold deployment in one `terraform apply`.
 
 `n8n_encryption_key_secret_ref` has one shape difference worth calling out:
 the chart's `secretRefs.existingSecret` contract expects **one Secret with

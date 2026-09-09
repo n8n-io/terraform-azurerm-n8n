@@ -10,14 +10,18 @@ The password never reaches Terraform's module inputs as a literal: `kubernetes_s
 
 AKS, PostgreSQL, private Azure Blob storage, and ingress remain module-managed here to keep this example scoped to the Redis ownership boundary alone. See `examples/customer-managed-cluster`, `examples/customer-managed-storage`, and `examples/customer-managed-everything` for the other boundaries.
 
-## Ordering caveat
+## Ordering
 
-`kubernetes_secret.redis_password` is created in the module-managed n8n namespace (`module.n8n.n8n_namespace`), so it depends on that namespace existing, but nothing forces it to land *before* the n8n Helm release inside `module.n8n` starts. On a from-scratch first apply this can occasionally lose that race: Helm's `atomic = true` setting rolls the release back cleanly if pods can't start because the Secret is not yet present, and a second `terraform apply` then succeeds because the Secret already exists by then. This is a general constraint of any caller-managed Kubernetes Secret reference whose namespace and consuming workload are both created in the same apply as the Secret itself — see `docs/customer-managed-infrastructure.md` in the module root.
+`kubernetes_secret.redis_password` uses `module.n8n.n8n_namespace`, so it waits
+for the module-managed namespace. The module call then uses the Secret's name
+in `redis_password_secret_ref`, so the n8n Helm release waits for the Secret.
+This creates the namespace, Secret, and workload in the required order during
+one `terraform apply`.
 
 ## Apply
 
 1. Copy `terraform.tfvars.example` to `terraform.tfvars` and replace the placeholders.
-2. Run `terraform init` and `terraform apply`. If the first apply fails because the n8n Helm release rolled back before the Redis Secret existed (see the ordering caveat above), run `terraform apply` again.
+2. Run `terraform init` and `terraform apply`.
 3. Point your own DNS at `appgw_public_ip` once you are ready to move off the self-signed certificate.
 
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
