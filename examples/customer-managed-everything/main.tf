@@ -10,12 +10,9 @@
 # sibling example (customer-managed-cluster / -redis / -storage) exercises
 # it; see those examples for a narrower walk-through of any one boundary.
 #
-# Because the namespace is caller-managed here (unlike
-# examples/customer-managed-redis, where the namespace stays module-managed),
-# every Secret this example creates lands in that namespace before
-# module "n8n" is ever called — there is no ordering race between Secret
-# creation and the n8n Helm release, unlike the caveat
-# examples/customer-managed-redis documents.
+# The caller-managed namespace is created before every Secret below. The
+# module call's explicit dependencies then place the n8n Helm release after
+# all four caller-managed credential Secrets.
 
 locals {
   common_tags = merge({
@@ -398,10 +395,9 @@ module "tls_self_signed" {
 }
 
 # ── Existing namespace and caller-managed Secrets ─────────────────────────────
-# All created directly against the caller-owned AKS stand-in, before
-# module "n8n" is ever called — there is no ordering race here the way
-# examples/customer-managed-redis documents, because the namespace itself is
-# not module-managed in this example.
+# All are created directly against the caller-owned AKS stand-in. Resource
+# references order the namespace before the Secrets, and module "n8n" depends
+# explicitly on every Secret below.
 
 resource "kubernetes_namespace" "n8n" {
   metadata {
