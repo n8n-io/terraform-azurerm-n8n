@@ -251,6 +251,36 @@ local a test still asserts on. All four new provider-lock refreshes
 tracked, unlike every pre-existing root/example/submodule lock file, which
 already carried all three platforms.
 
+## `port-aws-040-enhancements` in progress
+
+This change (`openspec/changes/port-aws-040-enhancements/`) ports the
+applicable parts of `terraform-aws-n8n` 0.4.0 (single-main queue mode,
+PostgreSQL/Bull/execution-save runtime tuning, a V8 heap ceiling,
+caller-managed task-runner launcher configuration, pod DNS, an optional
+Redis exporter, AKS OS-disk sizing, and the editor/webhook URL split) —
+see its `design.md` for the full per-item applicability table and the
+decisions each Azure adaptation is based on. Section 1 added
+`tests/scripts/check-n8n-chart.sh`, an offline Helm chart-rendering
+regression check with no Azure/Kubernetes-credential dependency, run
+locally via `terraform init -backend=false && tests/scripts/check-n8n-chart.sh`.
+`terraform console`, when fed a heredoc via a pipe (non-interactive stdin,
+as every shell script must), evaluates **one line per expression** —
+unlike the interactive REPL, it does not accept a multi-line HCL
+expression spanning several heredoc lines and instead reports
+"Missing expression" once the input ends mid-expression. Any script
+building a `jsonencode({...})` fixture through `terraform console` must
+keep that whole expression on a single line. Separately, `terraform
+console` (and `terraform plan`) does not require live provider
+credentials merely because the configuration declares a data source:
+an unconfigured provider's data-source read (e.g. `data.azurerm_resource_group.n8n`
+in `iam.tf`) is deferred and reported as `(known after apply)` rather than
+erroring the whole plan, as long as the console expression being
+evaluated doesn't itself depend on that unresolved value. This is what
+lets a chart-check script pull real `var.*`/`local.*` values from the
+root module via `terraform console` without any Azure auth, provided the
+expression only touches plan-time-known inputs (variables and literals,
+not managed-resource attributes like a Flexible Server FQDN).
+
 ## What this repo is
 
 `terraform-azurerm-n8n` is a Terraform module that deploys a **production-grade,

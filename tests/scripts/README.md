@@ -1,12 +1,69 @@
-# Post-deployment scripts
+# Post-deployment and chart-rendering scripts
 
-Two manual verification scripts. Neither runs in CI: both need a live
-cluster, which a pull request check cannot provide.
+Three scripts. `check-n8n-chart.sh` is offline and runs in CI on every
+pull request. `smoke-test.sh` and `verify-custom-image.sh` are manual
+verification scripts that need a live cluster, which a pull request
+check cannot provide.
 
 | Script | Use it when |
 |---|---|
+| [`check-n8n-chart.sh`](#chart-rendering-check) | Any change to `n8n.tf`, chart-affecting variables, or the pinned `n8n_chart_version`. Runs offline in CI. |
 | [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. |
 | [`verify-custom-image.sh`](#custom-image-verification) | The deployment sets `n8n_image_repository` and `n8n_custom_extensions_path` to bake community packages into the image. |
+
+## Chart-rendering check
+
+`check-n8n-chart.sh` renders the pinned n8n Helm chart
+(`var.n8n_chart_version`) with values pulled directly from this root
+module's own variables and locals via `terraform console`, then asserts
+on the manifests Helm actually produces. It is a regression check
+against the real module-to-chart mapping, not an independently
+maintained approximation of it — every asserted value traces back to a
+`var.*`/`local.*` expression evaluated against the module, not a
+hand-copied constant.
+
+It needs no Azure or Kubernetes credentials and creates no
+infrastructure: `terraform console` only plans (never applies), unused
+data-source reads are deferred rather than executed against a live
+subscription, and `helm template` renders locally against the chart
+pulled from its OCI registry.
+
+### Prerequisites
+
+- `terraform` (already required elsewhere in this repo)
+- `helm` v3+ (Helm's built-in JSON-schema validation runs automatically
+  on every `helm template` call this script makes; no flag is needed to
+  enable it)
+- `jq`
+
+### Running it locally
+
+```bash
+terraform init -backend=false   # once, from the repo root
+tests/scripts/check-n8n-chart.sh
+```
+
+### What it covers
+
+- Deployment families (`deployment-main`, `deployment-worker`,
+  `deployment-webhook-processor`) at their configured replica floors.
+- The main `HorizontalPodAutoscaler` bounds/threshold and the main
+  `PodDisruptionBudget` minimum/selector.
+- The worker `ScaledObject`'s replica bounds and both `bull:jobs:wait` /
+  `bull:jobs:active` triggers.
+- Execution save-policy environment values (`EXECUTIONS_DATA_SAVE_*`) on
+  main and worker only — the chart does not render them on the
+  webhook-processor container.
+- The current `N8N_WEBHOOK_URL` environment entry on all three
+  application containers, and the absence of the chart's own deprecated
+  `WEBHOOK_URL` alias (which only renders when `webhook.url` or
+  `ingress.enabled` is set — neither is set by this module).
+- A self-test proving the script's duplicate-environment-name detector
+  actually flags an intentionally duplicated fixture, followed by a real
+  duplicate-name scan of every rendered container.
+
+This script does not prove a live Helm upgrade or rollback succeeds;
+see the manual Azure qualification checklist for that.
 
 ## Smoke test
 
