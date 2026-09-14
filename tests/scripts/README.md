@@ -1,14 +1,16 @@
 # Post-deployment and chart-rendering scripts
 
 Three scripts. `check-n8n-chart.sh` is offline and runs in CI on every
-pull request. `smoke-test.sh` and `verify-custom-image.sh` are manual
-verification scripts that need a live cluster, which a pull request
-check cannot provide.
+pull request. `smoke-test.sh`'s topology-detection self-test
+(`SMOKE_TEST_SELF_TEST=1`) also runs offline in CI; the rest of
+`smoke-test.sh` and all of `verify-custom-image.sh` are manual verification
+scripts that need a live cluster, which a pull request check cannot
+provide.
 
 | Script | Use it when |
 |---|---|
 | [`check-n8n-chart.sh`](#chart-rendering-check) | Any change to `n8n.tf`, chart-affecting variables, or the pinned `n8n_chart_version`. Runs offline in CI. |
-| [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. |
+| [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. Its offline self-test runs in CI on every pull request. |
 | [`verify-custom-image.sh`](#custom-image-verification) | The deployment sets `n8n_image_repository` and `n8n_custom_extensions_path` to bake community packages into the image. |
 
 ## Chart-rendering check
@@ -91,9 +93,9 @@ intentional single-main, healthy multi-main, and degraded multi-main with
 one ready pod of two desired — asserts the expected topology/floor/pass-fail
 outcome for each, and exits before the script's `Preflight` section (which
 requires `az login`). Run it after touching `detect_topology()`,
-`check_deployment()`, or their fixtures; it is not wired into CI (this
-script needs a live cluster for everything past self-test) but is safe to
-run anywhere.
+`check_deployment()`, or their fixtures. This self-test (only) runs in CI on
+every pull request; the live smoke test past it needs a real cluster and
+stays a manual, post-`apply` step — see "Smoke test" above.
 
 This is the Azure sibling of
 [`terraform-aws-n8n/tests/scripts/smoke-test.sh`](https://github.com/n8n-io/terraform-aws-n8n/blob/main/tests/scripts/README.md).
