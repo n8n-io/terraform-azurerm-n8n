@@ -219,6 +219,15 @@ locals {
     ],
   )
 
+  # Optional application heap ceiling (port-aws-040-enhancements section 6):
+  # one shared entry rendered on main, worker, and webhook application
+  # containers. Null omits the entry and leaves any caller NODE_OPTIONS in
+  # n8n_extra_env (validated as non-conflicting on the variable itself) in
+  # place.
+  n8n_node_heap_env = var.n8n_node_max_old_space_size_mb == null ? [] : [
+    { name = "NODE_OPTIONS", value = "--max-old-space-size=${var.n8n_node_max_old_space_size_mb}" },
+  ]
+
   # Bull worker timing (port-aws-040-enhancements section 4): one inner map
   # with only non-null keys, merged into the chart's redis.worker block in
   # n8n.tf. A shallow merge of three separate worker maps would lose values,

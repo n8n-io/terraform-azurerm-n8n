@@ -35,8 +35,8 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 6. Add the optional application heap ceiling
 
-- [ ] 6.1 Add `n8n_node_max_old_space_size_mb`, its integer/minimum validation, shared application environment entry, and conditional `NODE_OPTIONS` reservation; verify tests cover default omission, a valid ceiling, invalid values, active-input collision, and unrelated caller Node flags when null.
-- [ ] 6.2 Extend chart assertions and generated docs; verify all three application containers receive exactly one requested heap flag, task-runner configuration and memory limits stay unchanged, and documentation calls for non-heap headroom against the smallest application limit without importing AWS V8 measurements.
+- [x] 6.1 Add `n8n_node_max_old_space_size_mb`, its integer/minimum validation, shared application environment entry, and conditional `NODE_OPTIONS` reservation; verify tests cover default omission, a valid ceiling, invalid values, active-input collision, and unrelated caller Node flags when null.
+- [x] 6.2 Extend chart assertions and generated docs; verify all three application containers receive exactly one requested heap flag, task-runner configuration and memory limits stay unchanged, and documentation calls for non-heap headroom against the smallest application limit without importing AWS V8 measurements.
 
 ## 7. Add caller-managed runner launcher configuration
 

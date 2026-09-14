@@ -1761,6 +1761,30 @@ variable "n8n_pruning_max_count" {
   }
 }
 
+# Optional application heap ceiling (port-aws-040-enhancements section 6).
+# Null leaves n8n/Node's own default in place and keeps any caller-supplied
+# NODE_OPTIONS in n8n_extra_env valid. When set, it is the only source of a
+# heap-related NODE_OPTIONS entry, so a caller NODE_OPTIONS entry becomes a
+# conflict rather than something Kubernetes could silently override via
+# last-wins env ordering.
+variable "n8n_node_max_old_space_size_mb" {
+  description = "Optional V8 old-space heap ceiling in mebibytes for the main, worker, and webhook-processor application containers, rendered as NODE_OPTIONS=--max-old-space-size=<value>. Null (default) emits no heap-related NODE_OPTIONS and leaves any caller-supplied NODE_OPTIONS in n8n_extra_env in place. Must be a whole number of at least 256 when set. Size against the smallest application container's memory limit, leaving headroom beyond the heap for non-heap process memory; do not treat a larger value as a fix for a memory leak. Task-runner sidecars are not covered by this input."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_node_max_old_space_size_mb == null ? true : (var.n8n_node_max_old_space_size_mb == floor(var.n8n_node_max_old_space_size_mb) && var.n8n_node_max_old_space_size_mb >= 256)
+    error_message = "n8n_node_max_old_space_size_mb must be null or a whole number of at least 256 mebibytes."
+  }
+
+  validation {
+    condition = var.n8n_node_max_old_space_size_mb == null ? true : alltrue([
+      for env in var.n8n_extra_env : env.name != "NODE_OPTIONS"
+    ])
+    error_message = "n8n_node_max_old_space_size_mb conflicts with a NODE_OPTIONS entry in n8n_extra_env. Remove the escape-hatch entry and let this dedicated input set the heap flag, or leave this input null to keep using n8n_extra_env for NODE_OPTIONS."
+  }
+}
+
 variable "n8n_termination_grace_period" {
   description = "Seconds Kubernetes waits after SIGTERM before force-killing an n8n pod. Workers need at least 60 seconds to finish in-flight executions."
   type        = number

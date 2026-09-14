@@ -5222,6 +5222,107 @@ run "rejects_queue_worker_stalled_interval_zero" {
   expect_failures = [var.n8n_queue_worker_stalled_interval]
 }
 
+# ── Optional application heap ceiling (section 6) ───────────────────────────
+
+run "omits_node_heap_ceiling_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(local.n8n_node_heap_env) == 0
+    error_message = "local.n8n_node_heap_env must be empty when n8n_node_max_old_space_size_mb is null."
+  }
+}
+
+run "accepts_node_heap_ceiling" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 768
+  }
+
+  assert {
+    condition     = one([for env in local.n8n_node_heap_env : env.value if env.name == "NODE_OPTIONS"]) == "--max-old-space-size=768"
+    error_message = "local.n8n_node_heap_env must render NODE_OPTIONS=--max-old-space-size=<value> when n8n_node_max_old_space_size_mb is set."
+  }
+}
+
+run "renders_node_heap_ceiling_on_helm_values" {
+  command = plan
+
+  variables {
+    create_database                = false
+    postgres_external_host         = "external-pg.example.com"
+    postgres_external_username     = "n8n"
+    postgres_external_password     = "external-password-value"
+    create_redis                   = false
+    redis_external_host            = "redis.external.example.com"
+    n8n_node_max_old_space_size_mb = 768
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "NODE_OPTIONS"]) == "--max-old-space-size=768"
+    error_message = "config.extraEnv must render NODE_OPTIONS=--max-old-space-size=768 when n8n_node_max_old_space_size_mb is set."
+  }
+}
+
+run "preserves_unrelated_caller_node_options_when_heap_ceiling_is_null" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "NODE_OPTIONS", value = "--enable-source-maps" },
+    ]
+  }
+
+  assert {
+    condition     = one([for env in var.n8n_extra_env : env.value if env.name == "NODE_OPTIONS"]) == "--enable-source-maps"
+    error_message = "n8n_extra_env must retain a caller NODE_OPTIONS entry when n8n_node_max_old_space_size_mb is null."
+  }
+}
+
+run "rejects_fractional_node_heap_ceiling" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 512.5
+  }
+
+  expect_failures = [var.n8n_node_max_old_space_size_mb]
+}
+
+run "rejects_node_heap_ceiling_below_minimum" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 128
+  }
+
+  expect_failures = [var.n8n_node_max_old_space_size_mb]
+}
+
+run "rejects_node_heap_ceiling_with_conflicting_extra_env" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 768
+    n8n_extra_env = [
+      { name = "NODE_OPTIONS", value = "--enable-source-maps" },
+    ]
+  }
+
+  expect_failures = [var.n8n_node_max_old_space_size_mb]
+}
+
 run "rejects_redis_password_secret_ref_with_managed_redis" {
   command = plan
 

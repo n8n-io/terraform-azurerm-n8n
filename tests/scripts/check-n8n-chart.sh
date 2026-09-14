@@ -79,7 +79,7 @@ render_topology_values() {
   local out="$1"
   shift
   console "$@" <<'HCL' > "$out"
-jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError=var.n8n_executions_data_save_on_error,saveOnSuccess=var.n8n_executions_data_save_on_success,saveOnProgress=var.n8n_executions_data_save_on_progress,saveManualExecutions=var.n8n_executions_data_save_manual_executions}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env)}})
+jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError=var.n8n_executions_data_save_on_error,saveOnSuccess=var.n8n_executions_data_save_on_success,saveOnProgress=var.n8n_executions_data_save_on_progress,saveManualExecutions=var.n8n_executions_data_save_manual_executions}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env,local.n8n_node_heap_env)}})
 HCL
 }
 
@@ -120,6 +120,10 @@ render_topology_values "$tmp/save-policy-values.json" \
   -var='n8n_executions_data_save_on_progress=true' \
   -var='n8n_executions_data_save_manual_executions=false'
 
+echo "== Rendering application heap ceiling values fixture =="
+render_topology_values "$tmp/heap-values.json" \
+  -var='n8n_node_max_old_space_size_mb=768'
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
@@ -138,6 +142,10 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/save-policy-values.json" save-policy "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  render "$tmp/heap-values.json" heap "$template"
 done
 
 main_min=$(console <<< 'var.n8n_main_hpa_min_replicas')
@@ -304,6 +312,29 @@ jq -e '.data.QUEUE_WORKER_MAX_STALLED_COUNT == "1"' "$tmp/worker-timing-configma
   || { echo "FAIL: the chart's own QUEUE_WORKER_MAX_STALLED_COUNT default must remain untouched (this module exposes no such input)" >&2; exit 1; }
 
 echo "PASS: Bull worker timing overrides render exactly once per name on every application pod family, and the default fixture keeps the chart's own pinned defaults"
+
+echo "== Verify application heap ceiling manifests (NODE_OPTIONS) =="
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "NODE_OPTIONS")] | length == 1
+    and .[0].value == "--max-old-space-size=768"
+  ' "$tmp/heap-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must render exactly one NODE_OPTIONS=--max-old-space-size=768 entry when n8n_node_max_old_space_size_mb is set" >&2; exit 1; }
+
+  jq -e '.spec.template.spec.containers[0].resources == '"$(jq -c '.spec.template.spec.containers[0].resources' "$tmp/multi-main-${template}.json")"'' \
+    "$tmp/heap-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} container resource limits/requests must stay unchanged when the heap ceiling is set" >&2; exit 1; }
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "NODE_OPTIONS")] | length == 0
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} unexpectedly renders NODE_OPTIONS in the default fixture (n8n_node_max_old_space_size_mb null)" >&2; exit 1; }
+done
+
+echo "PASS: the application heap ceiling renders exactly one NODE_OPTIONS entry on every application pod family without changing container resources, and is omitted by default"
 
 echo "== Self-test: duplicate managed environment-entry detector =="
 # This does not scan module output; it proves the jq expression the checks

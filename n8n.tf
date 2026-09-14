@@ -370,6 +370,10 @@ resource "helm_release" "n8n" {
         # PostgreSQL connection/health-check runtime tuning (section 3). Null
         # inputs contribute no entries and retain n8n's pinned defaults.
         local.n8n_postgres_runtime_env,
+        # Optional shared V8 heap ceiling (section 6). Null contributes no
+        # entries and leaves n8n/Node's own default and any caller NODE_OPTIONS
+        # in n8n_extra_env in place.
+        local.n8n_node_heap_env,
         # Storage-mode variables live in config.extraEnv because the chart has no
         # Azure-native values block. This shared list renders on main, worker,
         # and webhook containers, which queue mode requires. The active binary
