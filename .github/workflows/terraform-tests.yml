@@ -209,11 +209,23 @@ jobs:
         run: terraform init -backend=false
 
       # Renders the pinned n8n Helm chart against this root module's actual
-      # variables/locals (via `terraform console`) and asserts on the
+      # Helm values (from mocked Terraform plans) and asserts on the
       # manifests Helm produces. Offline: no cluster, no Azure credentials,
       # no apply. See tests/scripts/README.md#chart-rendering-check.
       - name: tests/scripts/check-n8n-chart.sh
         run: tests/scripts/check-n8n-chart.sh
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Redis exporter outage regression
+        run: |
+          export GOBIN="$(mktemp -d)"
+          trap 'rm -rf "$GOBIN"' EXIT
+          go install github.com/oliver006/redis_exporter@v1.90.0
+          python3 tests/scripts/check-redis-exporter.py "$GOBIN/redis_exporter"
 
   smoke-test-self-check:
     name: smoke-test.sh offline self-test

@@ -98,6 +98,13 @@ resource "kubernetes_deployment_v1" "redis_exporter" {
             value = local.redis_exporter_check_single_keys
           }
 
+          # Bound Redis I/O below Prometheus's default 10s scrape timeout.
+          # Probes use /health so a stalled scrape cannot restart the exporter.
+          env {
+            name  = "REDIS_EXPORTER_CONNECTION_TIMEOUT"
+            value = "3s"
+          }
+
           # ACL username. Only present on the external Redis path — Azure
           # Managed Redis access-key authentication has no username concept
           # (redis.tf). Not a credential, so it is a literal env value
@@ -148,14 +155,12 @@ resource "kubernetes_deployment_v1" "redis_exporter" {
             }
           }
 
-          # Both probes hit /metrics rather than a dedicated health path: the
-          # exporter's readiness IS its ability to answer a scrape, and it
-          # answers on /metrics even while Redis is unreachable (the
-          # redis_up gauge goes to 0), so a Redis outage does not also delete
-          # the only thing that could report it.
+          # /health checks the HTTP process without contacting Redis or
+          # waiting on the scrape mutex. A Redis outage must not remove the
+          # exporter from Service endpoints or trigger container restarts.
           liveness_probe {
             http_get {
-              path = "/metrics"
+              path = "/health"
               port = 9121
             }
             initial_delay_seconds = 10
@@ -166,7 +171,7 @@ resource "kubernetes_deployment_v1" "redis_exporter" {
 
           readiness_probe {
             http_get {
-              path = "/metrics"
+              path = "/health"
               port = 9121
             }
             initial_delay_seconds = 5

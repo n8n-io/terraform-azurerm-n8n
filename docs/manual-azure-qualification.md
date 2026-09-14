@@ -7,7 +7,10 @@ prove the module's Terraform logic and the manifests Helm actually renders,
 entirely offline. None of that proves live Azure lifecycle, performance,
 licensing, or Redis TLS/ACL behavior — only an applied deployment can. Use
 this document to record that evidence separately once you choose to run it;
-leaving every row blank does not block a release or a merge.
+leaving rows blank does not block implementation completion or a merge.
+Mark those behaviors as unverified in release notes until evidence is recorded.
+Do not claim a verified one-apply release guarantee without completing the
+live lifecycle checks required by `AGENTS.md`.
 
 Do not substitute `terraform-aws-n8n`'s measured outcomes, load-test numbers,
 or qualification results for a row below. AWS and Azure use different

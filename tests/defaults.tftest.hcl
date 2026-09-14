@@ -6395,12 +6395,20 @@ run "redis_exporter_observes_managed_azure_redis" {
 
   assert {
     condition = (
-      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].liveness_probe[0].http_get[0].path == "/metrics" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].liveness_probe[0].http_get[0].path == "/health" &&
       kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].liveness_probe[0].http_get[0].port == "9121" &&
-      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].readiness_probe[0].http_get[0].path == "/metrics" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].readiness_probe[0].http_get[0].path == "/health" &&
       kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].readiness_probe[0].http_get[0].port == "9121"
     )
-    error_message = "The exporter must probe /metrics on port 9121 for both liveness and readiness."
+    error_message = "Both probes must use Redis-independent /health on port 9121 so a hanging Redis connection cannot make the exporter unready or restart it."
+  }
+
+  assert {
+    condition = one([
+      for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+      env.value if env.name == "REDIS_EXPORTER_CONNECTION_TIMEOUT"
+    ]) == "3s"
+    error_message = "Redis I/O must time out after 3s instead of the exporter's 15s default, leaving room within the default 10s Prometheus scrape timeout."
   }
 
   assert {
@@ -6564,4 +6572,3 @@ run "redis_exporter_cpu_demand_increases_by_exactly_its_request" {
     error_message = "Modeled peak CPU demand must equal the existing formula plus the exporter's flat 10m request."
   }
 }
-

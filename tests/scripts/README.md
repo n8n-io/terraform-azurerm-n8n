@@ -1,6 +1,6 @@
 # Post-deployment and chart-rendering scripts
 
-Three scripts. `check-n8n-chart.sh` is offline and runs in CI on every
+Four scripts. `check-n8n-chart.sh` is offline and runs in CI on every
 pull request. `smoke-test.sh`'s topology-detection self-test
 (`SMOKE_TEST_SELF_TEST=1`) also runs offline in CI; the rest of
 `smoke-test.sh` and all of `verify-custom-image.sh` are manual verification
@@ -10,29 +10,27 @@ provide.
 | Script | Use it when |
 |---|---|
 | [`check-n8n-chart.sh`](#chart-rendering-check) | Any change to `n8n.tf`, chart-affecting variables, or the pinned `n8n_chart_version`. Runs offline in CI. |
+| [`check-redis-exporter.py`](#redis-exporter-outage-check) | Changes to exporter probes, timeouts, or the pinned image. Runs against a local hanging TCP peer in CI. |
 | [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. Its offline self-test runs in CI on every pull request. |
 | [`verify-custom-image.sh`](#custom-image-verification) | The deployment sets `n8n_image_repository` and `n8n_custom_extensions_path` to bake community packages into the image. |
 
 ## Chart-rendering check
 
 `check-n8n-chart.sh` renders the pinned n8n Helm chart
-(`var.n8n_chart_version`) with values pulled directly from this root
-module's own variables and locals via `terraform console`, then asserts
-on the manifests Helm actually produces. It is a regression check
-against the real module-to-chart mapping, not an independently
-maintained approximation of it — every asserted value traces back to a
-`var.*`/`local.*` expression evaluated against the module, not a
-hand-copied constant.
+(`var.n8n_chart_version`) with the actual `helm_release.n8n.values`
+exported from nine mocked, plan-only fixtures in
+`tests/chart-values.tftest.hcl`, then asserts on the manifests Helm
+actually produces. It therefore catches regressions in the wiring in
+`n8n.tf`, rather than testing a separately reconstructed values map.
 
 It needs no Azure or Kubernetes credentials and creates no
-infrastructure: `terraform console` only plans (never applies), unused
-data-source reads are deferred rather than executed against a live
-subscription, and `helm template` renders locally against the chart
-pulled from its OCI registry.
+infrastructure: all providers are mocked, Terraform only plans, and
+`helm template` renders locally against the chart pulled from its OCI
+registry.
 
 ### Prerequisites
 
-- `terraform` (already required elsewhere in this repo)
+- Terraform 1.11+ (`override_during` is used by the mocked fixture)
 - `helm` v3+ (Helm's built-in JSON-schema validation runs automatically
   on every `helm template` call this script makes; no flag is needed to
   enable it)
@@ -66,6 +64,26 @@ tests/scripts/check-n8n-chart.sh
 
 This script does not prove a live Helm upgrade or rollback succeeds;
 see the manual Azure qualification checklist for that.
+
+## Redis exporter outage check
+
+The check reads the exporter environment and probe paths from a mocked
+Terraform plan. It starts the pinned exporter against a local TCP server
+that accepts connections but never responds. Both probes must return `ok`
+while a scrape is blocked, and the scrape must report `redis_up 0` within
+10 seconds. This tests the upstream binary, not Kubernetes restart behavior
+or the container image's TLS trust store.
+
+Requires Python 3, Go, and initialized Terraform. Building the binary needs
+network access; the test itself uses only loopback and mocked providers.
+The check verifies that the binary's module version matches the default image.
+
+```bash
+export GOBIN="$(mktemp -d)"
+go install github.com/oliver006/redis_exporter@v1.90.0
+python3 tests/scripts/check-redis-exporter.py "$GOBIN/redis_exporter"
+rm -rf "$GOBIN"
+```
 
 ## Smoke test
 

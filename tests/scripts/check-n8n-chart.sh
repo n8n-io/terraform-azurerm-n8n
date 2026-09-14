@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Render the module's actual locals/variables against the pinned n8n Helm
+# Render the module's actual helm_release.n8n.values against the pinned n8n Helm
 # chart and assert on the manifests Helm produces. This is a regression check
 # against the real module-to-chart mapping, not an independently maintained
-# approximation: every value asserted below is pulled from `terraform console`
-# against this root module rather than retyped by hand.
+# approximation: fixture values are exported from mocked Terraform plans.
 #
 # Requires `terraform init -backend=false` to have already run at the module
-# root, plus `helm` and `jq` on PATH. No plan/apply, cluster access, Azure
-# credentials, or state persistence beyond a throwaway temp directory. Helm's
+# root, plus `helm` and `jq` on PATH. No apply, cluster access, Azure credentials,
+# or state persistence beyond a throwaway temp directory. Helm's
 # built-in JSON-schema validation runs on every `helm template` call below
 # (no flag needed to enable it; only `--skip-schema-validation` disables it,
 # which this script never passes), so a fixture that violates the chart
@@ -48,93 +47,73 @@ console() {
     "$@" | jq -er .
 }
 
-# helm template requires exactly these fields to be known for queue mode's
-# chart-native validation (`n8n.validate` in _helpers.tpl); they are dummy
-# strings, not the module's real managed/external connection locals, which
-# can be unknown at plan time when the managed database/Redis resources are
-# in play. Structural assertions below never depend on these values.
-helm_set_common=(
-  --set secretRefs.existingSecret=test-core
-  --set license.enabled=true
-  --set license.existingSecret.name=test-license
-  --set database.useExternal=true
-  --set database.host=test-db.example.invalid
-  --set redis.enabled=true
-  --set redis.host=test-redis.example.invalid
-)
-
 chart_version=$(console <<< 'var.n8n_chart_version')
 echo "== Pulling n8n chart ${chart_version} =="
 helm pull "oci://ghcr.io/n8n-io/n8n-helm-chart/n8n" --version "$chart_version" --untar --untardir "$tmp"
 
-# Renders the module's real multiMain/replicaCount/strategy/pdb/hpa mapping
-# (locals.tf's n8n_main_multi_enabled / n8n_main_hpa_effective_max_replicas
-# selectors, wired in n8n.tf) for one topology, plus the other module fields
-# unaffected by topology. Every value is read directly from this module's own
-# console rather than retyped, so a future n8n.tf change that touches these
-# paths is caught here. terraform console evaluates one line at a time when
-# fed from a pipe (no interactive REPL continuation), so the whole expression
-# must be a single line despite its length.
-render_topology_values() {
-  local out="$1"
-  shift
-  console "$@" <<'HCL' > "$out"
-jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError=var.n8n_executions_data_save_on_error,saveOnSuccess=var.n8n_executions_data_save_on_success,saveOnProgress=var.n8n_executions_data_save_on_progress,saveManualExecutions=var.n8n_executions_data_save_manual_executions}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},taskRunners={enabled=var.n8n_task_runners_enabled,customConfig=local.n8n_task_runner_custom_config_values},dnsConfig=local.n8n_dns_config_values,config={extraEnv=concat([{name="N8N_EDITOR_BASE_URL",value=local.n8n_editor_base_url},{name="N8N_WEBHOOK_URL",value=local.n8n_effective_webhook_url}],local.n8n_postgres_runtime_env,local.n8n_node_heap_env)}})
-HCL
+# Export each fixture's exact planned Helm values. Secret references keep the
+# values known and non-sensitive; no credential payload enters the plan.
+echo "== Planning module Helm values with mocked providers =="
+if ! terraform test -no-color -json -verbose \
+  -filter=tests/chart-values.tftest.hcl > "$tmp/terraform-test.jsonl"; then
+  jq -r 'select(.type == "diagnostic") | "\(.diagnostic.severity): \(.diagnostic.summary)\n\(.diagnostic.detail // "")"' \
+    "$tmp/terraform-test.jsonl" >&2
+  exit 1
+fi
+
+jq -e 'select(.type == "test_summary") | .test_summary.status == "pass"' \
+  "$tmp/terraform-test.jsonl" >/dev/null || {
+  jq -r 'select(.type == "diagnostic") | "\(.diagnostic.severity): \(.diagnostic.summary)\n\(.diagnostic.detail // "")"' \
+    "$tmp/terraform-test.jsonl" >&2
+  exit 1
+}
+
+export_values() {
+  local run="$1"
+  local out="$2"
+  jq -er --arg run "$run" '
+    select(.type == "test_plan" and ."@testrun" == $run)
+    | .test_plan.resource_changes[]
+    | select(.address == "helm_release.n8n")
+    | .change.after.values[0]
+  ' "$tmp/terraform-test.jsonl" > "$out"
 }
 
 render() {
   local values_file="$1"
   local out_prefix="$2"
   local template="$3"
-  helm template n8n "$tmp/n8n" -f "$values_file" "${helm_set_common[@]}" \
+  helm template n8n "$tmp/n8n" -f "$values_file" \
     --show-only "templates/${template}.yaml" > "$tmp/${out_prefix}-${template}.yaml"
   console <<< "jsonencode(yamldecode(file(\"$tmp/${out_prefix}-${template}.yaml\")))" > "$tmp/${out_prefix}-${template}.json"
 }
 
 echo "== Rendering default multi-main values fixture =="
-render_topology_values "$tmp/multi-main-values.json"
+export_values multi_main "$tmp/multi-main-values.json"
 
 echo "== Rendering single-main values fixture (minimum 1, a higher configured maximum) =="
-render_topology_values "$tmp/single-main-values.json" \
-  -var='n8n_main_hpa_min_replicas=1' \
-  -var='n8n_main_hpa_max_replicas=20'
+export_values single_main "$tmp/single-main-values.json"
 
 echo "== Rendering PostgreSQL runtime-tuning values fixture (all four timing overrides) =="
-render_topology_values "$tmp/pg-runtime-values.json" \
-  -var='postgres_connection_timeout_ms=45000' \
-  -var='postgres_ping_timeout_ms=15000' \
-  -var='postgres_ping_interval_seconds=5' \
-  -var='postgres_ping_max_failures_before_recovery=6'
+export_values pg_runtime "$tmp/pg-runtime-values.json"
 
 echo "== Rendering Bull worker timing values fixture (all three timing overrides) =="
-render_topology_values "$tmp/worker-timing-values.json" \
-  -var='n8n_queue_worker_lock_duration=90000' \
-  -var='n8n_queue_worker_lock_renew_time=15000' \
-  -var='n8n_queue_worker_stalled_interval=45000'
+export_values worker_timing "$tmp/worker-timing-values.json"
 
 echo "== Rendering execution save-policy values fixture (independent success/error policies, both booleans changed) =="
-render_topology_values "$tmp/save-policy-values.json" \
-  -var='n8n_executions_data_save_on_success=none' \
-  -var='n8n_executions_data_save_on_error=all' \
-  -var='n8n_executions_data_save_on_progress=true' \
-  -var='n8n_executions_data_save_manual_executions=false'
+export_values save_policy "$tmp/save-policy-values.json"
 
 echo "== Rendering application heap ceiling values fixture =="
-render_topology_values "$tmp/heap-values.json" \
-  -var='n8n_node_max_old_space_size_mb=768'
+export_values heap "$tmp/heap-values.json"
 
 echo "== Rendering caller-managed task-runner launcher configuration values fixture =="
-render_topology_values "$tmp/task-runner-config-values.json" \
-  -var='n8n_task_runner_custom_config={config_map_name="n8n-task-runner-launcher"}'
+export_values task_runner_config "$tmp/task-runner-config-values.json"
 
 echo "== Rendering pod DNS configuration values fixture (nameservers, searches, and an ndots/edns0 option pair) =="
-render_topology_values "$tmp/dns-values.json" \
-  -var='n8n_dns_config={nameservers=["10.0.0.10"],searches=["svc.cluster.local"],options=[{name="ndots",value="1"},{name="edns0"}]}'
+export_values dns "$tmp/dns-values.json"
 
 echo "== Rendering split editor/webhook URL values fixture (n8n_webhook_url override) =="
-render_topology_values "$tmp/split-url-values.json" \
-  -var='n8n_webhook_url=https://hooks.test.example.com:8443/n8n/'
+export_values split_url "$tmp/split-url-values.json"
 
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"

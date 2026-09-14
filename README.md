@@ -331,7 +331,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 - [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md) — infrastructure prerequisites for n8n's Azure Key Vault external-secrets integration.
 - [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md) — ownership convention, reference/attestation contracts, direct `modules/controllers` composition, and the pre-release upgrade boundary for the caller-managed AKS, Blob, namespace, Secret, KEDA, and webhook-HPA layers.
 - [`examples/split-ingress/README.md`](./examples/split-ingress/README.md) — operating a split public-webhook/internal-admin topology, including how `n8n_webhook_url` advertises webhooks on the public host while the editor identity stays on the private one.
-- [`docs/manual-azure-qualification.md`](./docs/manual-azure-qualification.md) — manual, non-blocking checklist for verifying live Azure lifecycle behavior (fresh install, topology transitions, node/disk maintenance, DNS, Redis TLS/ACL) that offline tests cannot prove.
+- [`docs/manual-azure-qualification.md`](./docs/manual-azure-qualification.md): manual checklist for live Azure lifecycle behavior that offline tests cannot prove. Incomplete checks do not block a merge, but their behaviors remain unverified. A verified one-apply release guarantee requires the live lifecycle evidence specified in `AGENTS.md`.
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history.
 - [`AGENTS.md`](./AGENTS.md) — contributor guide, Azure-specific deltas vs the AWS sibling, and the registry quality bar this module is held to.
 

@@ -94,7 +94,14 @@ The exporter uses `REDIS_EXPORTER_CHECK_SINGLE_KEYS` — an exact-key lookup, no
 
 - The exporter targets the effective n8n namespace and AKS cluster (module-managed or caller-managed) without creating either layer.
 - Any private-registry pull access for a custom `redis_exporter_image` is the caller's responsibility. The exporter does not receive the n8n Azure workload identity or any other Azure credential.
-- The container runs as non-root UID 59000 with a read-only root filesystem, dropped Linux capabilities, no privilege escalation, a memory request/limit, a CPU request, and liveness/readiness probes against `/metrics`. A replacement image must work under UID 59000.
+- The container runs as non-root UID 59000 with a read-only root filesystem, dropped Linux capabilities, no privilege escalation, a memory request/limit, a CPU request, and liveness/readiness probes against `/health`. A replacement image must work under UID 59000 and provide this Redis-independent health endpoint.
+
+Both probes check the exporter HTTP process, not Redis availability. Scraping
+still uses `/metrics`. Redis connect/read/write operations time out after 3
+seconds so a stalled connection can report `redis_up 0` within Prometheus's
+default 10-second scrape timeout. This is a per-operation timeout, not a
+deadline for the whole scrape. Avoid concurrent scrapes and check scrape
+duration before choosing a shorter Prometheus timeout.
 
 ### What this does not prove
 
