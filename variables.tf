@@ -406,13 +406,57 @@ variable "postgres_external_ssl_mode" {
 }
 
 variable "postgres_pool_size" {
-  description = "Number of TypeORM connection pool slots per n8n pod (writes `DB_POSTGRESDB_POOL_SIZE`). Applies to both the managed and external database paths. Rule of thumb: pool_size >= worker_concurrency / 4."
+  description = "Number of TypeORM connection pool slots per n8n pod (writes `DB_POSTGRESDB_POOL_SIZE`). Applies to both the managed and external database paths. Each main, worker, and webhook-processor pod lazily opens up to this many connections against the same shared process pool used by application traffic and the health-check ping (see `postgres_ping_timeout_ms`) — it is not one permanently open connection per workflow. Budget the aggregate ceiling (pool_size * effective main + worker + webhook replica counts) against the database's or PgBouncer's own maximum-connection limit, not a fixed per-workflow ratio."
   type        = number
   default     = 10
 
   validation {
     condition     = var.postgres_pool_size >= 1
     error_message = "postgres_pool_size must be at least 1."
+  }
+}
+
+variable "postgres_connection_timeout_ms" {
+  description = "Milliseconds n8n waits to acquire a connection from the pool before failing (writes `DB_POSTGRESDB_CONNECTION_TIMEOUT`). Applies to both the managed and external database paths. Null (default) omits the environment variable and retains n8n's own pinned default (20000 ms). Zero disables the acquisition timeout entirely. This bounds pool-acquisition time alongside `postgres_ping_timeout_ms` — whichever active timeout expires first determines how long acquisition can take; raising this value does not resolve pool saturation, it only delays detection of it."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.postgres_connection_timeout_ms == null ? true : (var.postgres_connection_timeout_ms == floor(var.postgres_connection_timeout_ms) && var.postgres_connection_timeout_ms >= 0 && var.postgres_connection_timeout_ms <= 2147483647)
+    error_message = "postgres_connection_timeout_ms must be null or a whole number from 0 through 2147483647."
+  }
+}
+
+variable "postgres_ping_timeout_ms" {
+  description = "Milliseconds n8n waits for a database health-check ping to respond before marking the connection down (writes `DB_PING_TIMEOUT_MS`). Applies to both the managed and external database paths. Null (default) omits the environment variable and retains n8n's own pinned default (5000 ms). The ping acquires a connection from the same pool as application traffic, so this timeout and `postgres_connection_timeout_ms` both bound acquisition; whichever is active and shorter determines how long a stalled ping can take before failing."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.postgres_ping_timeout_ms == null ? true : var.postgres_ping_timeout_ms > 0
+    error_message = "postgres_ping_timeout_ms must be null or a positive number."
+  }
+}
+
+variable "postgres_ping_interval_seconds" {
+  description = "Seconds between database health-check pings (writes `DB_PING_INTERVAL_SECONDS`). Applies to both the managed and external database paths. Null (default) omits the environment variable and retains n8n's own pinned default (2 seconds)."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.postgres_ping_interval_seconds == null ? true : var.postgres_ping_interval_seconds > 0
+    error_message = "postgres_ping_interval_seconds must be null or a positive number."
+  }
+}
+
+variable "postgres_ping_max_failures_before_recovery" {
+  description = "Number of consecutive failed health-check pings before n8n begins pool-recovery handling (writes `DB_PING_MAX_FAILURES_BEFORE_RECOVERY`). Applies to both the managed and external database paths. Null (default) omits the environment variable and retains n8n's own pinned default (3). Raising this threshold does not stop the first failed ping from marking the connection down; it only changes when pool recovery starts."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.postgres_ping_max_failures_before_recovery == null ? true : (var.postgres_ping_max_failures_before_recovery == floor(var.postgres_ping_max_failures_before_recovery) && var.postgres_ping_max_failures_before_recovery >= 1)
+    error_message = "postgres_ping_max_failures_before_recovery must be null or a whole number of at least 1."
   }
 }
 

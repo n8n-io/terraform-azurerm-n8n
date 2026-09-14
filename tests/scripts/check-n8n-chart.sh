@@ -79,7 +79,7 @@ render_topology_values() {
   local out="$1"
   shift
   console "$@" <<'HCL' > "$out"
-jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError="all",saveOnSuccess="all",saveOnProgress=false,saveManualExecutions=true}},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=[{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}]}})
+jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError="all",saveOnSuccess="all",saveOnProgress=false,saveManualExecutions=true}},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env)}})
 HCL
 }
 
@@ -100,12 +100,23 @@ render_topology_values "$tmp/single-main-values.json" \
   -var='n8n_main_hpa_min_replicas=1' \
   -var='n8n_main_hpa_max_replicas=20'
 
+echo "== Rendering PostgreSQL runtime-tuning values fixture (all four timing overrides) =="
+render_topology_values "$tmp/pg-runtime-values.json" \
+  -var='postgres_connection_timeout_ms=45000' \
+  -var='postgres_ping_timeout_ms=15000' \
+  -var='postgres_ping_interval_seconds=5' \
+  -var='postgres_ping_max_failures_before_recovery=6'
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
 
 for template in deployment-main hpa-main pdb; do
   render "$tmp/single-main-values.json" single-main "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  render "$tmp/pg-runtime-values.json" pg-runtime "$template"
 done
 
 main_min=$(console <<< 'var.n8n_main_hpa_min_replicas')
@@ -205,6 +216,28 @@ jq -e '(.data | has("WEBHOOK_URL")) | not' "$tmp/multi-main-configmap.json" >/de
   || { echo "FAIL: the chart ConfigMap unexpectedly carries a WEBHOOK_URL key (webhook.url or ingress must remain unset)" >&2; exit 1; }
 
 echo "PASS: execution save-policy values and current URL naming are correct on every applicable container"
+
+echo "== Verify PostgreSQL runtime-tuning manifests (connection/ping timing) =="
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    (.spec.template.spec.containers[0].env | map(select(.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"))[0].value) == "45000"
+    and (.spec.template.spec.containers[0].env | map(select(.name == "DB_PING_TIMEOUT_MS"))[0].value) == "15000"
+    and (.spec.template.spec.containers[0].env | map(select(.name == "DB_PING_INTERVAL_SECONDS"))[0].value) == "5"
+    and (.spec.template.spec.containers[0].env | map(select(.name == "DB_PING_MAX_FAILURES_BEFORE_RECOVERY"))[0].value) == "6"
+  ' "$tmp/pg-runtime-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} is missing one or more PostgreSQL runtime-tuning environment values" >&2; exit 1; }
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    ([.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT")] | length == 0)
+    and ([.spec.template.spec.containers[0].env[] | select(.name == "DB_PING_TIMEOUT_MS")] | length == 0)
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} unexpectedly renders PostgreSQL runtime-tuning values in the default fixture (all four inputs null)" >&2; exit 1; }
+done
+
+echo "PASS: PostgreSQL connection/ping timing renders on all three application pod families and is omitted by default"
 
 echo "== Self-test: duplicate managed environment-entry detector =="
 # This does not scan module output; it proves the jq expression the checks

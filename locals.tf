@@ -198,6 +198,27 @@ locals {
     },
   ]
 
+  # PostgreSQL connection/health-check runtime tuning (port-aws-040-enhancements
+  # section 3): four nullable inputs rendered as one shared list so main,
+  # worker, and webhook containers stay in sync and the offline chart-rendering
+  # check can assert on this local directly instead of re-deriving the
+  # null-filtering logic by hand. Null omits the entry and keeps n8n's pinned
+  # application default.
+  n8n_postgres_runtime_env = concat(
+    var.postgres_connection_timeout_ms == null ? [] : [
+      { name = "DB_POSTGRESDB_CONNECTION_TIMEOUT", value = tostring(var.postgres_connection_timeout_ms) },
+    ],
+    var.postgres_ping_timeout_ms == null ? [] : [
+      { name = "DB_PING_TIMEOUT_MS", value = tostring(var.postgres_ping_timeout_ms) },
+    ],
+    var.postgres_ping_interval_seconds == null ? [] : [
+      { name = "DB_PING_INTERVAL_SECONDS", value = tostring(var.postgres_ping_interval_seconds) },
+    ],
+    var.postgres_ping_max_failures_before_recovery == null ? [] : [
+      { name = "DB_PING_MAX_FAILURES_BEFORE_RECOVERY", value = tostring(var.postgres_ping_max_failures_before_recovery) },
+    ],
+  )
+
   # The chart appends config.extraEnv after its own environment variables, and
   # Kubernetes resolves duplicates last-wins. Reserve every current module and
   # chart-owned connection, identity, storage, license, runner, and topology

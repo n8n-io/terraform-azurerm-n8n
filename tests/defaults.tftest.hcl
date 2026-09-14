@@ -4736,6 +4736,150 @@ run "accepts_postgres_external_secret_ref_alone" {
   }
 }
 
+# ── PostgreSQL connection/health-check runtime tuning (section 3) ────────────
+
+run "omits_postgres_runtime_timing_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(local.n8n_postgres_runtime_env) == 0
+    error_message = "local.n8n_postgres_runtime_env must be empty when all four timing inputs are null."
+  }
+}
+
+run "accepts_postgres_runtime_timing_on_managed_database" {
+  command = plan
+
+  variables {
+    postgres_connection_timeout_ms             = 45000
+    postgres_ping_timeout_ms                   = 15000
+    postgres_ping_interval_seconds             = 5
+    postgres_ping_max_failures_before_recovery = 6
+  }
+
+  assert {
+    condition = (
+      one([for env in local.n8n_postgres_runtime_env : env.value if env.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"]) == "45000" &&
+      one([for env in local.n8n_postgres_runtime_env : env.value if env.name == "DB_PING_TIMEOUT_MS"]) == "15000" &&
+      one([for env in local.n8n_postgres_runtime_env : env.value if env.name == "DB_PING_INTERVAL_SECONDS"]) == "5" &&
+      one([for env in local.n8n_postgres_runtime_env : env.value if env.name == "DB_PING_MAX_FAILURES_BEFORE_RECOVERY"]) == "6"
+    )
+    error_message = "All four PostgreSQL timing overrides must render onto the shared application environment local on the managed database path."
+  }
+}
+
+run "accepts_postgres_runtime_timing_on_external_database" {
+  command = plan
+
+  variables {
+    create_database                            = false
+    postgres_external_host                     = "external-pg.example.com"
+    postgres_external_username                 = "n8n"
+    postgres_external_password                 = "external-password-value"
+    create_redis                               = false
+    redis_external_host                        = "redis.external.example.com"
+    postgres_connection_timeout_ms             = 45000
+    postgres_ping_timeout_ms                   = 15000
+    postgres_ping_interval_seconds             = 5
+    postgres_ping_max_failures_before_recovery = 6
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"]) == "45000" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_TIMEOUT_MS"]) == "15000" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_INTERVAL_SECONDS"]) == "5" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_MAX_FAILURES_BEFORE_RECOVERY"]) == "6" &&
+      length(azurerm_postgresql_flexible_server.n8n) == 0
+    )
+    error_message = "All four PostgreSQL timing overrides must render on the external database path without creating a managed Flexible Server."
+  }
+}
+
+run "accepts_postgres_connection_timeout_zero" {
+  command = plan
+
+  variables {
+    create_database                = false
+    postgres_external_host         = "external-pg.example.com"
+    postgres_external_username     = "n8n"
+    postgres_external_password     = "external-password-value"
+    create_redis                   = false
+    redis_external_host            = "redis.external.example.com"
+    postgres_connection_timeout_ms = 0
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"]) == "0" &&
+      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_PING_TIMEOUT_MS"]) == 0
+    )
+    error_message = "An explicit zero connection timeout must render as DB_POSTGRESDB_CONNECTION_TIMEOUT=0 without implying the independently configured ping timeout."
+  }
+}
+
+run "rejects_invalid_postgres_runtime_timing_boundaries" {
+  command = plan
+
+  variables {
+    postgres_connection_timeout_ms             = -1
+    postgres_ping_timeout_ms                   = 0
+    postgres_ping_interval_seconds             = -2
+    postgres_ping_max_failures_before_recovery = 0
+  }
+
+  expect_failures = [
+    var.postgres_connection_timeout_ms,
+    var.postgres_ping_timeout_ms,
+    var.postgres_ping_interval_seconds,
+    var.postgres_ping_max_failures_before_recovery,
+  ]
+}
+
+run "rejects_fractional_postgres_acquisition_and_recovery_values" {
+  command = plan
+
+  variables {
+    postgres_connection_timeout_ms             = 100.5
+    postgres_ping_max_failures_before_recovery = 2.5
+  }
+
+  expect_failures = [
+    var.postgres_connection_timeout_ms,
+    var.postgres_ping_max_failures_before_recovery,
+  ]
+}
+
+run "rejects_postgres_connection_timeout_above_max" {
+  command = plan
+
+  variables {
+    postgres_connection_timeout_ms = 2147483648
+  }
+
+  expect_failures = [var.postgres_connection_timeout_ms]
+}
+
 run "rejects_redis_password_secret_ref_with_managed_redis" {
   command = plan
 

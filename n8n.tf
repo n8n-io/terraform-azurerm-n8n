@@ -359,6 +359,9 @@ resource "helm_release" "n8n" {
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
           { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = tostring(var.n8n_license_detach_floating_on_shutdown) },
         ],
+        # PostgreSQL connection/health-check runtime tuning (section 3). Null
+        # inputs contribute no entries and retain n8n's pinned defaults.
+        local.n8n_postgres_runtime_env,
         # Storage-mode variables live in config.extraEnv because the chart has no
         # Azure-native values block. This shared list renders on main, worker,
         # and webhook containers, which queue mode requires. The active binary

@@ -17,9 +17,9 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 3. Expose PostgreSQL connection and ping timing
 
-- [ ] 3.1 Add the four nullable `postgres_*` runtime inputs and validations from design decision 3; render their matching `DB_*` values through shared application environment configuration. Verify mocked tests cover managed/external PostgreSQL, all-null omission, explicit zero acquisition timeout, and all four overrides together.
-- [ ] 3.2 Add expected-failure coverage for timing boundaries, fractional acquisition/recovery values, and reserved `DB_*` escape-hatch entries; verify the focused Terraform tests and chart assertions for all three application pod families pass without introducing an ignored-managed-database-tuning warning on the external path.
-- [ ] 3.3 Replace the `postgres_pool_size` rule of thumb with shared-pool, acquisition-deadline, and aggregate-budget guidance; verify generated docs pass and the diff preserves every existing pool-size value and contains no `apply_immediately` input or service-maintenance substitute.
+- [x] 3.1 Add the four nullable `postgres_*` runtime inputs and validations from design decision 3; render their matching `DB_*` values through shared application environment configuration. Verify mocked tests cover managed/external PostgreSQL, all-null omission, explicit zero acquisition timeout, and all four overrides together.
+- [x] 3.2 Add expected-failure coverage for timing boundaries, fractional acquisition/recovery values, and reserved `DB_*` escape-hatch entries; verify the focused Terraform tests and chart assertions for all three application pod families pass without introducing an ignored-managed-database-tuning warning on the external path.
+- [x] 3.3 Replace the `postgres_pool_size` rule of thumb with shared-pool, acquisition-deadline, and aggregate-budget guidance; verify generated docs pass and the diff preserves every existing pool-size value and contains no `apply_immediately` input or service-maintenance substitute.
 
 ## 4. Expose Bull worker timing safely
 
