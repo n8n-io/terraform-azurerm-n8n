@@ -382,6 +382,33 @@ itself is missing from the resource block; check the `.tf` source, not just
 the rendered graph, and use the graph output only to confirm the absence of
 an unwanted reverse edge (e.g. no `n8n`/`KEDA` → exporter edge).
 
+Section 12 exposed `n8n_main_hpa_min_replicas` as a validated passthrough
+variable in all eight examples (three sizing tiers, `split-ingress`, and the
+four `customer-managed-*` examples), defaulting to each example's documented
+floor (2, except medium's 3 and large's 6). For `small`/`medium`/`large`,
+which already carry a `local.tier` map surfaced through a `tier_configuration`
+output, the cleanest wiring sets the map's `main_min_replicas` entry directly
+to `var.n8n_main_hpa_min_replicas` — the existing `main.tf` reference to
+`local.tier.main_min_replicas` needs no further change, and the effective
+value is already visible through the existing output. Examples without a tier
+map gained a dedicated `main_hpa_min_replicas` (or `output.main_hpa_min_replicas`)
+output exposing `var.n8n_main_hpa_min_replicas` directly, matching the existing
+`webhook_base_url` pattern in `split-ingress/outputs.tf`. A `terraform test`
+`assert` block cannot reference a resource nested inside a child module
+(`module.n8n.helm_release.n8n...`, `module.n8n.some_local`) — only that
+module's own declared outputs are visible from the calling root's test file;
+confirmed by probing with `override_resource`-style addressing against
+`module.n8n.helm_release.n8n`, which Terraform rejects as `Unsupported
+attribute`. This is why every example needed its own thin output rather than
+reaching into the root module's Helm values to prove the passthrough. Local
+`terraform.tfvars` files (gitignored, used for a contributor's own prior live
+tests) and gitignored `*_override.tf` scratch files (e.g. a leftover
+`examples/small/pr2_override.tf` declaring a stray `provider "acme"` block)
+are picked up automatically by `terraform init`/`terraform test` and can break
+an otherwise-correct example; move them aside before running tests locally
+and restore them afterward — they are intentionally untracked and must never
+be committed or deleted on someone else's behalf.
+
 ## What this repo is
 
 `terraform-azurerm-n8n` is a Terraform module that deploys a **production-grade,

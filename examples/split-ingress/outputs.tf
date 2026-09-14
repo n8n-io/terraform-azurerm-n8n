@@ -11,6 +11,11 @@ output "webhook_base_url" {
   value       = "https://${local.webhook_domain}"
 }
 
+output "main_hpa_min_replicas" {
+  description = "Effective main-topology floor passed to the root module's n8n_main_hpa_min_replicas. See module.n8n.n8n_url for confirmation the module accepted it."
+  value       = var.n8n_main_hpa_min_replicas
+}
+
 output "webhook_appgw_fqdn" {
   description = "FQDN of the public webhook Application Gateway."
   value       = azurerm_public_ip.webhook.fqdn

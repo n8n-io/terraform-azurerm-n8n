@@ -17,7 +17,7 @@ locals {
     pg_backup_retention_days     = 14
     redis_sku_name               = "Balanced_B5"
     storage_replication_type     = "ZRS"
-    main_min_replicas            = 3
+    main_min_replicas            = var.n8n_main_hpa_min_replicas
     main_max_replicas            = 16
     webhook_min_replicas         = 4
     webhook_max_replicas         = 24

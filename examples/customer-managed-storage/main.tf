@@ -270,6 +270,8 @@ module "n8n" {
   existing_blob_endpoint                = azurerm_storage_account.existing.primary_blob_endpoint
   existing_blob_prerequisites_confirmed = true
 
+  n8n_main_hpa_min_replicas = var.n8n_main_hpa_min_replicas
+
   n8n_domain                                   = var.n8n_domain
   app_gateway_tls_cert_secret_id               = module.tls_self_signed.app_gateway_tls_cert_secret_id
   app_gateway_keyvault_id                      = azurerm_key_vault.tls.id

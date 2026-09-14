@@ -20,6 +20,12 @@ These tiers are reference configurations, not throughput or cost guarantees. Wor
 
 `small`, `medium`, and `large` issue self-signed certificates only, to keep the Azure Key Vault certificate path runnable without another DNS provider. Replace them with publicly trusted certificates before exposing production traffic. Azure SKU and zone availability varies by region. Check current availability and pricing before apply.
 
+### Main topology selection is separate from feature entitlements
+
+All eight examples in this directory — the three sizing tiers, `split-ingress`, and the four customer-managed examples — expose `n8n_main_hpa_min_replicas`, a passthrough to the root module's own variable of the same name. It defaults to each example's documented floor (2, except medium's 3 and large's 6) and is the only topology selector: setting it to 1 requests single-main queue mode, which works with a license that lacks `feat:multipleMainInstances` (including Business licenses). Selecting a floor of 1 does not change any other example decision — sizing, storage mode, ingress, or Redis/PostgreSQL topology stay exactly as documented above and in the customer-managed table below.
+
+Main-floor selection and Azure storage entitlements are independent. A license without `feat:multipleMainInstances` does not automatically gain `feat:binaryDataAz` or `feat:executionDataAz`. A new Business-tier deployment without those entitlements should set the root module's `n8n_binary_data_storage_mode`/`n8n_execution_data_storage_mode` to `database` and `n8n_available_binary_data_modes = ["database"]`, independent of whatever main floor it selects. Do not remove an existing deployment's historical Azure storage modes before its retained objects are addressed.
+
 ## Topology examples
 
 These examples are small-sized and each focuses on a single decision instead of workload scale:

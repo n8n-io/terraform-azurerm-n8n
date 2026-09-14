@@ -548,6 +548,8 @@ module "n8n" {
 
   n8n_webhook_hpa_enabled = false
 
+  n8n_main_hpa_min_replicas = var.n8n_main_hpa_min_replicas
+
   n8n_domain = var.n8n_domain
 
   depends_on = [

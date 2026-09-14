@@ -74,3 +74,46 @@ run "customer_managed_redis_plan" {
     error_message = "The caller-managed Secret must carry the caller-owned Redis instance's own access key, not a value the module generated."
   }
 }
+
+run "customer_managed_redis_single_main_override" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncmr-tls-test.vault.azure.net/secrets/n8ncmr-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_managed_redis.existing
+    override_during = plan
+    values = {
+      id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmr-n8n-rg/providers/Microsoft.Cache/redisEnterprise/n8ncmr-shared-redis"
+      hostname = "n8ncmr-shared-redis.eastus.redis.azure.net"
+      default_database = {
+        clustering_policy                  = "NoCluster"
+        client_protocol                    = "Encrypted"
+        access_keys_authentication_enabled = true
+        port                               = 10000
+        primary_access_key                 = "fake-primary-access-key"
+        secondary_access_key               = "fake-secondary-access-key"
+      }
+    }
+  }
+
+  assert {
+    condition     = output.main_hpa_min_replicas == 1
+    error_message = "Setting main minimum to 1 must pass 1 through to the root module."
+  }
+
+  assert {
+    condition     = module.n8n.redis_hostname == azurerm_managed_redis.existing.hostname
+    error_message = "Selecting single-main must not change the caller-owned Redis targeting."
+  }
+}

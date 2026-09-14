@@ -67,3 +67,29 @@ run "medium_tier_plan" {
   # A clean plan also proves the root capacity check accepts the 67,700m of
   # requested CPU against about 150,380m of modeled supply.
 }
+
+run "medium_tier_single_main_override" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nmedium-tls-test.vault.azure.net/secrets/n8nmedium-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.tier_configuration.main_min_replicas == 1
+    error_message = "Setting main minimum to 1 must pass 1 through to the root module."
+  }
+
+  assert {
+    condition     = output.tier_configuration.webhook_max_replicas == 24
+    error_message = "Selecting single-main must not change unrelated webhook sizing."
+  }
+}

@@ -71,9 +71,9 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 12. Expose example topology selection without retuning
 
-- [ ] 12.1 Add the main-minimum passthrough, validation, and sample-variable documentation to all eight existing example roots; verify each example's default floor remains 2 except medium 3 and large 6, with no other sizing changes.
-- [ ] 12.2 Extend each example's mocked suite for minimum 1 and effective maximum 1 while retaining existing default/ownership assertions; verify all eight suites pass and large keeps two PgBouncer replicas, pool size 5, and its current storage/HA configuration.
-- [ ] 12.3 Regenerate only the examples' generated reference blocks and update `examples/README.md` to distinguish topology selection from feature entitlements; verify all eight `terraform-docs --output-check` runs pass and the comparison table retains the original sizing values.
+- [x] 12.1 Add the main-minimum passthrough, validation, and sample-variable documentation to all eight existing example roots; verify each example's default floor remains 2 except medium 3 and large 6, with no other sizing changes.
+- [x] 12.2 Extend each example's mocked suite for minimum 1 and effective maximum 1 while retaining existing default/ownership assertions; verify all eight suites pass and large keeps two PgBouncer replicas, pool size 5, and its current storage/HA configuration.
+- [x] 12.3 Regenerate only the examples' generated reference blocks and update `examples/README.md` to distinguish topology selection from feature entitlements; verify all eight `terraform-docs --output-check` runs pass and the comparison table retains the original sizing values.
 
 ## 13. Update operational guidance and offline smoke coverage
 

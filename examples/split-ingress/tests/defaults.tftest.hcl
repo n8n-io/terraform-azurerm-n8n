@@ -254,6 +254,43 @@ run "webhook_subdomain_flows_through_to_every_consumer" {
   }
 }
 
+run "split_ingress_single_main_override" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_admin.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplita-tls-test.vault.azure.net/secrets/n8nsplita-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_webhook.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplitw-tls-test.vault.azure.net/secrets/n8nsplitw-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.main_hpa_min_replicas == 1
+    error_message = "Setting main minimum to 1 must pass 1 through to the root module."
+  }
+
+  assert {
+    condition = (
+      module.n8n.n8n_webhook_url == "https://hooks.n8n.test.example.com" &&
+      module.n8n.n8n_url == "https://n8n.test.example.com"
+    )
+    error_message = "Selecting single-main must not change the split editor/webhook URLs."
+  }
+}
+
 run "admin_cidr_validation_rejects_ipv6" {
   command = plan
 

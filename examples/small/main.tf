@@ -18,6 +18,7 @@ locals {
     redis_sku_name           = "Balanced_B0"
     storage_replication_type = "LRS"
     webhook_max_replicas     = 8
+    main_min_replicas        = var.n8n_main_hpa_min_replicas
   }
 }
 
@@ -184,6 +185,7 @@ module "n8n" {
   storage_account_replication_type = local.tier.storage_replication_type
 
   n8n_webhook_hpa_max_replicas = local.tier.webhook_max_replicas
+  n8n_main_hpa_min_replicas    = local.tier.main_min_replicas
 
   n8n_domain                                   = var.n8n_domain
   app_gateway_tls_cert_secret_id               = module.tls_self_signed.app_gateway_tls_cert_secret_id
