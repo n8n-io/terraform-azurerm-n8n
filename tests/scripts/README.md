@@ -106,12 +106,15 @@ a live cluster, or Terraform state:
 SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
 ```
 
-This stubs `kubectl` with synthetic fixtures for three scenarios —
-intentional single-main, healthy multi-main, and degraded multi-main with
-one ready pod of two desired — asserts the expected topology/floor/pass-fail
-outcome for each, and exits before the script's `Preflight` section (which
-requires `az login`). Run it after touching `detect_topology()`,
-`check_deployment()`, or their fixtures. This self-test (only) runs in CI on
+This stubs `kubectl` with synthetic fixtures for intentional single-main,
+healthy multi-main, degraded multi-main with one ready pod of two desired,
+and invalid HPA/strategy/PDB combinations. It asserts the expected
+topology/floor/pass-fail outcome for each and exits before the script's
+`Preflight` section (which requires `az login`). Missing or inconsistent
+topology safeguards fail the live smoke test rather than producing warnings.
+The self-test summary includes intentional failures from negative fixtures;
+its final exit code reports whether all fixtures behaved as expected. Run it
+after touching `detect_topology()`, `check_deployment()`, or their fixtures. This self-test (only) runs in CI on
 every pull request; the live smoke test past it needs a real cluster and
 stays a manual, post-`apply` step — see "Smoke test" above.
 

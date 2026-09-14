@@ -110,10 +110,10 @@ Because this same module creates the AKS cluster that the `kubernetes`/`helm`/`k
 
 ```hcl
 provider "kubernetes" {
-  host                   = yamldecode(module.n8n.aks_kube_config).clusters[0].cluster.server
-  cluster_ca_certificate = base64decode(yamldecode(module.n8n.aks_kube_config).clusters[0].cluster["certificate-authority-data"])
-  client_certificate     = base64decode(yamldecode(module.n8n.aks_kube_config).users[0].user["client-certificate-data"])
-  client_key             = base64decode(yamldecode(module.n8n.aks_kube_config).users[0].user["client-key-data"])
+  host                   = module.n8n.aks_kube_config[0].host
+  cluster_ca_certificate = base64decode(module.n8n.aks_kube_config[0].cluster_ca_certificate)
+  client_certificate     = base64decode(module.n8n.aks_kube_config[0].client_certificate)
+  client_key             = base64decode(module.n8n.aks_kube_config[0].client_key)
 }
 ```
 
@@ -235,7 +235,7 @@ resource "kubernetes_config_map_v1" "task_runner_config" {
   }
 
   data = {
-    "n8n-task-runners.json" = file("\${path.module}/n8n-task-runners.json")
+    "n8n-task-runners.json" = file("${path.module}/n8n-task-runners.json")
   }
 }
 
@@ -504,7 +504,7 @@ This module does not:
 | <a name="input_keda_chart_version"></a> [keda\_chart\_version](#input\_keda\_chart\_version) | KEDA Helm chart version from the official kedacore repository. Pinning the controller keeps the CRD shape used by the root kubectl\_manifest deterministic. | `string` | `"2.15.0"` | no |
 | <a name="input_keda_namespace"></a> [keda\_namespace](#input\_keda\_namespace) | Name of the Kubernetes namespace KEDA's operator and CRDs live in. Created when install\_keda = true (the default) and this module owns the installation; when install\_keda = false, KEDA must already be running in this namespace. | `string` | `"keda"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region to deploy into (e.g. eastus, westeurope, australiaeast). Must match the region the azurerm provider is configured for. | `string` | n/a | yes |
-| <a name="input_n8n_additional_domains"></a> [n8n\_additional\_domains](#input\_n8n\_additional\_domains) | Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n\_domain. n8n\_domain remains canonical for N8N\_HOST, N8N\_WEBHOOK\_URL, and the editor URL. The supplied Key Vault certificate must cover every name. | `list(string)` | `[]` | no |
+| <a name="input_n8n_additional_domains"></a> [n8n\_additional\_domains](#input\_n8n\_additional\_domains) | Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n\_domain. n8n\_domain remains canonical for N8N\_HOST and the editor URL, and supplies the default N8N\_WEBHOOK\_URL unless n8n\_webhook\_url overrides it. The supplied Key Vault certificate must cover every name. | `list(string)` | `[]` | no |
 | <a name="input_n8n_available_binary_data_modes"></a> [n8n\_available\_binary\_data\_modes](#input\_n8n\_available\_binary\_data\_modes) | Binary-data backends n8n may read, rendered as N8N\_AVAILABLE\_BINARY\_DATA\_MODES. Include the active n8n\_binary\_data\_storage\_mode and every historical backend that still contains retained objects. Supported values are database and azure. Removing a mode does not migrate data and makes objects in that backend unreadable. | `list(string)` | <pre>[<br/>  "azure"<br/>]</pre> | no |
 | <a name="input_n8n_binary_data_storage_mode"></a> [n8n\_binary\_data\_storage\_mode](#input\_n8n\_binary\_data\_storage\_mode) | Where n8n writes new binary data. `azure` (the default) writes to the private module-managed Blob container and requires the separate `feat:binaryDataAz` Enterprise entitlement. `database` stores binary data in PostgreSQL and is the durable queue-mode fallback when that entitlement is unavailable. 0.1.0 does not support the inline-memory `default` mode or a shared-filesystem mode. Changing this value does not move existing objects; keep every historical backend in n8n\_available\_binary\_data\_modes until its data expires or is migrated. | `string` | `"azure"` | no |
 | <a name="input_n8n_chart_version"></a> [n8n\_chart\_version](#input\_n8n\_chart\_version) | n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default follows the AWS sibling's validated 1.10 chart line. | `string` | `"1.10.0"` | no |

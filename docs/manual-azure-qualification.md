@@ -36,6 +36,22 @@ Date:            <run date>
 Operator:        <name>
 ```
 
+## Safety and acceptance
+
+Use a disposable deployment with separate state and an agreed spending limit.
+Before disruptive cases, back up state, the n8n encryption key, and durable data.
+Confirm node quota and subnet capacity, review each saved Terraform plan, and
+obtain operator approval before applying it. Run AKS replacement and destroy
+last. Never commit state, saved plans, Secrets, or credential-bearing logs.
+
+A smoke-test exit code of 0 is not sufficient evidence by itself. Record and
+resolve warnings and skips relevant to each case. Supply an API key for the
+execution checks. For split ingress, test the advertised webhook host separately:
+the script sends webhook requests to the editor URL. Validate TLS certificates
+with a separate client because the script uses `curl -k`. With remote Terraform
+state, supply the script's environment variables explicitly; its automatic
+output discovery requires a local `terraform.tfstate` file.
+
 ## Checklist
 
 ### 1. Fresh install
@@ -55,9 +71,10 @@ exits 0.
 **Setup:** `terraform apply` again immediately after case 1, with no
 variable changes.
 
-**Expected outcome:** Terraform reports no changes (or only expected
-computed-attribute drift, e.g. AKS-managed node counts under
-`ignore_changes`). No Helm release upgrade fires.
+**Expected outcome:** Terraform reports no changes. A subsequent
+`terraform plan -detailed-exitcode` returns 0. Repeat after autoscaler activity:
+ignored node counts must not cause a reset or a Helm upgrade. Investigate any
+remaining drift rather than accepting it as a no-op.
 
 **Result:** _______________________________________________
 
@@ -198,5 +215,59 @@ and observe the apply's behavior; re-run once connectivity is restored.
 leaving state inconsistent with reality. A subsequent `terraform plan`
 reconciles state against the actual (possibly partially-applied) resources,
 and a following `terraform apply` completes without manual state surgery.
+
+**Result:** _______________________________________________
+
+### 13. AKS credential rotation
+
+**Setup:** On the disposable module-managed cluster, rotate the AKS cluster
+certificates using the Azure procedure supported by its installed version.
+Wait for the rotation to complete. Refresh the operator's kubeconfig, then
+run a normal Terraform plan and apply using the caller's existing
+`kubernetes`, `helm`, and `kubectl` provider configuration.
+
+**Expected outcome:** All three providers use the refreshed cluster credentials
+without manual state edits or provider rewiring. The workload recovers, the
+smoke test passes, and a subsequent plan reports no changes. Record any
+transient provider failure and whether a retry was needed. Do not record
+certificate keys or kubeconfig contents in the qualification results.
+
+**Result:** _______________________________________________
+
+### 14. AKS replacement
+
+**Setup:** Use a disposable module-managed deployment with backed-up encryption
+key and durable data. Request replacement of its AKS resource through a saved
+Terraform plan. Review all dependent changes before approval: PostgreSQL,
+Redis, Blob storage, and the encryption key must not be replaced unexpectedly.
+Apply the approved plan without routine targeting or manual state removal.
+
+**Expected outcome:** Terraform replaces AKS and restores the Kubernetes
+resources, KEDA CRDs, authentication, and n8n workload through the combined
+provider graph. Existing credentials still decrypt, workflows execute, and
+retained binaries download. Record the number of applies and any recovery
+steps; a second pass does not establish a verified one-apply replacement.
+A final plan reports no changes.
+
+**Result:** _______________________________________________
+
+### 15. Normal destroy and caller-owned resource preservation
+
+**Setup:** After all other cases, stop test traffic and back up any data to
+retain. Review a saved destroy plan and apply it while the AKS API is reachable.
+Record the test deployment's Azure and Kubernetes resource inventory before
+and after teardown.
+
+For the caller-managed path, remove only the n8n module call from a disposable
+caller configuration and apply the reviewed plan. Keep caller-owned cluster,
+namespace, KEDA, Secrets, ConfigMaps, and data resources declared. Destroying an
+entire example root would also destroy resources that the example itself owns.
+
+**Expected outcome:** Managed workload resources uninstall before their cluster
+becomes unavailable. Normal teardown completes without forced finalizer removal
+or manual state surgery, and no unexpected billable resources remain. Removing
+only the n8n module preserves caller-owned resources and their data. Record
+expected retained resources, including Azure soft-deleted objects, separately
+from cleanup failures.
 
 **Result:** _______________________________________________

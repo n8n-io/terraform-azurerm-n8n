@@ -122,7 +122,7 @@ TERRAFORM_DIR="${TERRAFORM_DIR:-$(pwd)}"
 
 # Main replica floor is detected per-topology in the "Topology detection"
 # section below (single-main clamps to 1; multi-main reads the rendered
-# n8n-main HPA's minReplicas). This default is only used if detection fails.
+# n8n-main HPA's minReplicas). Invalid topology stops the live smoke test.
 MAIN_MIN=2
 WORKER_MIN=1
 WEBHOOK_MIN=2
@@ -219,16 +219,18 @@ curl_to_n8n() {
 # rather than the current main pod count, which can transiently differ from
 # the configured floor mid-rollout. The n8n-main HorizontalPodAutoscaler is
 # the canonical signal: single-main always clamps minReplicas = maxReplicas
-# = 1 (design.md decision 2, n8n.tf local.n8n_main_hpa_effective_max_replicas);
-# anything else is multi-main, with minReplicas giving the configured floor.
+# = 1 (design.md decision 2, n8n.tf local.n8n_main_hpa_effective_max_replicas).
+# Multi-main requires a floor of at least 2 and a maximum at or above it.
+# Missing or inconsistent HPA/Deployment/PDB settings fail the check.
 # Deployment strategy and PDB minAvailable are read as consistency
 # cross-checks against that same topology, not as a second source of truth.
 # Defined here (rather than inline where it's called) so the self-test block
 # below can exercise it against fixtures without duplicating the logic.
 detect_topology() {
-  TOPOLOGY="multi-main"
+  TOPOLOGY="unknown"
 
   local main_hpa_min main_hpa_max main_strategy main_pdb_min
+  local fail_before="$FAIL"
   main_hpa_min=$(kubectl get hpa n8n-main -n "$NAMESPACE" \
     -o jsonpath='{.spec.minReplicas}' 2>/dev/null || true)
   main_hpa_max=$(kubectl get hpa n8n-main -n "$NAMESPACE" \
@@ -238,10 +240,17 @@ detect_topology() {
   main_pdb_min=$(kubectl get pdb n8n-main -n "$NAMESPACE" \
     -o jsonpath='{.spec.minAvailable}' 2>/dev/null || true)
 
-  if [[ -z "$main_hpa_min" ]]; then
-    warn "Could not read the n8n-main HPA — assuming multi-main with the built-in floor of $MAIN_MIN"
-    info "Check: kubectl get hpa n8n-main -n $NAMESPACE"
-  elif [[ "$main_hpa_min" == "1" && "$main_hpa_max" == "1" ]]; then
+  if [[ ! "$main_hpa_min" =~ ^[1-9][0-9]*$ || ! "$main_hpa_max" =~ ^[1-9][0-9]*$ ]]; then
+    fail "n8n-main HPA bounds are missing or invalid: min='${main_hpa_min:-<unset>}' max='${main_hpa_max:-<unset>}'"
+    return 1
+  fi
+
+  if [[ "$main_hpa_max" -lt "$main_hpa_min" || ( "$main_hpa_min" == "1" && "$main_hpa_max" != "1" ) ]]; then
+    fail "n8n-main HPA must use 1/1 for single-main or 2+ with max >= min for multi-main (got $main_hpa_min/$main_hpa_max)"
+    return 1
+  fi
+
+  if [[ "$main_hpa_min" == "1" ]]; then
     TOPOLOGY="single-main"
     MAIN_MIN=1
     pass "Detected topology: single-main (n8n-main HPA minReplicas=maxReplicas=1)"
@@ -249,33 +258,34 @@ detect_topology() {
     if [[ "$main_strategy" == "Recreate" ]]; then
       pass "n8n-main deployment strategy is Recreate (matches the single-main safeguard)"
     else
-      warn "n8n-main deployment strategy is '${main_strategy:-<unset>}', expected Recreate for single-main"
+      fail "n8n-main deployment strategy is '${main_strategy:-<unset>}', expected Recreate for single-main"
     fi
 
     if [[ "$main_pdb_min" == "0" ]]; then
       pass "n8n-main PDB minAvailable=0 (voluntary eviction permitted, matches single-main)"
     else
-      warn "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected 0 for single-main"
+      fail "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected 0 for single-main"
     fi
   else
     TOPOLOGY="multi-main"
     MAIN_MIN="$main_hpa_min"
     pass "Detected topology: multi-main (n8n-main HPA minReplicas=$main_hpa_min, maxReplicas=${main_hpa_max:-?})"
 
-    if [[ -z "$main_strategy" || "$main_strategy" == "RollingUpdate" ]]; then
+    if [[ "$main_strategy" == "RollingUpdate" ]]; then
       pass "n8n-main deployment strategy is RollingUpdate (chart default, matches multi-main)"
     else
-      warn "n8n-main deployment strategy is '$main_strategy', expected the chart's default rolling update for multi-main"
+      fail "n8n-main deployment strategy is '${main_strategy:-<unset>}', expected RollingUpdate for multi-main"
     fi
 
     if [[ "$main_pdb_min" == "1" ]]; then
       pass "n8n-main PDB minAvailable=1 (protects one replica during voluntary disruption, matches multi-main)"
     else
-      warn "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected 1 for multi-main"
+      fail "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected 1 for multi-main"
     fi
   fi
 
   info "Topology: $TOPOLOGY (main floor: $MAIN_MIN)"
+  [[ "$FAIL" -eq "$fail_before" ]]
 }
 
 # ── Pod readiness helper ─────────────────────────────────────────────────────
@@ -317,8 +327,8 @@ check_deployment() {
 # ── Self-test (offline, no Azure credentials) ─────────────────────────────────
 # `SMOKE_TEST_SELF_TEST=1 ./smoke-test.sh` exercises detect_topology() and
 # check_deployment() against recorded/synthetic kubectl fixtures for
-# single-main, healthy multi-main, and degraded multi-main (one ready pod of
-# two desired) — proving the topology-detection/branching logic offline,
+# single-main, healthy multi-main, degraded multi-main (one ready pod of
+# two desired), and invalid HPA/strategy/PDB combinations, proving the logic offline,
 # without az login, terraform state, or a live cluster. Runs and exits before
 # Preflight's require_cmd/az-login checks, so `bash -n` plus this mode is the
 # full offline verification surface for this script.
@@ -399,8 +409,43 @@ if [[ "${SMOKE_TEST_SELF_TEST:-0}" == "1" ]]; then
     self_test_failures=$((self_test_failures + 1))
   fi
 
+  echo "== Self-test: invalid topology safeguards =="
+  while IFS='|' read -r fixture_name FIXTURE_HPA_MIN FIXTURE_HPA_MAX FIXTURE_STRATEGY FIXTURE_PDB_MIN; do
+    before_fail="$FAIL"
+    if detect_topology; then
+      fail "$fixture_name unexpectedly passed topology detection"
+      self_test_failures=$((self_test_failures + 1))
+    elif [[ "$FAIL" -gt "$before_fail" ]]; then
+      pass "$fixture_name correctly failed topology detection"
+    else
+      fail "$fixture_name returned failure without recording a failed check"
+      self_test_failures=$((self_test_failures + 1))
+    fi
+  done <<'FIXTURES'
+missing HPA||||
+missing minimum||6|RollingUpdate|1
+missing maximum|2||RollingUpdate|1
+nonnumeric minimum|invalid|6|RollingUpdate|1
+nonnumeric maximum|2|invalid|RollingUpdate|1
+zero minimum|0|6|RollingUpdate|1
+zero maximum|2|0|RollingUpdate|1
+negative minimum|-1|6|RollingUpdate|1
+fractional minimum|1.5|6|RollingUpdate|1
+fractional maximum|2|6.5|RollingUpdate|1
+inverted bounds|3|2|RollingUpdate|1
+unclamped single-main|1|6|RollingUpdate|1
+single-main rolling update|1|1|RollingUpdate|0
+single-main missing strategy|1|1||0
+single-main wrong PDB|1|1|Recreate|1
+single-main missing PDB|1|1|Recreate|
+multi-main recreate|2|6|Recreate|1
+multi-main missing strategy|2|6||1
+multi-main wrong PDB|2|6|RollingUpdate|0
+multi-main missing PDB|2|6|RollingUpdate|
+FIXTURES
+
   echo ""
-  echo "Self-test summary: $PASS passed, $FAIL failed, $WARN warned"
+  echo "Self-test summary: $PASS passed, $FAIL failed (includes expected failures), $WARN warned"
   if [[ "$self_test_failures" -gt 0 ]]; then
     echo "SELF-TEST RESULT: FAIL"
     exit 1

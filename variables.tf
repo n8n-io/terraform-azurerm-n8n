@@ -2403,7 +2403,7 @@ variable "n8n_webhook_url" {
 }
 
 variable "n8n_additional_domains" {
-  description = "Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n_domain. n8n_domain remains canonical for N8N_HOST, N8N_WEBHOOK_URL, and the editor URL. The supplied Key Vault certificate must cover every name."
+  description = "Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n_domain. n8n_domain remains canonical for N8N_HOST and the editor URL, and supplies the default N8N_WEBHOOK_URL unless n8n_webhook_url overrides it. The supplied Key Vault certificate must cover every name."
   type        = list(string)
   default     = []
   nullable    = false
