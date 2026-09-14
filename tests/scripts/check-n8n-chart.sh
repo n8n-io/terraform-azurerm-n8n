@@ -79,7 +79,7 @@ render_topology_values() {
   local out="$1"
   shift
   console "$@" <<'HCL' > "$out"
-jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError="all",saveOnSuccess="all",saveOnProgress=false,saveManualExecutions=true}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env)}})
+jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError=var.n8n_executions_data_save_on_error,saveOnSuccess=var.n8n_executions_data_save_on_success,saveOnProgress=var.n8n_executions_data_save_on_progress,saveManualExecutions=var.n8n_executions_data_save_manual_executions}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env)}})
 HCL
 }
 
@@ -113,6 +113,13 @@ render_topology_values "$tmp/worker-timing-values.json" \
   -var='n8n_queue_worker_lock_renew_time=15000' \
   -var='n8n_queue_worker_stalled_interval=45000'
 
+echo "== Rendering execution save-policy values fixture (independent success/error policies, both booleans changed) =="
+render_topology_values "$tmp/save-policy-values.json" \
+  -var='n8n_executions_data_save_on_success=none' \
+  -var='n8n_executions_data_save_on_error=all' \
+  -var='n8n_executions_data_save_on_progress=true' \
+  -var='n8n_executions_data_save_manual_executions=false'
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
@@ -127,6 +134,10 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor configmap; do
   render "$tmp/worker-timing-values.json" worker-timing "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  render "$tmp/save-policy-values.json" save-policy "$template"
 done
 
 main_min=$(console <<< 'var.n8n_main_hpa_min_replicas')
@@ -209,6 +220,21 @@ jq -e '
   [.spec.template.spec.containers[0].env[] | select(.name == "EXECUTIONS_DATA_SAVE_ON_ERROR")] | length == 0
 ' "$tmp/multi-main-deployment-webhook-processor.json" >/dev/null \
   || { echo "FAIL: deployment-webhook-processor unexpectedly renders execution save-policy environment entries" >&2; exit 1; }
+
+for template in deployment-main deployment-worker; do
+  jq -e '
+    (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_ERROR"))[0].value) == "all"
+    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_SUCCESS"))[0].value) == "none"
+    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_PROGRESS"))[0].value) == "true"
+    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS"))[0].value) == "false"
+  ' "$tmp/save-policy-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} execution save-policy environment values do not match the independently overridden fixture" >&2; exit 1; }
+done
+
+jq -e '
+  [.spec.template.spec.containers[0].env[] | select(.name == "EXECUTIONS_DATA_SAVE_ON_ERROR")] | length == 0
+' "$tmp/save-policy-deployment-webhook-processor.json" >/dev/null \
+  || { echo "FAIL: deployment-webhook-processor unexpectedly renders execution save-policy environment entries in the overridden fixture" >&2; exit 1; }
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   jq -e --arg url "https://${domain}" '

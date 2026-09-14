@@ -1693,6 +1693,52 @@ variable "n8n_execution_concurrency_limit" {
   }
 }
 
+# Execution-save policy controls (port-aws-040-enhancements section 5). Each
+# input maps to one chart-native executions.data.* field, which the pinned
+# chart renders as EXECUTIONS_DATA_SAVE_ON_SUCCESS, EXECUTIONS_DATA_SAVE_ON_ERROR,
+# EXECUTIONS_DATA_SAVE_ON_PROGRESS, and EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS
+# on main and worker application containers. Workflow-level save-policy
+# overrides continue to take precedence over these deployment-wide defaults.
+# The existing broad "EXECUTIONS_" managed-prefix guard already reserves
+# these four raw environment variable names in var.n8n_extra_env.
+variable "n8n_executions_data_save_on_success" {
+  description = "Whether to save execution data for successful workflow executions (writes chart value executions.data.saveOnSuccess, rendered as EXECUTIONS_DATA_SAVE_ON_SUCCESS). Must be \"all\" or \"none\". Workflow-level settings can override this default per workflow. An explicit null falls back to the default."
+  type        = string
+  default     = "all"
+  nullable    = false
+
+  validation {
+    condition     = contains(["all", "none"], var.n8n_executions_data_save_on_success)
+    error_message = "n8n_executions_data_save_on_success must be \"all\" or \"none\"."
+  }
+}
+
+variable "n8n_executions_data_save_on_error" {
+  description = "Whether to save execution data for failed workflow executions (writes chart value executions.data.saveOnError, rendered as EXECUTIONS_DATA_SAVE_ON_ERROR). Must be \"all\" or \"none\". Workflow-level settings can override this default per workflow. An explicit null falls back to the default."
+  type        = string
+  default     = "all"
+  nullable    = false
+
+  validation {
+    condition     = contains(["all", "none"], var.n8n_executions_data_save_on_error)
+    error_message = "n8n_executions_data_save_on_error must be \"all\" or \"none\"."
+  }
+}
+
+variable "n8n_executions_data_save_on_progress" {
+  description = "Whether to save incremental execution progress as a workflow runs (writes chart value executions.data.saveOnProgress, rendered as EXECUTIONS_DATA_SAVE_ON_PROGRESS). Enabling this increases database writes per execution. Workflow-level settings can override this default per workflow. An explicit null falls back to the default."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "n8n_executions_data_save_manual_executions" {
+  description = "Whether to save execution data for manually triggered workflow executions (writes chart value executions.data.saveManualExecutions, rendered as EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS). An explicit null falls back to the default."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "n8n_pruning_max_age" {
   description = "Maximum age of execution records to retain in hours."
   type        = number

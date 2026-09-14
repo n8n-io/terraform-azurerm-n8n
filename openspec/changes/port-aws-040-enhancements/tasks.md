@@ -29,9 +29,9 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 5. Expose execution-save policy controls
 
-- [ ] 5.1 Replace the four `executions.data` literals with non-nullable inputs and the specified existing defaults; verify mocked tests cover defaults, explicit null fallback, independent success/error policies, and both boolean changes without altering storage or pruning.
-- [ ] 5.2 Add expected failures for invalid string policies and all four raw `EXECUTIONS_DATA_SAVE_*` names; verify Azure's existing broad `EXECUTIONS_` guard remains unchanged and the chart renders each policy once on main and worker.
-- [ ] 5.3 Update save-policy documentation and generated reference; verify it names `executions.data`, explains workflow-level overrides, and does not promise a new webhook-only save-policy path or a breaking collision-guard change already present in Azure.
+- [x] 5.1 Replace the four `executions.data` literals with non-nullable inputs and the specified existing defaults; verify mocked tests cover defaults, explicit null fallback, independent success/error policies, and both boolean changes without altering storage or pruning.
+- [x] 5.2 Add expected failures for invalid string policies and all four raw `EXECUTIONS_DATA_SAVE_*` names; verify Azure's existing broad `EXECUTIONS_` guard remains unchanged and the chart renders each policy once on main and worker.
+- [x] 5.3 Update save-policy documentation and generated reference; verify it names `executions.data`, explains workflow-level overrides, and does not promise a new webhook-only save-policy path or a breaking collision-guard change already present in Azure.
 
 ## 6. Add the optional application heap ceiling
 

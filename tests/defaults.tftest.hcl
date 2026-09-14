@@ -1606,6 +1606,189 @@ run "runtime_controls_defaults_render_in_helm_values" {
   }
 }
 
+# ── Execution-save policy controls (port-aws-040-enhancements section 5) ────
+
+run "execution_save_policy_defaults" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      var.n8n_executions_data_save_on_success == "all" &&
+      var.n8n_executions_data_save_on_error == "all" &&
+      var.n8n_executions_data_save_on_progress == false &&
+      var.n8n_executions_data_save_manual_executions == true &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnSuccess == "all" &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnError == "all" &&
+      !yamldecode(helm_release.n8n.values[0]).executions.data.saveOnProgress &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveManualExecutions &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.enabled &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.maxAge == 336 &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.maxCount == 10000
+    )
+    error_message = "Execution-save policy inputs must default to all/all/false/true and leave pruning/storage settings unchanged."
+  }
+}
+
+run "execution_save_policy_null_falls_back_to_default" {
+  command = plan
+
+  variables {
+    create_database                            = false
+    postgres_external_host                     = "postgres.external.example.com"
+    postgres_external_username                 = "n8n_app"
+    postgres_external_password                 = "synthetic-external-postgres-password"
+    create_redis                               = false
+    redis_external_host                        = "redis.external.example.com"
+    n8n_executions_data_save_on_success        = null
+    n8n_executions_data_save_on_error          = null
+    n8n_executions_data_save_on_progress       = null
+    n8n_executions_data_save_manual_executions = null
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnSuccess == "all" &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnError == "all" &&
+      !yamldecode(helm_release.n8n.values[0]).executions.data.saveOnProgress &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveManualExecutions
+    )
+    error_message = "An explicit null for any execution-save policy input must fall back to its declared default."
+  }
+}
+
+run "independent_execution_save_success_and_error_policies" {
+  command = plan
+
+  variables {
+    create_database                     = false
+    postgres_external_host              = "postgres.external.example.com"
+    postgres_external_username          = "n8n_app"
+    postgres_external_password          = "synthetic-external-postgres-password"
+    create_redis                        = false
+    redis_external_host                 = "redis.external.example.com"
+    n8n_executions_data_save_on_success = "none"
+    n8n_executions_data_save_on_error   = "all"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnSuccess == "none" &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnError == "all"
+    )
+    error_message = "n8n_executions_data_save_on_success and n8n_executions_data_save_on_error must be settable independently of each other."
+  }
+}
+
+run "both_execution_save_policy_booleans_toggle" {
+  command = plan
+
+  variables {
+    create_database                            = false
+    postgres_external_host                     = "postgres.external.example.com"
+    postgres_external_username                 = "n8n_app"
+    postgres_external_password                 = "synthetic-external-postgres-password"
+    create_redis                               = false
+    redis_external_host                        = "redis.external.example.com"
+    n8n_executions_data_save_on_progress       = true
+    n8n_executions_data_save_manual_executions = false
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnProgress == true &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveManualExecutions == false &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.enabled &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.maxAge == 336 &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.maxCount == 10000
+    )
+    error_message = "Both execution-save policy booleans must be independently overridable without altering pruning defaults."
+  }
+}
+
+run "rejects_invalid_execution_save_on_success_policy" {
+  command = plan
+
+  variables {
+    n8n_executions_data_save_on_success = "sometimes"
+  }
+
+  expect_failures = [var.n8n_executions_data_save_on_success]
+}
+
+run "rejects_invalid_execution_save_on_error_policy" {
+  command = plan
+
+  variables {
+    n8n_executions_data_save_on_error = "sometimes"
+  }
+
+  expect_failures = [var.n8n_executions_data_save_on_error]
+}
+
+run "rejects_raw_execution_save_policy_environment_names" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "EXECUTIONS_DATA_SAVE_ON_SUCCESS", value = "all" },
+      { name = "EXECUTIONS_DATA_SAVE_ON_ERROR", value = "all" },
+      { name = "EXECUTIONS_DATA_SAVE_ON_PROGRESS", value = "false" },
+      { name = "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS", value = "true" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
 run "runtime_control_overrides_render_in_helm_values" {
   command = plan
 

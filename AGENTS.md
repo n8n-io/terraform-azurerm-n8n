@@ -295,7 +295,27 @@ assertion checks for the chart's literal default values, not key absence.
 The effective-renewal-below-duration cross-variable validation lives on
 `n8n_queue_worker_lock_renew_time` only, using `coalesce(var, pinned_default)`
 on both sides so an omitted duration or renewal still resolves against the
-chart's real default before comparing.
+chart's real default before comparing. Section 5 added the four
+non-nullable `n8n_executions_data_save_*` inputs (mapping to
+`executions.data.saveOnSuccess`/`saveOnError`/`saveOnProgress`/`saveManualExecutions`),
+replacing the literals previously hardcoded in `n8n.tf`. Terraform's
+null-falls-back-to-default substitution (assigning `null` to an input that
+has a `default` yields that default instead of an error) only fires when
+the variable is declared `nullable = false` **and** is being evaluated at
+the root module boundary the way `terraform test`'s `variables` block and
+`-var`/tfvars assign it. A plain nullable `string`/`bool` variable with a
+non-null default does **not** get this treatment at the root: assigning it
+an explicit `null` runs the variable's own `validation` block against `null`
+itself and fails, exactly as if no default existed. (The commonly cited
+null-substitution behavior applies unconditionally only to child *module
+call* arguments, not to a root module's own inputs.) A `terraform test` run
+block that intends to assert "explicit `null` falls back to the default"
+therefore requires `nullable = false` on the variable, not just a `default`.
+The existing broad `"EXECUTIONS_"` entry in `local.n8n_managed_env_prefixes`
+(added before this change) already reserves all four raw
+`EXECUTIONS_DATA_SAVE_*` names in `var.n8n_extra_env`, so section 5 needed
+no new guard, only a regression test proving the existing guard still
+rejects them.
 
 ## What this repo is
 
