@@ -5926,3 +5926,336 @@ run "redis_password_secret_ref_with_username_still_creates_secret_for_username" 
     error_message = "The KEDA TriggerAuthentication manifest's password entry must still reference the caller-managed Redis Secret even when a module-managed Secret exists for the username."
   }
 }
+
+# ── Optional Redis queue metrics exporter (port-aws-040-enhancements section 9) ──
+
+run "redis_exporter_disabled_by_default_creates_no_resources" {
+  command = plan
+
+  assert {
+    condition     = length(kubernetes_deployment_v1.redis_exporter) == 0 && length(kubernetes_service_v1.redis_exporter) == 0
+    error_message = "No exporter Deployment or Service must exist when redis_exporter_enabled is left at its false default."
+  }
+}
+
+run "redis_exporter_explicit_null_creates_no_resources" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = null
+  }
+
+  assert {
+    condition     = length(kubernetes_deployment_v1.redis_exporter) == 0 && length(kubernetes_service_v1.redis_exporter) == 0
+    error_message = "redis_exporter_enabled is nullable = false, so an explicit null must fall back to its false default and create no exporter resources."
+  }
+}
+
+run "redis_exporter_independent_of_n8n_metrics_enabled" {
+  command = plan
+
+  variables {
+    n8n_metrics_enabled = true
+  }
+
+  assert {
+    condition     = length(kubernetes_deployment_v1.redis_exporter) == 0
+    error_message = "Setting n8n_metrics_enabled = true alone must not create a Redis exporter."
+  }
+}
+
+run "redis_exporter_rejects_blank_image" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = true
+    redis_exporter_image   = "   "
+  }
+
+  expect_failures = [var.redis_exporter_image]
+}
+
+run "redis_exporter_rejects_whitespace_in_image" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = true
+    redis_exporter_image   = "oliver006/redis_exporter: v1.90.0"
+  }
+
+  expect_failures = [var.redis_exporter_image]
+}
+
+run "redis_exporter_observes_managed_azure_redis" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = true
+  }
+
+  assert {
+    condition     = length(kubernetes_deployment_v1.redis_exporter) == 1 && length(kubernetes_service_v1.redis_exporter) == 1
+    error_message = "Exactly one exporter Deployment and Service must be created when redis_exporter_enabled = true."
+  }
+
+  assert {
+    condition = (
+      tostring(kubernetes_deployment_v1.redis_exporter[0].spec[0].replicas) == "1" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].strategy[0].type == "Recreate"
+    )
+    error_message = "The exporter Deployment must run exactly one Recreate-strategy replica."
+  }
+
+  assert {
+    condition = (
+      kubernetes_service_v1.redis_exporter[0].spec[0].port[0].port == 9121 &&
+      kubernetes_service_v1.redis_exporter[0].spec[0].port[0].target_port == "9121"
+    )
+    error_message = "The exporter Service must expose internal port 9121 (ClusterIP is the provider default when spec.type is unset)."
+  }
+
+  assert {
+    condition = (
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].metadata[0].annotations["prometheus.io/scrape"] == "true" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].metadata[0].annotations["prometheus.io/port"] == "9121" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].metadata[0].annotations["prometheus.io/path"] == "/metrics"
+    )
+    error_message = "The exporter pod template must carry the /metrics scrape annotations."
+  }
+
+  assert {
+    condition = (
+      length([
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_ADDR"
+      ]) == 1
+    )
+    error_message = "REDIS_ADDR must be rendered. Its exact value is unknown at plan time for the module-managed Redis path (host/port come from the Managed Redis resource), so the scheme/host/port contract is covered by the external-Redis runs below, which use known values."
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env.value if env.name == "REDIS_EXPORTER_CHECK_SINGLE_KEYS"
+      ][0] == "db0=bull:jobs:wait,db0=bull:jobs:active"
+    )
+    error_message = "The exporter's observed queue keys must equal KEDA's waiting and active list names."
+  }
+
+  assert {
+    condition = (
+      length([
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_USER"
+      ]) == 0
+    )
+    error_message = "REDIS_USER must be omitted on the module-managed Azure Managed Redis path, which has no username concept."
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ][0].value_from[0].secret_key_ref[0].name == local.redis_password_secret_name &&
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ][0].value_from[0].secret_key_ref[0].key == local.redis_password_secret_key
+    )
+    error_message = "REDIS_PASSWORD must reference the same Secret name/key n8n's redis.passwordSecret chart value uses."
+  }
+
+  assert {
+    condition = (
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].allow_privilege_escalation == false &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].read_only_root_filesystem == true &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].run_as_non_root == true &&
+      tostring(kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].run_as_user) == "59000" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].capabilities[0].drop == tolist(["ALL"])
+    )
+    error_message = "The exporter container must run non-root UID 59000 with a read-only root filesystem, no privilege escalation, and all capabilities dropped."
+  }
+
+  assert {
+    condition = (
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].resources[0].requests["cpu"] == "10m" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].resources[0].requests["memory"] == "32Mi" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].resources[0].limits["memory"] == "64Mi"
+    )
+    error_message = "The exporter must request 10m CPU / 32Mi memory and cap memory at 64Mi."
+  }
+
+  assert {
+    condition = (
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].liveness_probe[0].http_get[0].path == "/metrics" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].liveness_probe[0].http_get[0].port == "9121" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].readiness_probe[0].http_get[0].path == "/metrics" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].readiness_probe[0].http_get[0].port == "9121"
+    )
+    error_message = "The exporter must probe /metrics on port 9121 for both liveness and readiness."
+  }
+
+  assert {
+    condition     = length(helm_release.n8n) > 0
+    error_message = "Enabling the exporter must not remove or block the n8n Helm release."
+  }
+}
+
+run "redis_exporter_observes_external_authenticated_redis_with_acl_and_caller_secret" {
+  command = plan
+
+  variables {
+    create_redis               = false
+    redis_external_host        = "external-redis.example.com"
+    redis_external_tls_enabled = true
+    redis_external_username    = "n8n_app"
+    redis_password_secret_ref  = { name = "platform-n8n-redis-password", key = "redispass" }
+    redis_exporter_enabled     = true
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env.value if env.name == "REDIS_ADDR"
+      ][0] == "rediss://external-redis.example.com:6380"
+    )
+    error_message = "REDIS_ADDR must use the external host/port with the rediss scheme when TLS is enabled."
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env.value if env.name == "REDIS_USER"
+      ][0] == "n8n_app"
+    )
+    error_message = "REDIS_USER must carry the external ACL username."
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ][0].value_from[0].secret_key_ref[0].name == "platform-n8n-redis-password" &&
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ][0].value_from[0].secret_key_ref[0].key == "redispass"
+    )
+    error_message = "REDIS_PASSWORD must reference the caller-managed Secret name/key exactly, without reading its value."
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_redis) == 1 && length(kubernetes_secret.n8n_redis[0].data) == 1
+    error_message = "No duplicate password Secret may be created for the exporter; only the username-only module-managed Secret exists."
+  }
+}
+
+run "redis_exporter_observes_unauthenticated_external_redis" {
+  command = plan
+
+  variables {
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    redis_external_port        = 6379
+    redis_external_tls_enabled = false
+    redis_exporter_enabled     = true
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env.value if env.name == "REDIS_ADDR"
+      ][0] == "redis://redis.external.example.com:6379"
+    )
+    error_message = "REDIS_ADDR must use the plain redis scheme when TLS is disabled."
+  }
+
+  assert {
+    condition = (
+      length([
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_USER"
+      ]) == 0 &&
+      length([
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ]) == 0
+    )
+    error_message = "An unauthenticated external Redis endpoint must omit both REDIS_USER and REDIS_PASSWORD."
+  }
+}
+
+run "redis_exporter_targets_caller_managed_namespace_and_aks_without_duplicating_infrastructure" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled                       = true
+    create_namespace                             = false
+    n8n_namespace                                = "platform-n8n"
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "platform-aks"
+    existing_aks_resource_group_name             = "platform-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+  }
+
+  assert {
+    condition     = length(kubernetes_namespace.n8n) == 0
+    error_message = "The exporter must not cause the module to create a namespace when create_namespace = false."
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n) == 0
+    error_message = "The exporter must not cause the module to create an AKS cluster when create_aks = false."
+  }
+
+  assert {
+    condition     = kubernetes_deployment_v1.redis_exporter[0].metadata[0].namespace == "platform-n8n"
+    error_message = "The exporter must target the effective (caller-managed) namespace."
+  }
+}
+
+run "redis_exporter_cpu_demand_counted_only_when_enabled" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = false
+  }
+
+  assert {
+    condition     = local.n8n_cpu_request_millis.redis_exporter == 0
+    error_message = "A disabled exporter must contribute zero modeled CPU demand."
+  }
+}
+
+run "redis_exporter_cpu_demand_increases_by_exactly_its_request" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = true
+  }
+
+  assert {
+    condition     = local.n8n_cpu_request_millis.redis_exporter == 10
+    error_message = "Enabling the exporter must add exactly its 10m CPU request to modeled demand."
+  }
+
+  assert {
+    condition = (
+      local.n8n_peak_cpu_request_millis == (
+        local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) +
+        var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
+        var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook +
+        10
+      )
+    )
+    error_message = "Modeled peak CPU demand must equal the existing formula plus the exporter's flat 10m request."
+  }
+}
+

@@ -327,6 +327,13 @@ locals {
     "QUEUE_",
   ]
 
+  # The two Bull list keys workers hold jobs in. KEDA's worker ScaledObject
+  # (n8n.tf) and the optional Redis exporter's REDIS_EXPORTER_CHECK_SINGLE_KEYS
+  # (observability.tf) both read this one list, so a future prefix or key
+  # change moves both call sites together and the exporter's observed queue
+  # keys stay identical to KEDA's by construction (design.md decision 6).
+  n8n_bull_queue_keys = ["bull:jobs:wait", "bull:jobs:active"]
+
   # Authentication remains optional for external Redis. Managed Redis always
   # has an access key. These booleans declassify only whether a credential is
   # present, never the credential itself, so Helm and KEDA can omit dead secret

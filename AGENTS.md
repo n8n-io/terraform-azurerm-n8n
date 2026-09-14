@@ -338,6 +338,50 @@ Add a regression test that combines all three `n8n_dns_config` attributes in
 one fixture — a test exercising only pairs of attributes will not catch this
 class of type-unification failure.
 
+Section 9 added the new root `observability.tf` (non-nullable
+`redis_exporter_enabled = false` / `redis_exporter_image`, one
+`kubernetes_deployment_v1` plus `kubernetes_service_v1` pair, opt-in) and a
+shared `local.n8n_bull_queue_keys = ["bull:jobs:wait", "bull:jobs:active"]`
+in `locals.tf` that both the exporter's `REDIS_EXPORTER_CHECK_SINGLE_KEYS`
+(`db0=<key>` per entry, database 0 only) and the pre-existing KEDA worker
+`ScaledObject` triggers loop (`n8n.tf`) now read, so the two can never
+observe different queue names. The exporter reuses `local.redis_connection`
+(`redis.tf`), `local.redis_username_present`/`redis_password_present`
+(`locals.tf`), and `local.redis_password_secret_name`/`_key` exactly as n8n's
+own `redis.passwordSecret` chart value does — it creates no second password
+Secret and never reads a caller-managed Secret's payload. Checkov's
+Terraform framework registers its `CKV_K8S_*` checks against the unsuffixed
+`kubernetes_deployment`/`kubernetes_service` resource types only, not the
+`_v1` variants used throughout this root (matching `terraform-aws-n8n`'s
+observation for its own `redis_exporter` Deployment) — a clean `checkov`
+run says nothing about this file either way, so its pod hardening (dropped
+capabilities, non-root UID 59000, read-only root filesystem, no privilege
+escalation, memory limit, both probes) needs direct test assertions rather
+than a scanner catching a regression. `terraform test`'s mocked `kubernetes`
+provider represents at least `spec.replicas` and
+`security_context.run_as_user` as quoted strings in assertion failure
+output even though the provider schema types them numeric — compare with
+`tostring(...)` on both sides rather than a bare `== 1` / `== 59000`, or the
+assertion fails with a type mismatch that has nothing to do with the actual
+rendered value. A `local` built from a managed resource's own computed
+attribute (e.g. `local.redis_exporter_addr`, which reads
+`azurerm_managed_redis.n8n[0].hostname`/`.port` through
+`local.redis_connection`) is unknown under `command = plan` unless that
+resource has an `override_resource` supplying the value — unlike a
+config-supplied attribute (`sku_name`, `name`), which stays known from the
+variable itself. Existing `tests/defaults.tftest.hcl` coverage for the
+module-managed Redis path therefore only asserts presence/shape of
+`REDIS_ADDR`, not its exact value; the external-Redis runs (fully
+variable-driven host/port/TLS) assert the exact `redis://`/`rediss://`
+string instead. `terraform graph`'s default transitive reduction drops a
+`depends_on` edge that is already implied by another edge in the same DOT
+output (e.g. exporter → `kubernetes_namespace.n8n` disappears once exporter
+→ `kubernetes_secret.n8n_redis` → `kubernetes_namespace.n8n` exists) — a
+missing edge in `terraform graph` output is not proof the `depends_on` entry
+itself is missing from the resource block; check the `.tf` source, not just
+the rendered graph, and use the graph output only to confirm the absence of
+an unwanted reverse edge (e.g. no `n8n`/`KEDA` → exporter edge).
+
 ## What this repo is
 
 `terraform-azurerm-n8n` is a Terraform module that deploys a **production-grade,

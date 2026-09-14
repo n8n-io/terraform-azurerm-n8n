@@ -1457,6 +1457,34 @@ variable "n8n_webhook_memory_limit" {
   }
 }
 
+# ── Optional Redis queue metrics exporter (observability.tf) ─────────────
+# Bull queue depth is the signal KEDA scales workers on. n8n's built-in
+# /metrics gauge for it is not reliable in the multi-main topology every
+# example ships (only the leader main reports), so this opt-in exporter
+# reads the same effective Redis connection n8n and KEDA already use and
+# exposes it, along with standard Redis metrics, for a caller-owned
+# Prometheus to scrape. Independent of n8n_metrics_enabled. The module
+# installs no Prometheus, ServiceMonitor, or other monitoring backend.
+
+variable "redis_exporter_enabled" {
+  description = "When true, create a single-replica Redis queue metrics exporter Deployment and an internal ClusterIP Service on port 9121 in the effective n8n namespace. Independent of n8n_metrics_enabled. The module installs no Prometheus, ServiceMonitor, or other monitoring backend — scraping and discovery remain caller-owned. Disabled by default, in which case neither resource is created."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "redis_exporter_image" {
+  description = "Container image for the optional Redis queue metrics exporter (oliver006/redis_exporter). Override to use a caller mirror or a pinned digest. A replacement image must retain the upstream CA bundle for TLS certificate verification and work under UID 59000, which the container always runs as. Any private-registry pull access is the caller's responsibility — the module does not grant the exporter the n8n Azure workload identity. Ignored when redis_exporter_enabled = false."
+  type        = string
+  default     = "oliver006/redis_exporter:v1.90.0"
+  nullable    = false
+
+  validation {
+    condition     = trimspace(var.redis_exporter_image) != "" && !can(regex("\\s", var.redis_exporter_image))
+    error_message = "redis_exporter_image must be a non-blank image reference containing no whitespace."
+  }
+}
+
 # ── Workload autoscaling ─────────────────────────────────────────────────
 # Main and webhook pods scale on CPU. Workers scale on Redis queue depth.
 # Each minimum also becomes the matching Helm deployment replica count so an

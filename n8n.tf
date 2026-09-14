@@ -570,7 +570,7 @@ resource "helm_release" "n8n" {
         minReplicaCount = var.n8n_worker_keda_min_replicas
         maxReplicaCount = var.n8n_worker_keda_max_replicas
         triggers = [
-          for list_name in ["bull:jobs:wait", "bull:jobs:active"] : {
+          for list_name in local.n8n_bull_queue_keys : {
             type = "redis"
             metadata = {
               address    = "${local.redis_connection.host}:${local.redis_connection.port}"

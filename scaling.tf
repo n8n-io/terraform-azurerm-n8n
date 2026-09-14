@@ -190,6 +190,10 @@ locals {
     worker      = var.n8n_worker_cpu_request
     webhook     = var.n8n_webhook_cpu_request
     task_runner = var.n8n_task_runners_enabled ? var.n8n_task_runner_cpu_request : "0"
+    # Matches the exporter Deployment's single hardcoded CPU request
+    # (observability.tf). One replica regardless of any autoscaler maximum,
+    # so this contributes a flat amount rather than scaling with a ceiling.
+    redis_exporter = var.redis_exporter_enabled ? "10m" : "0"
   }
   n8n_cpu_request_millis = {
     for name, quantity in local.n8n_cpu_requests : name => (
@@ -204,7 +208,8 @@ locals {
   n8n_peak_cpu_request_millis = (
     local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) +
     var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
-    var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook +
+    local.n8n_cpu_request_millis.redis_exporter
   )
 
   # The capacity model assumes it owns both AKS node pools and their maximum
@@ -228,7 +233,8 @@ check "autoscaling_maxima_fit_aks_capacity" {
       "${local.n8n_schedulable_cpu_millis}m schedulable for n8n. Demand is main ",
       "${local.n8n_main_hpa_effective_max_replicas} x ${local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner}m, worker ",
       "${var.n8n_worker_keda_max_replicas} x ${local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner}m, and webhook ",
-      "${var.n8n_webhook_hpa_max_replicas} x ${local.n8n_cpu_request_millis.webhook}m. Supply models two pools at ",
+      "${var.n8n_webhook_hpa_max_replicas} x ${local.n8n_cpu_request_millis.webhook}m, plus ${local.n8n_cpu_request_millis.redis_exporter}m ",
+      "for the optional Redis exporter when enabled. Supply models two pools at ",
       "aks_node_count_max=${var.aks_node_count_max}, VM size ${var.aks_node_vm_size} (${local.aks_node_vcpus} vCPU per node), ",
       "less ${local.aks_node_kube_reserved_cpu_millis}m AKS reservation and ${local.aks_node_daemon_cpu_millis}m daemon requests per node, ",
       "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima or CPU requests, or raise ",
