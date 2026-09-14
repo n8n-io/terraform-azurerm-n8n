@@ -83,6 +83,15 @@ locals {
     [for domain in var.n8n_additional_domains : lower(domain)],
   ))
 
+  # Editor identity always stays on n8n_domain (design.md decision 8): REST
+  # and OAuth2 credential callbacks must return to the same host that serves
+  # the editor UI. The webhook base is independently overridable so a caller
+  # can advertise production webhooks on a different public host (e.g.
+  # examples/split-ingress) without moving editor traffic. Null retains the
+  # prior single-host behavior.
+  n8n_editor_base_url       = "https://${var.n8n_domain}"
+  n8n_effective_webhook_url = coalesce(var.n8n_webhook_url, local.n8n_editor_base_url)
+
   appgw_frontend_ip_configuration_name = "appgw-frontend-ip"
   appgw_ingress_default_annotations = merge(
     {

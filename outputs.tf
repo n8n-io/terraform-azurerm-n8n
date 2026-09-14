@@ -187,8 +187,15 @@ output "n8n_webhook_path_prefixes" {
 }
 
 output "n8n_url" {
-  description = "Canonical HTTPS URL for the n8n editor and default webhook base."
+  description = "Canonical HTTPS URL for the n8n editor UI (N8N_EDITOR_BASE_URL). This is also the default webhook base unless n8n_webhook_url overrides it — see the n8n_webhook_url output for the effective advertised webhook base."
   value       = "https://${var.n8n_domain}"
+
+  depends_on = [helm_release.n8n]
+}
+
+output "n8n_webhook_url" {
+  description = "Effective HTTPS base URL n8n advertises as N8N_WEBHOOK_URL. Equals n8n_url unless the caller supplies var.n8n_webhook_url (port-aws-040-enhancements section 11), for example to advertise a separate public webhook host in examples/split-ingress."
+  value       = local.n8n_effective_webhook_url
 
   depends_on = [helm_release.n8n]
 }

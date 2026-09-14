@@ -20,14 +20,14 @@ AKS's built-in `ingress_application_gateway` addon binds to exactly one Applicat
 
 Both gateways issue lab-grade self-signed certificates from `modules/tls-self-signed`, one per hostname, imported into one shared Key Vault. Replace both with real certificates before production use.
 
-## Known limitation: `N8N_WEBHOOK_URL`
+## Editor and webhook URLs
 
-The root module always derives n8n's `N8N_WEBHOOK_URL` (what n8n hands out in generated webhook, form, and MCP links) from `n8n_domain`, which this example serves on the **private** admin gateway. There is currently no root-module input to point `N8N_WEBHOOK_URL` at a different hostname, so out of the box n8n advertises webhook URLs on a host that is not reachable from the internet.
+The root module's `n8n_webhook_url` input (port-aws-040-enhancements section 11) lets this example advertise webhooks on the public host while the editor identity stays on the private one. This example passes `n8n_webhook_url = "https://${local.webhook_domain}"`, so:
 
-The public gateway still routes every webhook prefix correctly (that is what the mocked tests in `tests/defaults.tftest.hcl` assert), so payload delivery to a URL you construct yourself against `webhook_base_url` (this example's output) works. What does not work without further changes is n8n's own UI copying a *directly usable* webhook URL. Workarounds:
+- `N8N_WEBHOOK_URL` (what n8n hands out in generated webhook, form, and MCP links) is `https://hooks.n8n.example.com`, the public gateway's hostname.
+- `N8N_EDITOR_BASE_URL` stays `https://n8n.example.com`, the private admin gateway's hostname, so the OAuth2 credential callback (`/rest/oauth2-credential/callback`) keeps returning to the admin host.
 
-- Hand out `webhook_base_url` to external systems out of band instead of relying on n8n's generated links.
-- Track the root module's `n8n_extra_env` guard list (`N8N_WEBHOOK_URL` is currently reserved) for a future override input, or open an issue if you need this now.
+The public gateway routes every webhook prefix (that is what the mocked tests in `tests/defaults.tftest.hcl` assert), so both n8n's own generated links and a URL you construct yourself against `webhook_base_url` (this example's output, which always matches `n8n_webhook_url`) resolve correctly. This fix only changes what n8n advertises; it does not redesign routing — the public gateway already routed the same five prefixes before this change. The pinned n8n version also uses the configured webhook base for test-webhook and form-trigger URLs in the editor; verify that behavior manually against a real deployment, since it is not covered by the offline chart-rendering check.
 
 ## Apply
 
@@ -147,6 +147,6 @@ Two Application Gateways cost roughly twice one, and this example runs two addit
 | <a name="output_namespace"></a> [namespace](#output\_namespace) | Kubernetes namespace n8n is deployed into. |
 | <a name="output_postgres_password"></a> [postgres\_password](#output\_postgres\_password) | Generated PostgreSQL administrator password. Back it up in a secret manager. |
 | <a name="output_webhook_appgw_fqdn"></a> [webhook\_appgw\_fqdn](#output\_webhook\_appgw\_fqdn) | FQDN of the public webhook Application Gateway. |
-| <a name="output_webhook_base_url"></a> [webhook\_base\_url](#output\_webhook\_base\_url) | Public base URL for webhooks, forms, and MCP. n8n's own N8N\_WEBHOOK\_URL is not repointed here (the root module derives it from n8n\_domain), so hand this URL to external systems out of band. See the README caveat on this limitation. |
+| <a name="output_webhook_base_url"></a> [webhook\_base\_url](#output\_webhook\_base\_url) | Public base URL for webhooks, forms, and MCP. Passed to the root module as n8n\_webhook\_url, so n8n's own N8N\_WEBHOOK\_URL matches this value — see module.n8n.n8n\_webhook\_url for the module's own confirmation of the effective value. |
 | <a name="output_webhook_path_prefixes"></a> [webhook\_path\_prefixes](#output\_webhook\_path\_prefixes) | Path prefixes routed to the webhook processors on the public gateway. Sourced from the module so this example cannot drift from what n8n actually serves. |
 <!-- END_TF_DOCS -->

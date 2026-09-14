@@ -7,7 +7,7 @@ output "n8n_url" {
 }
 
 output "webhook_base_url" {
-  description = "Public base URL for webhooks, forms, and MCP. n8n's own N8N_WEBHOOK_URL is not repointed here (the root module derives it from n8n_domain), so hand this URL to external systems out of band. See the README caveat on this limitation."
+  description = "Public base URL for webhooks, forms, and MCP. Passed to the root module as n8n_webhook_url, so n8n's own N8N_WEBHOOK_URL matches this value — see module.n8n.n8n_webhook_url for the module's own confirmation of the effective value."
   value       = "https://${local.webhook_domain}"
 }
 

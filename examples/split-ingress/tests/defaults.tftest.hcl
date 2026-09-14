@@ -148,6 +148,16 @@ run "split_ingress_plan" {
     error_message = "The internal Ingress must answer on the admin hostname."
   }
 
+  # n8n must advertise webhooks on the public hostname while the editor
+  # identity (OAuth2 credential callbacks) stays on the admin hostname.
+  assert {
+    condition = (
+      module.n8n.n8n_webhook_url == "https://hooks.n8n.test.example.com" &&
+      module.n8n.n8n_url == "https://n8n.test.example.com"
+    )
+    error_message = "n8n must advertise N8N_WEBHOOK_URL on the public webhook host while N8N_EDITOR_BASE_URL stays on the admin host."
+  }
+
   assert {
     condition     = kubernetes_ingress_v1.webhook_public.metadata[0].annotations["kubernetes.io/ingress.class"] != kubernetes_ingress_v1.admin_internal.metadata[0].annotations["kubernetes.io/ingress.class"]
     error_message = "The two Ingress objects must carry distinct ingress-class annotations so each AGIC install reconciles only its own gateway."

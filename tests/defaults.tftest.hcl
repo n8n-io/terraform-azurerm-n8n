@@ -1542,10 +1542,11 @@ run "runtime_controls_defaults_render_in_helm_values" {
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_LEVEL"]) == "info" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_OUTPUT"]) == "console" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://n8n.example.com" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://n8n.example.com" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_PROXY_HOPS"]) == "1" &&
       length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "WEBHOOK_URL"]) == 0
     )
-    error_message = "Timezone, logging, canonical webhook URL, and one trusted proxy hop must render into the shared chart configuration without the deprecated WEBHOOK_URL name."
+    error_message = "Timezone, logging, canonical webhook/editor URLs, and one trusted proxy hop must render into the shared chart configuration without the deprecated WEBHOOK_URL name."
   }
 
   assert {
@@ -1676,6 +1677,202 @@ run "runtime_controls_defaults_render_in_helm_values" {
     )
     error_message = "The floating-license safeguard must always render false while default-on or default-off feature variables remain omitted."
   }
+}
+
+# ── Independent editor/webhook base URLs (port-aws-040-enhancements section 11) ──
+
+run "omits_webhook_url_override_by_default" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = var.n8n_webhook_url == null
+    error_message = "n8n_webhook_url must default to null."
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://n8n.example.com" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://n8n.example.com"
+    )
+    error_message = "A null n8n_webhook_url must retain https://<n8n_domain> as both the webhook and editor base URLs."
+  }
+}
+
+run "accepts_split_editor_and_webhook_hosts" {
+  command = plan
+
+  variables {
+    n8n_domain                 = "admin.example.com"
+    n8n_webhook_url            = "https://hooks.example.com"
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://hooks.example.com" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://admin.example.com"
+    )
+    error_message = "A supplied n8n_webhook_url must advertise the public webhook host while the editor base URL stays on n8n_domain."
+  }
+}
+
+run "accepts_webhook_url_with_valid_port_and_base_path" {
+  command = plan
+
+  variables {
+    n8n_webhook_url            = "https://hooks.example.com:8443/n8n/"
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://hooks.example.com:8443/n8n/"
+    )
+    error_message = "A caller-supplied webhook URL with a valid port and base path must be preserved as-is."
+  }
+}
+
+run "rejects_webhook_url_missing_https_scheme" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "http://hooks.example.com"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_without_host" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_credentials" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://user:pass@hooks.example.com"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_whitespace" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://hooks.example.com/a b"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_query_string" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://hooks.example.com?foo=bar"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_fragment" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://hooks.example.com#frag"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_invalid_port" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://hooks.example.com:99999"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_blank" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = ""
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_reserved_url_environment_names_in_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_WEBHOOK_URL", value = "https://override.example.com" },
+      { name = "N8N_EDITOR_BASE_URL", value = "https://override.example.com" },
+      { name = "N8N_HOST", value = "override.example.com" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
 }
 
 # ── Execution-save policy controls (port-aws-040-enhancements section 5) ────

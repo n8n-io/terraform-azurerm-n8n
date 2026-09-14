@@ -79,7 +79,7 @@ render_topology_values() {
   local out="$1"
   shift
   console "$@" <<'HCL' > "$out"
-jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError=var.n8n_executions_data_save_on_error,saveOnSuccess=var.n8n_executions_data_save_on_success,saveOnProgress=var.n8n_executions_data_save_on_progress,saveManualExecutions=var.n8n_executions_data_save_manual_executions}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},taskRunners={enabled=var.n8n_task_runners_enabled,customConfig=local.n8n_task_runner_custom_config_values},dnsConfig=local.n8n_dns_config_values,config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env,local.n8n_node_heap_env)}})
+jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError=var.n8n_executions_data_save_on_error,saveOnSuccess=var.n8n_executions_data_save_on_success,saveOnProgress=var.n8n_executions_data_save_on_progress,saveManualExecutions=var.n8n_executions_data_save_manual_executions}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},taskRunners={enabled=var.n8n_task_runners_enabled,customConfig=local.n8n_task_runner_custom_config_values},dnsConfig=local.n8n_dns_config_values,config={extraEnv=concat([{name="N8N_EDITOR_BASE_URL",value=local.n8n_editor_base_url},{name="N8N_WEBHOOK_URL",value=local.n8n_effective_webhook_url}],local.n8n_postgres_runtime_env,local.n8n_node_heap_env)}})
 HCL
 }
 
@@ -132,6 +132,10 @@ echo "== Rendering pod DNS configuration values fixture (nameservers, searches, 
 render_topology_values "$tmp/dns-values.json" \
   -var='n8n_dns_config={nameservers=["10.0.0.10"],searches=["svc.cluster.local"],options=[{name="ndots",value="1"},{name="edns0"}]}'
 
+echo "== Rendering split editor/webhook URL values fixture (n8n_webhook_url override) =="
+render_topology_values "$tmp/split-url-values.json" \
+  -var='n8n_webhook_url=https://hooks.test.example.com:8443/n8n/'
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
@@ -162,6 +166,10 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/dns-values.json" dns "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  render "$tmp/split-url-values.json" split-url "$template"
 done
 
 main_min=$(console <<< 'var.n8n_main_hpa_min_replicas')
@@ -266,6 +274,17 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
   ' "$tmp/multi-main-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} is missing the current N8N_WEBHOOK_URL environment entry" >&2; exit 1; }
 
+  jq -e --arg url "https://${domain}" '
+    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_EDITOR_BASE_URL")][0].value == $url
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} is missing the current N8N_EDITOR_BASE_URL environment entry" >&2; exit 1; }
+
+  jq -e '
+    ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_WEBHOOK_URL")] | length == 1)
+    and ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_EDITOR_BASE_URL")] | length == 1)
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must render exactly one N8N_WEBHOOK_URL and one N8N_EDITOR_BASE_URL entry" >&2; exit 1; }
+
   jq -e '
     [.spec.template.spec.containers[0].env[] | select(.name == "WEBHOOK_URL")] | length == 0
   ' "$tmp/multi-main-${template}.json" >/dev/null \
@@ -276,6 +295,28 @@ jq -e '(.data | has("WEBHOOK_URL")) | not' "$tmp/multi-main-configmap.json" >/de
   || { echo "FAIL: the chart ConfigMap unexpectedly carries a WEBHOOK_URL key (webhook.url or ingress must remain unset)" >&2; exit 1; }
 
 echo "PASS: execution save-policy values and current URL naming are correct on every applicable container"
+
+echo "== Verify split editor/webhook URL manifests (n8n_webhook_url override) =="
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e --arg url "https://${domain}" '
+    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_EDITOR_BASE_URL")][0].value == $url
+  ' "$tmp/split-url-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} N8N_EDITOR_BASE_URL must stay on n8n_domain when n8n_webhook_url is overridden" >&2; exit 1; }
+
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WEBHOOK_URL")][0].value == "https://hooks.test.example.com:8443/n8n/"
+  ' "$tmp/split-url-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} N8N_WEBHOOK_URL must equal the caller-supplied override, preserved as-is" >&2; exit 1; }
+
+  jq -e '
+    ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_WEBHOOK_URL")] | length == 1)
+    and ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_EDITOR_BASE_URL")] | length == 1)
+  ' "$tmp/split-url-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must render exactly one N8N_WEBHOOK_URL and one N8N_EDITOR_BASE_URL entry in the split fixture" >&2; exit 1; }
+done
+
+echo "PASS: split editor/webhook URL override renders on every application pod family without a duplicate chart URL"
 
 echo "== Verify PostgreSQL runtime-tuning manifests (connection/ping timing) =="
 

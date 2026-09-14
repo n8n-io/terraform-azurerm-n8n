@@ -65,9 +65,9 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 11. Correct editor and split-webhook URLs
 
-- [ ] 11.1 Add validated nullable `n8n_webhook_url` and render the effective current webhook URL plus canonical editor URL through the existing shared path; verify mocked tests for null, split hosts, a valid port/base path, every invalid URL class, and reserved-name collisions.
-- [ ] 11.2 Extend the chart check to assert one current webhook and editor URL on each application container, no deprecated alias, and no chart URL duplicate; verify internal `N8N_HOST`/protocol/port and ingress resource counts remain unchanged on both ownership paths.
-- [ ] 11.3 Pass the public webhook URL in `examples/split-ingress/main.tf`, update callback documentation and generated references, and add the example assertion; verify its full mocked suite retains all five production webhook routes and no public catch-all, and documents test-webhook/form behavior as a manual compatibility check rather than silently changing routing.
+- [x] 11.1 Add validated nullable `n8n_webhook_url` and render the effective current webhook URL plus canonical editor URL through the existing shared path; verify mocked tests for null, split hosts, a valid port/base path, every invalid URL class, and reserved-name collisions.
+- [x] 11.2 Extend the chart check to assert one current webhook and editor URL on each application container, no deprecated alias, and no chart URL duplicate; verify internal `N8N_HOST`/protocol/port and ingress resource counts remain unchanged on both ownership paths.
+- [x] 11.3 Pass the public webhook URL in `examples/split-ingress/main.tf`, update callback documentation and generated references, and add the example assertion; verify its full mocked suite retains all five production webhook routes and no public catch-all, and documents test-webhook/form behavior as a manual compatibility check rather than silently changing routing.
 
 ## 12. Expose example topology selection without retuning
 

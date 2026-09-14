@@ -203,6 +203,7 @@ module "n8n" {
   app_gateway_keyvault_role_assignment_enabled = false
 
   n8n_domain      = var.n8n_domain
+  n8n_webhook_url = "https://${local.webhook_domain}"
   n8n_license_key = var.n8n_license_key
 
   depends_on = [

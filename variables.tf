@@ -2379,12 +2379,26 @@ variable "n8n_credentials_overwrite_secret_ref" {
 # added in section 12; n8n runtime controls are added in section 7 onward.
 
 variable "n8n_domain" {
-  description = "Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `N8N_WEBHOOK_URL` / `N8N_HOST` from this value."
+  description = "Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `N8N_HOST` from this value. n8n_domain is also always the canonical editor identity: it renders as `N8N_EDITOR_BASE_URL` and, unless n8n_webhook_url overrides it, as `N8N_WEBHOOK_URL` too."
   type        = string
 
   validation {
     condition     = length(var.n8n_domain) <= 253 && can(regex("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,63}$", var.n8n_domain))
     error_message = "Value must be a valid fully qualified domain name with DNS labels of at most 63 characters and no empty labels or leading or trailing hyphens (e.g. n8n.example.com)."
+  }
+}
+
+variable "n8n_webhook_url" {
+  description = "Optional override for the base URL n8n advertises as N8N_WEBHOOK_URL (port-aws-040-enhancements section 11 / design.md decision 8). Null retains https://<n8n_domain>, the same value used for N8N_EDITOR_BASE_URL. Set this only when webhook traffic is advertised on a different host, port, or base path than the editor UI — for example examples/split-ingress, where a public gateway terminates webhook traffic on a separate hostname from the private admin gateway. Must be an absolute HTTPS base URL with a host, no embedded credentials, whitespace, query string, or fragment, and a valid optional port (1-65535); a supplied path or trailing slash is preserved as-is. Editor identity (N8N_EDITOR_BASE_URL), N8N_HOST, and the internal service protocol/port are independent of this value. This input only changes what n8n advertises: it does not create a DNS record, certificate, listener, or additional route by itself — the caller remains responsible for routing the advertised host."
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.n8n_webhook_url == null ? true : can(regex(
+      "^https://[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(/[^\\s?#@]*)?$",
+      var.n8n_webhook_url
+    ))
+    error_message = "n8n_webhook_url must be null or an absolute HTTPS base URL with a valid host, no embedded credentials, whitespace, query string, or fragment, and a valid optional port between 1 and 65535."
   }
 }
 
