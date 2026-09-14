@@ -46,9 +46,9 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 8. Add optional pod DNS configuration
 
-- [ ] 8.1 Add the typed DNS input and null-stripping conversion for chart `dnsConfig`; verify mocked tests cover null, empty/all-null objects, nameserver/search lists, options-only configuration, and an option without a value.
-- [ ] 8.2 Implement IP, count, joined search-length, Kubernetes search-name, option-name, and `ndots` validations against the documented supported contract; verify valid IPv4/IPv6 cases and expected failures for every invalid class in the workload spec, including malformed numeric `ndots` values without expression-evaluation errors.
-- [ ] 8.3 Extend chart checks and generated docs; verify identical effective DNS settings on all three pod families, no null YAML fields, no DNS-policy/CoreDNS changes, and guidance for AKS private DNS and older caller-managed clusters without changing example defaults.
+- [x] 8.1 Add the typed DNS input and null-stripping conversion for chart `dnsConfig`; verify mocked tests cover null, empty/all-null objects, nameserver/search lists, options-only configuration, and an option without a value.
+- [x] 8.2 Implement IP, count, joined search-length, Kubernetes search-name, option-name, and `ndots` validations against the documented supported contract; verify valid IPv4/IPv6 cases and expected failures for every invalid class in the workload spec, including malformed numeric `ndots` values without expression-evaluation errors.
+- [x] 8.3 Extend chart checks and generated docs; verify identical effective DNS settings on all three pod families, no null YAML fields, no DNS-policy/CoreDNS changes, and guidance for AKS private DNS and older caller-managed clusters without changing example defaults.
 
 ## 9. Add the optional Redis exporter
 

@@ -1960,6 +1960,105 @@ variable "n8n_task_runner_custom_config" {
   }
 }
 
+variable "n8n_dns_config" {
+  description = <<-EOT
+    Optional pod DNS configuration (Kubernetes PodDNSConfig) applied to main,
+    worker, and webhook-processor pods. Null attributes are stripped before
+    rendering; a null input or an effectively empty object (all three
+    attributes null or empty) omits the chart's dnsConfig block entirely.
+    dnsPolicy and cluster DNS resources are unaffected. nameservers accepts
+    at most 3 plain IPv4/IPv6 addresses (no hostnames, ports, or CIDR
+    prefixes). searches accepts at most 32 domain names totaling at most
+    2048 characters once joined with single spaces. options entries need a
+    nonblank name and an optional string value (e.g. { name = "ndots",
+    value = "1" } or { name = "edns0" }); an "ndots" option's value must be
+    a whole number from 0 through 15. Lowering ndots changes when relative
+    names use the search suffixes, so verify AKS private DNS and in-cluster
+    name resolution still work with the chosen setting before relying on it.
+    This module's limits (32 search domains, 2048 joined characters) match
+    current Kubernetes' own PodDNSConfig validation; older caller-managed
+    clusters, or resolvers built against glibc's traditional resolv.conf
+    limits (6 search domains, 256 characters), may enforce tighter effective
+    limits than this module validates against, so verify pod DNS resolution
+    on the target cluster after setting a large searches list.
+  EOT
+
+  type = object({
+    nameservers = optional(list(string))
+    searches    = optional(list(string))
+    options = optional(list(object({
+      name  = string
+      value = optional(string)
+    })))
+  })
+  default = null
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.nameservers == null ? true : (
+        length(var.n8n_dns_config.nameservers) <= 3 &&
+        alltrue([
+          for ns in var.n8n_dns_config.nameservers :
+          !strcontains(ns, "/") && (can(cidrhost("${ns}/32", 0)) || can(cidrhost("${ns}/128", 0)))
+        ])
+      )
+    )
+    error_message = "n8n_dns_config.nameservers must contain at most 3 plain IPv4 or IPv6 addresses, with no hostnames, ports, or CIDR prefixes."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.searches == null ? true :
+      length(var.n8n_dns_config.searches) <= 32
+    )
+    error_message = "n8n_dns_config.searches must contain at most 32 search domains."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.searches == null ? true :
+      length(join(" ", var.n8n_dns_config.searches)) <= 2048
+    )
+    error_message = "n8n_dns_config.searches must total at most 2048 characters once joined with single spaces."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.searches == null ? true :
+      alltrue([
+        for s in var.n8n_dns_config.searches :
+        can(regex("^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\\.?$", s))
+      ])
+    )
+    error_message = "n8n_dns_config.searches entries must be valid DNS search names (alphanumerics, hyphens, and dots, with no empty label)."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.options == null ? true :
+      alltrue([for opt in var.n8n_dns_config.options : trimspace(opt.name) != ""])
+    )
+    error_message = "n8n_dns_config.options entries must have a nonblank name."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.options == null ? true :
+      alltrue([
+        for opt in var.n8n_dns_config.options :
+        opt.name != "ndots" ? true : (
+          opt.value != null &&
+          can(tonumber(opt.value)) &&
+          tonumber(opt.value) == floor(tonumber(opt.value)) &&
+          tonumber(opt.value) >= 0 &&
+          tonumber(opt.value) <= 15
+        )
+      ])
+    )
+    error_message = "n8n_dns_config.options' ndots value must be a whole number from 0 through 15, supplied as a string."
+  }
+}
+
 variable "n8n_personalization_enabled" {
   description = "Enable n8n personalization questions and recommendations. False writes N8N_PERSONALIZATION_ENABLED=false to every n8n pod."
   type        = bool

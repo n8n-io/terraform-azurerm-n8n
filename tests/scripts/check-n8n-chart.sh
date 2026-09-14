@@ -79,7 +79,7 @@ render_topology_values() {
   local out="$1"
   shift
   console "$@" <<'HCL' > "$out"
-jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError=var.n8n_executions_data_save_on_error,saveOnSuccess=var.n8n_executions_data_save_on_success,saveOnProgress=var.n8n_executions_data_save_on_progress,saveManualExecutions=var.n8n_executions_data_save_manual_executions}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},taskRunners={enabled=var.n8n_task_runners_enabled,customConfig=local.n8n_task_runner_custom_config_values},config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env,local.n8n_node_heap_env)}})
+jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError=var.n8n_executions_data_save_on_error,saveOnSuccess=var.n8n_executions_data_save_on_success,saveOnProgress=var.n8n_executions_data_save_on_progress,saveManualExecutions=var.n8n_executions_data_save_manual_executions}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},taskRunners={enabled=var.n8n_task_runners_enabled,customConfig=local.n8n_task_runner_custom_config_values},dnsConfig=local.n8n_dns_config_values,config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env,local.n8n_node_heap_env)}})
 HCL
 }
 
@@ -128,6 +128,10 @@ echo "== Rendering caller-managed task-runner launcher configuration values fixt
 render_topology_values "$tmp/task-runner-config-values.json" \
   -var='n8n_task_runner_custom_config={config_map_name="n8n-task-runner-launcher"}'
 
+echo "== Rendering pod DNS configuration values fixture (nameservers, searches, and an ndots/edns0 option pair) =="
+render_topology_values "$tmp/dns-values.json" \
+  -var='n8n_dns_config={nameservers=["10.0.0.10"],searches=["svc.cluster.local"],options=[{name="ndots",value="1"},{name="edns0"}]}'
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
@@ -154,6 +158,10 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/task-runner-config-values.json" task-runner-config "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  render "$tmp/dns-values.json" dns "$template"
 done
 
 main_min=$(console <<< 'var.n8n_main_hpa_min_replicas')
@@ -372,6 +380,26 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
 done
 
 echo "PASS: caller-managed task-runner launcher configuration mounts on main/worker sidecars only, with an exact file path and subPath, and is omitted by default"
+
+echo "== Verify pod DNS configuration manifests (dnsConfig) =="
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    .spec.template.spec.dnsConfig == {
+      "nameservers": ["10.0.0.10"],
+      "searches": ["svc.cluster.local"],
+      "options": [{"name": "ndots", "value": "1"}, {"name": "edns0"}]
+    }
+  ' "$tmp/dns-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} dnsConfig does not match the caller-supplied nameservers/searches/options, or carries a null field" >&2; exit 1; }
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '(.spec.template.spec | has("dnsConfig")) | not' "$tmp/multi-main-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} unexpectedly renders a dnsConfig block in the default fixture (n8n_dns_config null)" >&2; exit 1; }
+done
+
+echo "PASS: pod DNS configuration is identical on all three pod families with no null fields, and is omitted by default"
 
 echo "== Self-test: duplicate managed environment-entry detector =="
 # This does not scan module output; it proves the jq expression the checks

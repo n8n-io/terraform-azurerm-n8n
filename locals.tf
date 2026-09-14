@@ -238,6 +238,32 @@ locals {
     configMapKey  = try(var.n8n_task_runner_custom_config.config_map_key, "n8n-task-runners.json")
   }
 
+  # Optional pod DNS configuration (port-aws-040-enhancements section 8):
+  # strips null attributes/option values before rendering and collapses a
+  # null or effectively empty input to {}. The chart applies dnsConfig via
+  # Helm's `with`, which treats an empty map as absent, so {} correctly
+  # omits the block on all three pod families without a separate ternary.
+  # Built as one flat object-for-comprehension (not merge()) over pre-computed
+  # per-key locals: combining merge() with this for-expression's dynamically
+  # shaped option elements produces a spurious "Inconsistent conditional
+  # result types" error from Terraform's type unification, even though every
+  # branch evaluates to a well-formed object at runtime.
+  n8n_dns_config_options = (
+    var.n8n_dns_config == null || var.n8n_dns_config.options == null ? null : [
+      for opt in var.n8n_dns_config.options : {
+        for k, v in { name = opt.name, value = opt.value } : k => v if v != null
+      }
+    ]
+  )
+
+  n8n_dns_config_values = {
+    for k, v in {
+      nameservers = try(var.n8n_dns_config.nameservers, null)
+      searches    = try(var.n8n_dns_config.searches, null)
+      options     = local.n8n_dns_config_options
+    } : k => v if v != null
+  }
+
   # Bull worker timing (port-aws-040-enhancements section 4): one inner map
   # with only non-null keys, merged into the chart's redis.worker block in
   # n8n.tf. A shallow merge of three separate worker maps would lose values,

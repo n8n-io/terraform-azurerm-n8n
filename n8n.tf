@@ -515,6 +515,12 @@ resource "helm_release" "n8n" {
     extraVolumes      = local.n8n_extra_volumes
     extraVolumeMounts = local.n8n_extra_volume_mounts
 
+    # Optional pod DNS configuration (port-aws-040-enhancements section 8).
+    # local.n8n_dns_config_values is already null-stripped; {} renders as an
+    # empty map that the chart's `with` guard treats as absent, so leaving
+    # this unconditional keeps every default deployment's dnsConfig omitted.
+    dnsConfig = local.n8n_dns_config_values
+
     taskRunners = {
       enabled            = var.n8n_task_runners_enabled
       mode               = "external"

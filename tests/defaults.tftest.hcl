@@ -5459,6 +5459,275 @@ run "rejects_extra_volume_reserved_task_runner_config_name" {
   expect_failures = [var.n8n_extra_volumes]
 }
 
+# ── Optional pod DNS configuration (section 8) ──────────────────────────────
+
+run "omits_dns_config_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.n8n_dns_config_values == {}
+    error_message = "local.n8n_dns_config_values must be an empty map when n8n_dns_config is null."
+  }
+}
+
+run "omits_dns_config_when_effectively_empty" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = null
+      searches    = null
+      options     = null
+    }
+  }
+
+  assert {
+    condition     = local.n8n_dns_config_values == {}
+    error_message = "local.n8n_dns_config_values must be an empty map when every n8n_dns_config attribute is null."
+  }
+}
+
+run "renders_dns_config_nameservers_and_searches" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.10", "2001:db8::1"]
+      searches    = ["svc.cluster.local", "n8n.svc.cluster.local"]
+    }
+  }
+
+  assert {
+    condition = (
+      jsonencode(local.n8n_dns_config_values.nameservers) == jsonencode(["10.0.0.10", "2001:db8::1"]) &&
+      jsonencode(local.n8n_dns_config_values.searches) == jsonencode(["svc.cluster.local", "n8n.svc.cluster.local"]) &&
+      !contains(keys(local.n8n_dns_config_values), "options")
+    )
+    error_message = "local.n8n_dns_config_values must render supplied nameservers/searches and omit an unset options key."
+  }
+}
+
+run "renders_dns_config_options_only_with_stripped_null_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [
+        { name = "ndots", value = "1" },
+        { name = "edns0" },
+      ]
+    }
+  }
+
+  assert {
+    condition = (
+      !contains(keys(local.n8n_dns_config_values), "nameservers") &&
+      !contains(keys(local.n8n_dns_config_values), "searches") &&
+      jsonencode(local.n8n_dns_config_values.options) == jsonencode([
+        { name = "ndots", value = "1" },
+        { name = "edns0" },
+      ])
+    )
+    error_message = "local.n8n_dns_config_values.options must contain no null value key for an option with no supplied value."
+  }
+}
+
+run "renders_dns_config_on_helm_values" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = "external-password-value"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "1" }]
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).dnsConfig.options == [{ name = "ndots", value = "1" }]
+    error_message = "dnsConfig.options must render the caller's ndots option on the chart values shared by all three pod families."
+  }
+}
+
+run "renders_dns_config_with_all_three_attributes_combined" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.10"]
+      searches    = ["svc.cluster.local"]
+      options     = [{ name = "ndots", value = "1" }, { name = "edns0" }]
+    }
+  }
+
+  assert {
+    condition = jsonencode(local.n8n_dns_config_values) == jsonencode({
+      nameservers = ["10.0.0.10"]
+      searches    = ["svc.cluster.local"]
+      options     = [{ name = "ndots", value = "1" }, { name = "edns0" }]
+    })
+    error_message = "local.n8n_dns_config_values must render all three attributes together without a type-unification error."
+  }
+}
+
+run "rejects_dns_config_too_many_nameservers" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_nameserver_with_cidr_prefix" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.0/24"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_nameserver_hostname" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["resolver.example.com"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_too_many_searches" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      searches = [for i in range(33) : "svc${i}.example.com"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_searches_over_length_budget" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      searches = [for i in range(32) : "${join("", [for j in range(60) : "a"])}.example${i}.com"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_invalid_search_name" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      searches = ["-invalid-.example.com"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_blank_option_name" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "  ", value = "1" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_missing_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_fractional_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "1.5" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_nonnumeric_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "many" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_negative_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "-1" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_above_fifteen" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "16" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
 run "rejects_redis_password_secret_ref_with_managed_redis" {
   command = plan
 

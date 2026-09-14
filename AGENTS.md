@@ -315,7 +315,28 @@ The existing broad `"EXECUTIONS_"` entry in `local.n8n_managed_env_prefixes`
 (added before this change) already reserves all four raw
 `EXECUTIONS_DATA_SAVE_*` names in `var.n8n_extra_env`, so section 5 needed
 no new guard, only a regression test proving the existing guard still
-rejects them.
+rejects them. Section 8 added nullable `n8n_dns_config` (nameservers,
+searches, options), rendered unconditionally as the chart's top-level
+`dnsConfig` value — the pinned chart applies it via Helm's `{{- with
+.Values.dnsConfig }}`, which Go templates treat an empty map as falsy, so
+`local.n8n_dns_config_values = {}` already omits the block on all three pod
+families without a separate ternary in `n8n.tf`. Combining `merge()` with a
+`for` expression whose elements have a data-dependent attribute set (here,
+each DNS option optionally carrying `value`) produces a spurious
+"Inconsistent conditional result types" error from Terraform's static type
+unification — it fires only when that dynamically-shaped list is merged
+alongside other fixed-shape object keys (e.g. `nameservers`/`searches`),
+not when the list stands alone, and the reported error location is
+misleading (it blames an unrelated top-level ternary against `{}`). The fix
+omits `merge()` entirely: precompute the options list in its own local
+(ternary between `null` and the list, never between `{}` and an object —
+`null` unifies with any type), then build the effective object with one
+`{ for k, v in {...} : k => v if v != null }` comprehension over a plain map
+literal holding all three keys, using `try(var.x.field, null)` instead of a
+null-guarded ternary to avoid ever evaluating a `null`-vs-`{}` branch pair.
+Add a regression test that combines all three `n8n_dns_config` attributes in
+one fixture — a test exercising only pairs of attributes will not catch this
+class of type-unification failure.
 
 ## What this repo is
 
