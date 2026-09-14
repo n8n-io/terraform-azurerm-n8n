@@ -13,6 +13,7 @@ An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this m
 - [Usage](#usage)
 - [Runtime and workload controls](#runtime-and-workload-controls)
 - [Credential overwrites](#credential-overwrites)
+- [Task-runner launcher configuration](#task-runner-launcher-configuration)
 - [Managed-service topologies](#managed-service-topologies)
 - [Customer-managed infrastructure](#customer-managed-infrastructure)
 - [Ingress, DNS, and TLS](#ingress-dns-and-tls)
@@ -199,6 +200,56 @@ kubectl rollout restart \
 `CREDENTIALS_OVERWRITE_PERSISTENCE` is separate and remains out of scope.
 Persistence applies to overwrites submitted through n8n's HTTP endpoint and can
 supersede static file data.
+
+## Task-runner launcher configuration
+
+Task runners allow-list which npm packages user-provided JavaScript/Python
+code can `require`. The `n8nio/runners` sidecar image ships a default
+`n8n-task-runners.json`; supply a caller-managed ConfigMap to replace it with
+a wider or narrower allow-list:
+
+```hcl
+resource "kubernetes_config_map_v1" "task_runner_config" {
+  metadata {
+    name      = "n8n-task-runner-launcher"
+    namespace = module.n8n.n8n_namespace
+  }
+
+  data = {
+    "n8n-task-runners.json" = file("\${path.module}/n8n-task-runners.json")
+  }
+}
+
+module "n8n" {
+  # ...other inputs...
+
+  n8n_task_runner_custom_config = {
+    config_map_name = kubernetes_config_map_v1.task_runner_config.metadata[0].name
+    # config_map_key defaults to "n8n-task-runners.json"
+  }
+}
+```
+
+Derive the complete file from the matching `n8nio/runners` image tag rather
+than hand-writing a partial one — the launcher replaces the file outright, it
+does not merge with the image's default allow-list. Requires
+`n8n_task_runners_enabled = true` (the default).
+
+The selected key mounts read-only at `/etc/n8n-task-runners.json` in the
+main and worker task-runner sidecars using a file `subPath`. Webhook
+processors have no task-runner sidecar and are unaffected. The module never
+creates or reads the ConfigMap, so its contents do not enter this module's
+Helm values or managed resources, and — because a `subPath` mount does not
+refresh when the underlying ConfigMap changes — Kubernetes does not restart
+pods on a content update. Manually restart both deployments after every
+rotation:
+
+```bash
+kubectl rollout restart \
+  deployment/n8n-main \
+  deployment/n8n-worker \
+  -n <namespace>
+```
 
 ## Managed-service topologies
 
@@ -493,6 +544,7 @@ This module does not:
 | <a name="input_n8n_task_runner_auto_shutdown_timeout"></a> [n8n\_task\_runner\_auto\_shutdown\_timeout](#input\_n8n\_task\_runner\_auto\_shutdown\_timeout) | Seconds of inactivity before the task-runner process shuts down. Set to 0 to disable auto-shutdown. | `number` | `15` | no |
 | <a name="input_n8n_task_runner_cpu_limit"></a> [n8n\_task\_runner\_cpu\_limit](#input\_n8n\_task\_runner\_cpu\_limit) | CPU limit for each task-runner sidecar, such as 1 or 1000m. | `string` | `"1"` | no |
 | <a name="input_n8n_task_runner_cpu_request"></a> [n8n\_task\_runner\_cpu\_request](#input\_n8n\_task\_runner\_cpu\_request) | CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every main and worker replica when task runners are enabled. | `string` | `"200m"` | no |
+| <a name="input_n8n_task_runner_custom_config"></a> [n8n\_task\_runner\_custom\_config](#input\_n8n\_task\_runner\_custom\_config) | Existing Kubernetes ConfigMap containing a custom task-runner launcher<br/>configuration file (allow-lists additional packages beyond the runner<br/>image's default n8n-task-runners.json). config\_map\_name is the<br/>ConfigMap's name in the effective n8n namespace; config\_map\_key defaults<br/>to "n8n-task-runners.json". The selected key replaces<br/>/etc/n8n-task-runners.json in the main and worker task-runner sidecars<br/>using a file subPath. Webhook processors have no task-runner sidecar and<br/>are unaffected. The module neither creates nor reads the ConfigMap, so<br/>its contents never enter this module's Helm values or state, and Helm<br/>does not roll pods when only the ConfigMap's payload changes: derive the<br/>complete file from the matching n8nio/runners image tag and manually<br/>restart n8n-main and n8n-worker after every rotation. Requires<br/>n8n\_task\_runners\_enabled = true. Null keeps the runner image's own<br/>default configuration file. | <pre>object({<br/>    config_map_name = string<br/>    config_map_key  = optional(string, "n8n-task-runners.json")<br/>  })</pre> | `null` | no |
 | <a name="input_n8n_task_runner_image_tag"></a> [n8n\_task\_runner\_image\_tag](#input\_n8n\_task\_runner\_image\_tag) | Optional image tag for the n8nio/runners sidecar. Null inherits n8n\_image\_tag. Set this to the underlying n8n version when a custom application image uses a suffixed tag, such as n8n\_image\_tag = "2.35.0-custom" with n8n\_task\_runner\_image\_tag = "2.35.0", so the runner image exists and its protocol matches the application. | `string` | `null` | no |
 | <a name="input_n8n_task_runner_memory_limit"></a> [n8n\_task\_runner\_memory\_limit](#input\_n8n\_task\_runner\_memory\_limit) | Memory limit for each task-runner sidecar, such as 1Gi or 1024Mi. | `string` | `"1Gi"` | no |
 | <a name="input_n8n_task_runner_memory_request"></a> [n8n\_task\_runner\_memory\_request](#input\_n8n\_task\_runner\_memory\_request) | Memory request for each task-runner sidecar, such as 512Mi or 0.5Gi. | `string` | `"512Mi"` | no |

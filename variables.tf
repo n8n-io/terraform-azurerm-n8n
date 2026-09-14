@@ -1910,6 +1910,56 @@ variable "n8n_templates_enabled" {
   # no validation: a plain bool needs no additional constraint.
 }
 
+variable "n8n_task_runner_custom_config" {
+  description = <<-EOT
+    Existing Kubernetes ConfigMap containing a custom task-runner launcher
+    configuration file (allow-lists additional packages beyond the runner
+    image's default n8n-task-runners.json). config_map_name is the
+    ConfigMap's name in the effective n8n namespace; config_map_key defaults
+    to "n8n-task-runners.json". The selected key replaces
+    /etc/n8n-task-runners.json in the main and worker task-runner sidecars
+    using a file subPath. Webhook processors have no task-runner sidecar and
+    are unaffected. The module neither creates nor reads the ConfigMap, so
+    its contents never enter this module's Helm values or state, and Helm
+    does not roll pods when only the ConfigMap's payload changes: derive the
+    complete file from the matching n8nio/runners image tag and manually
+    restart n8n-main and n8n-worker after every rotation. Requires
+    n8n_task_runners_enabled = true. Null keeps the runner image's own
+    default configuration file.
+  EOT
+
+  type = object({
+    config_map_name = string
+    config_map_key  = optional(string, "n8n-task-runners.json")
+  })
+  default = null
+
+  validation {
+    condition = (
+      var.n8n_task_runner_custom_config == null ? true :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", var.n8n_task_runner_custom_config.config_map_name))
+      && length(var.n8n_task_runner_custom_config.config_map_name) <= 253
+    )
+    error_message = "n8n_task_runner_custom_config.config_map_name must be a DNS-1123 subdomain of 253 characters or fewer, which is what Kubernetes requires of a ConfigMap name: lowercase alphanumerics, hyphens and dots, starting and ending with an alphanumeric, with no empty label (e.g. \"n8n-task-runner-config\")."
+  }
+
+  validation {
+    condition = (
+      var.n8n_task_runner_custom_config == null ? true :
+      can(regex("^[-._a-zA-Z0-9]+$", var.n8n_task_runner_custom_config.config_map_key))
+      && length(var.n8n_task_runner_custom_config.config_map_key) <= 253
+      && !contains([".", ".."], var.n8n_task_runner_custom_config.config_map_key)
+      && !startswith(var.n8n_task_runner_custom_config.config_map_key, "..")
+    )
+    error_message = "n8n_task_runner_custom_config.config_map_key must be a valid ConfigMap key of 253 characters or fewer: alphanumerics, '-', '_' and '.' only, and not \".\", \"..\" or a name starting with \"..\"."
+  }
+
+  validation {
+    condition     = var.n8n_task_runner_custom_config == null ? true : var.n8n_task_runners_enabled
+    error_message = "n8n_task_runner_custom_config requires n8n_task_runners_enabled = true. Enable task runners or clear this input."
+  }
+}
+
 variable "n8n_personalization_enabled" {
   description = "Enable n8n personalization questions and recommendations. False writes N8N_PERSONALIZATION_ENABLED=false to every n8n pod."
   type        = bool

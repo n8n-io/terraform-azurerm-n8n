@@ -530,6 +530,10 @@ resource "helm_release" "n8n" {
         logLevel            = "info"
         autoShutdownTimeout = var.n8n_task_runner_auto_shutdown_timeout
       }
+      # Caller-owned ConfigMap; the module never creates or reads its
+      # payload. Omitted (enabled = false) keeps the runner image's own
+      # default launcher configuration file.
+      customConfig = local.n8n_task_runner_custom_config_values
       resources = {
         requests = { cpu = var.n8n_task_runner_cpu_request, memory = var.n8n_task_runner_memory_request }
         limits   = { cpu = var.n8n_task_runner_cpu_limit, memory = var.n8n_task_runner_memory_limit }

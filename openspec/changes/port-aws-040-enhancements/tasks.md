@@ -40,9 +40,9 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 7. Add caller-managed runner launcher configuration
 
-- [ ] 7.1 Add the typed ConfigMap reference, name/key validation, enabled-runner requirement, and `taskRunners.customConfig` mapping; verify tests cover null, default/custom keys, invalid references, disabled runners, and the existing reserved `task-runner-config` volume name.
-- [ ] 7.2 Extend chart assertions for main/worker sidecar mounts and absence on webhooks; verify exact file path and `subPath`, no new ConfigMap read/create resource, and unchanged existing extra-volume and credential-overwrite tests.
-- [ ] 7.3 Document deriving the complete file from the matching runner image and manually rolling main/worker after changes; verify the instructions explain allow-lists, caller ordering, and `subPath` non-refresh behavior, and generated docs pass.
+- [x] 7.1 Add the typed ConfigMap reference, name/key validation, enabled-runner requirement, and `taskRunners.customConfig` mapping; verify tests cover null, default/custom keys, invalid references, disabled runners, and the existing reserved `task-runner-config` volume name.
+- [x] 7.2 Extend chart assertions for main/worker sidecar mounts and absence on webhooks; verify exact file path and `subPath`, no new ConfigMap read/create resource, and unchanged existing extra-volume and credential-overwrite tests.
+- [x] 7.3 Document deriving the complete file from the matching runner image and manually rolling main/worker after changes; verify the instructions explain allow-lists, caller ordering, and `subPath` non-refresh behavior, and generated docs pass.
 
 ## 8. Add optional pod DNS configuration
 

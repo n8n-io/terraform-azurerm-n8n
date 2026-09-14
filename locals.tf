@@ -228,6 +228,16 @@ locals {
     { name = "NODE_OPTIONS", value = "--max-old-space-size=${var.n8n_node_max_old_space_size_mb}" },
   ]
 
+  # Caller-managed task-runner launcher configuration (port-aws-040-enhancements
+  # section 7): mirrors the chart's taskRunners.customConfig shape so n8n.tf
+  # and plan-time tests share one source. Null keeps customConfig disabled,
+  # which leaves the runner image's own default launcher file in place.
+  n8n_task_runner_custom_config_values = {
+    enabled       = var.n8n_task_runner_custom_config != null
+    configMapName = try(var.n8n_task_runner_custom_config.config_map_name, "")
+    configMapKey  = try(var.n8n_task_runner_custom_config.config_map_key, "n8n-task-runners.json")
+  }
+
   # Bull worker timing (port-aws-040-enhancements section 4): one inner map
   # with only non-null keys, merged into the chart's redis.worker block in
   # n8n.tf. A shallow merge of three separate worker maps would lose values,

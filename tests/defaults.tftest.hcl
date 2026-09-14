@@ -5323,6 +5323,142 @@ run "rejects_node_heap_ceiling_with_conflicting_extra_env" {
   expect_failures = [var.n8n_node_max_old_space_size_mb]
 }
 
+# ── Caller-managed task-runner launcher configuration (section 7) ──────────
+
+run "omits_task_runner_custom_config_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.n8n_task_runner_custom_config_values.enabled == false
+    error_message = "local.n8n_task_runner_custom_config_values.enabled must be false when n8n_task_runner_custom_config is null."
+  }
+}
+
+run "accepts_task_runner_custom_config_default_key" {
+  command = plan
+
+  variables {
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+    }
+  }
+
+  assert {
+    condition     = var.n8n_task_runner_custom_config.config_map_key == "n8n-task-runners.json"
+    error_message = "n8n_task_runner_custom_config.config_map_key must default to n8n-task-runners.json when omitted."
+  }
+
+  assert {
+    condition = (
+      local.n8n_task_runner_custom_config_values.enabled == true &&
+      local.n8n_task_runner_custom_config_values.configMapName == "n8n-task-runner-launcher" &&
+      local.n8n_task_runner_custom_config_values.configMapKey == "n8n-task-runners.json"
+    )
+    error_message = "local.n8n_task_runner_custom_config_values must render the caller's ConfigMap name with the default key."
+  }
+}
+
+run "accepts_task_runner_custom_config_custom_key" {
+  command = plan
+
+  variables {
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+      config_map_key  = "allowlist.json"
+    }
+  }
+
+  assert {
+    condition     = local.n8n_task_runner_custom_config_values.configMapKey == "allowlist.json"
+    error_message = "local.n8n_task_runner_custom_config_values.configMapKey must use the caller-supplied key."
+  }
+}
+
+run "renders_task_runner_custom_config_on_helm_values" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = "external-password-value"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).taskRunners.customConfig.enabled == true &&
+      yamldecode(helm_release.n8n.values[0]).taskRunners.customConfig.configMapName == "n8n-task-runner-launcher" &&
+      yamldecode(helm_release.n8n.values[0]).taskRunners.customConfig.configMapKey == "n8n-task-runners.json"
+    )
+    error_message = "taskRunners.customConfig must render the caller's ConfigMap reference on the chart values."
+  }
+}
+
+run "rejects_task_runner_custom_config_invalid_configmap_name" {
+  command = plan
+
+  variables {
+    n8n_task_runner_custom_config = {
+      config_map_name = "Invalid_Name!"
+    }
+  }
+
+  expect_failures = [var.n8n_task_runner_custom_config]
+}
+
+run "rejects_task_runner_custom_config_path_traversal_key" {
+  command = plan
+
+  variables {
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+      config_map_key  = "../secrets.json"
+    }
+  }
+
+  expect_failures = [var.n8n_task_runner_custom_config]
+}
+
+run "rejects_task_runner_custom_config_when_task_runners_disabled" {
+  command = plan
+
+  variables {
+    n8n_task_runners_enabled = false
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+    }
+  }
+
+  expect_failures = [var.n8n_task_runner_custom_config]
+}
+
+run "rejects_extra_volume_reserved_task_runner_config_name" {
+  command = plan
+
+  variables {
+    n8n_extra_volumes = [
+      { name = "task-runner-config", config_map = { name = "custom-nodes" } },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_volumes]
+}
+
 run "rejects_redis_password_secret_ref_with_managed_redis" {
   command = plan
 
