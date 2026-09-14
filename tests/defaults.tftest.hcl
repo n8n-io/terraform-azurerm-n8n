@@ -3098,6 +3098,234 @@ run "unknown_vm_sku_silences_advisory_capacity_check" {
   }
 }
 
+# ── Single-main topology and maintenance safeguards ─────────────────────────
+
+run "default_main_topology_is_multi_main" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).multiMain.enabled == true &&
+      yamldecode(helm_release.n8n.values[0]).multiMain.replicas == 2 &&
+      yamldecode(helm_release.n8n.values[0]).replicaCount == 2 &&
+      yamldecode(helm_release.n8n.values[0]).strategy == {} &&
+      yamldecode(helm_release.n8n.values[0]).pdb.minAvailable == 1 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.minReplicas == 2 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.maxReplicas == 6 &&
+      local.n8n_main_hpa_effective_max_replicas == 6
+    )
+    error_message = "Leaving main topology inputs unchanged must preserve multi-main, its floor/ceiling, chart rollout defaults, and a PDB protecting one replica."
+  }
+}
+
+run "single_main_with_higher_ceiling_clamps_effective_maximum" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas  = 1
+    n8n_main_hpa_max_replicas  = 20
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).multiMain.enabled == false &&
+      yamldecode(helm_release.n8n.values[0]).replicaCount == 1 &&
+      yamldecode(helm_release.n8n.values[0]).strategy.type == "Recreate" &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).strategy), "rollingUpdate") &&
+      yamldecode(helm_release.n8n.values[0]).pdb.minAvailable == 0 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.minReplicas == 1 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.maxReplicas == 1 &&
+      local.n8n_main_hpa_effective_max_replicas == 1
+    )
+    error_message = "A main minimum of 1 must select single-main, disable multi-main, clamp the HPA/effective ceiling to 1 regardless of the configured maximum, use Recreate without rollingUpdate, and allow voluntary eviction through a zero-minimum PDB."
+  }
+}
+
+run "restoring_multi_main_replicas_reverts_all_safeguards" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas  = 3
+    n8n_main_hpa_max_replicas  = 10
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).multiMain.enabled == true &&
+      yamldecode(helm_release.n8n.values[0]).multiMain.replicas == 3 &&
+      yamldecode(helm_release.n8n.values[0]).replicaCount == 3 &&
+      yamldecode(helm_release.n8n.values[0]).strategy == {} &&
+      yamldecode(helm_release.n8n.values[0]).pdb.minAvailable == 1 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.maxReplicas == 10 &&
+      local.n8n_main_hpa_effective_max_replicas == 10
+    )
+    error_message = "Raising the main minimum back above 1 must restore multi-main, its configured ceiling, chart rollout behavior, and a PDB minimum of 1."
+  }
+}
+
+run "single_main_retains_default_floating_license_detach" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas  = 1
+    n8n_main_hpa_max_replicas  = 1
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = contains(
+      yamldecode(helm_release.n8n.values[0]).config.extraEnv,
+      { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = "false" },
+    )
+    error_message = "Single-main must retain the same N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false default as multi-main."
+  }
+}
+
+run "multi_main_retains_default_floating_license_detach" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = contains(
+      yamldecode(helm_release.n8n.values[0]).config.extraEnv,
+      { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = "false" },
+    )
+    error_message = "Multi-main (the default) must render N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false."
+  }
+}
+
+run "raising_unused_single_main_maximum_does_not_raise_capacity_demand" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+    n8n_main_hpa_max_replicas = 1
+  }
+
+  assert {
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    error_message = "Single-main capacity demand must use the clamped effective ceiling of 1 main replica, not the configured maximum."
+  }
+}
+
+run "single_main_high_maximum_matches_capacity_demand_at_maximum_one" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+    n8n_main_hpa_max_replicas = 20
+  }
+
+  assert {
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    error_message = "Raising the unused single-main maximum from 1 to 20 must not change modeled CPU demand — it must remain identical to the maximum-1 case."
+  }
+}
+
+run "rejects_single_main_minimum_below_one" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 0
+  }
+
+  expect_failures = [var.n8n_main_hpa_min_replicas]
+}
+
+run "rejects_main_maximum_below_one" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_max_replicas = 0
+  }
+
+  expect_failures = [var.n8n_main_hpa_max_replicas]
+}
+
 # ── Section 11: Default Application Gateway ingress ─────────────────────────
 
 run "public_application_gateway_ingress_renders_by_default" {

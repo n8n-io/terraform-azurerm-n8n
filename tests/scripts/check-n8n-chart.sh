@@ -28,7 +28,9 @@ trap 'rm -rf "$tmp"' EXIT
 
 # Fixed, non-secret plan-time inputs. These satisfy every non-nullable
 # required variable this root module declares; they carry no real Azure
-# resource identifiers or credentials.
+# resource identifiers or credentials. Additional -var flags (e.g. a
+# topology override) can be passed as extra arguments — they are appended
+# after these fixed values, so they take precedence.
 console() {
   terraform console -no-color -state="$tmp/terraform.tfstate" \
     -var='location=eastus' \
@@ -65,29 +67,45 @@ chart_version=$(console <<< 'var.n8n_chart_version')
 echo "== Pulling n8n chart ${chart_version} =="
 helm pull "oci://ghcr.io/n8n-io/n8n-helm-chart/n8n" --version "$chart_version" --untar --untardir "$tmp"
 
-echo "== Rendering module-derived values fixture =="
-# Every field below is a direct var.* reference resolved through this
-# module's own console, or a value the module currently renders as a chart
-# literal (multiMain.enabled, pdb.minAvailable, executions.data.*, the
-# N8N_WEBHOOK_URL entry) per n8n.tf. When those literals become variables
-# (later sections of this change), update the expressions here to reference
-# the same variables rather than duplicating a second constant.
-# terraform console evaluates one line at a time when fed from a pipe (no
-# interactive REPL continuation), so the whole expression must be a single
-# line despite its length.
-console <<'HCL' > "$tmp/values.json"
-jsonencode({multiMain={enabled=true,replicas=var.n8n_main_hpa_min_replicas},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=var.n8n_main_hpa_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=1},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError="all",saveOnSuccess="all",saveOnProgress=false,saveManualExecutions=true}},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=[{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}]}})
+# Renders the module's real multiMain/replicaCount/strategy/pdb/hpa mapping
+# (locals.tf's n8n_main_multi_enabled / n8n_main_hpa_effective_max_replicas
+# selectors, wired in n8n.tf) for one topology, plus the other module fields
+# unaffected by topology. Every value is read directly from this module's own
+# console rather than retyped, so a future n8n.tf change that touches these
+# paths is caught here. terraform console evaluates one line at a time when
+# fed from a pipe (no interactive REPL continuation), so the whole expression
+# must be a single line despite its length.
+render_topology_values() {
+  local out="$1"
+  shift
+  console "$@" <<'HCL' > "$out"
+jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError="all",saveOnSuccess="all",saveOnProgress=false,saveManualExecutions=true}},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=[{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}]}})
 HCL
-
-render() {
-  local template="$1"
-  helm template n8n "$tmp/n8n" -f "$tmp/values.json" "${helm_set_common[@]}" \
-    --show-only "templates/${template}.yaml" > "$tmp/${template}.yaml"
-  console <<< "jsonencode(yamldecode(file(\"$tmp/${template}.yaml\")))" > "$tmp/${template}.json"
 }
 
+render() {
+  local values_file="$1"
+  local out_prefix="$2"
+  local template="$3"
+  helm template n8n "$tmp/n8n" -f "$values_file" "${helm_set_common[@]}" \
+    --show-only "templates/${template}.yaml" > "$tmp/${out_prefix}-${template}.yaml"
+  console <<< "jsonencode(yamldecode(file(\"$tmp/${out_prefix}-${template}.yaml\")))" > "$tmp/${out_prefix}-${template}.json"
+}
+
+echo "== Rendering default multi-main values fixture =="
+render_topology_values "$tmp/multi-main-values.json"
+
+echo "== Rendering single-main values fixture (minimum 1, a higher configured maximum) =="
+render_topology_values "$tmp/single-main-values.json" \
+  -var='n8n_main_hpa_min_replicas=1' \
+  -var='n8n_main_hpa_max_replicas=20'
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
-  render "$template"
+  render "$tmp/multi-main-values.json" multi-main "$template"
+done
+
+for template in deployment-main hpa-main pdb; do
+  render "$tmp/single-main-values.json" single-main "$template"
 done
 
 main_min=$(console <<< 'var.n8n_main_hpa_min_replicas')
@@ -101,41 +119,58 @@ domain=$(console <<< 'var.n8n_domain')
 
 echo "== Verify topology manifests (default multi-main) =="
 
-jq -e --argjson n "$main_min" '.spec.replicas == $n' "$tmp/deployment-main.json" >/dev/null \
+jq -e --argjson n "$main_min" '.spec.replicas == $n' "$tmp/multi-main-deployment-main.json" >/dev/null \
   || { echo "FAIL: deployment-main.spec.replicas != n8n_main_hpa_min_replicas" >&2; exit 1; }
 
-jq -e '(.spec | has("strategy")) | not' "$tmp/deployment-main.json" >/dev/null \
+jq -e '(.spec | has("strategy")) | not' "$tmp/multi-main-deployment-main.json" >/dev/null \
   || { echo "FAIL: deployment-main unexpectedly overrides .spec.strategy in the default multi-main configuration" >&2; exit 1; }
 
 for template in deployment-worker deployment-webhook-processor; do
-  jq -e '(.spec | has("strategy")) | not' "$tmp/${template}.json" >/dev/null \
+  jq -e '(.spec | has("strategy")) | not' "$tmp/multi-main-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} unexpectedly overrides .spec.strategy" >&2; exit 1; }
 done
 
-jq -e --argjson n "$worker_min" '.spec.replicas == $n' "$tmp/deployment-worker.json" >/dev/null \
+jq -e --argjson n "$worker_min" '.spec.replicas == $n' "$tmp/multi-main-deployment-worker.json" >/dev/null \
   || { echo "FAIL: deployment-worker.spec.replicas != n8n_worker_keda_min_replicas" >&2; exit 1; }
 
-jq -e --argjson n "$webhook_min" '.spec.replicas == $n' "$tmp/deployment-webhook-processor.json" >/dev/null \
+jq -e --argjson n "$webhook_min" '.spec.replicas == $n' "$tmp/multi-main-deployment-webhook-processor.json" >/dev/null \
   || { echo "FAIL: deployment-webhook-processor.spec.replicas != n8n_webhook_hpa_min_replicas" >&2; exit 1; }
 
 jq -e --argjson mn "$main_min" --argjson mx "$main_max" --argjson cpu "$main_cpu" \
   '.spec.minReplicas == $mn and .spec.maxReplicas == $mx and (.spec.metrics[0].resource.target.averageUtilization == $cpu)' \
-  "$tmp/hpa-main.json" >/dev/null \
+  "$tmp/multi-main-hpa-main.json" >/dev/null \
   || { echo "FAIL: hpa-main bounds/threshold do not match n8n_main_hpa_* variables" >&2; exit 1; }
 
 jq -e '.spec.minAvailable == 1 and .spec.selector.matchLabels["app.kubernetes.io/component"] == "main"' \
-  "$tmp/pdb.json" >/dev/null \
-  || { echo "FAIL: main PDB minAvailable/selector do not match the current default (minAvailable = 1)" >&2; exit 1; }
+  "$tmp/multi-main-pdb.json" >/dev/null \
+  || { echo "FAIL: main PDB minAvailable/selector do not match multi-main (minAvailable = 1)" >&2; exit 1; }
 
 jq -e --argjson mn "$worker_min" --argjson mx "$worker_max" --argjson jobs "$worker_jobs" '
   .spec.minReplicaCount == $mn
   and .spec.maxReplicaCount == $mx
   and ([.spec.triggers[].metadata.listName] | sort) == ["bull:jobs:active", "bull:jobs:wait"]
   and (.spec.triggers | all(.metadata.listLength == ($jobs | tostring)))
-' "$tmp/scaledobject-worker.json" >/dev/null \
+' "$tmp/multi-main-scaledobject-worker.json" >/dev/null \
   || { echo "FAIL: worker ScaledObject bounds/triggers do not match n8n_worker_keda_* variables" >&2; exit 1; }
 
 echo "PASS: deployment families, main HPA/PDB, and worker KEDA match the module's variables"
+
+echo "== Verify topology manifests (single-main, minimum 1, configured maximum 20) =="
+
+jq -e '.spec.replicas == 1' "$tmp/single-main-deployment-main.json" >/dev/null \
+  || { echo "FAIL: single-main deployment-main.spec.replicas must be 1" >&2; exit 1; }
+
+jq -e '.spec.strategy.type == "Recreate" and ((.spec.strategy | has("rollingUpdate")) | not)' \
+  "$tmp/single-main-deployment-main.json" >/dev/null \
+  || { echo "FAIL: single-main deployment-main must use Recreate without a rollingUpdate configuration" >&2; exit 1; }
+
+jq -e '.spec.minReplicas == 1 and .spec.maxReplicas == 1' "$tmp/single-main-hpa-main.json" >/dev/null \
+  || { echo "FAIL: single-main hpa-main must clamp to 1/1 regardless of the configured maximum of 20" >&2; exit 1; }
+
+jq -e '.spec.minAvailable == 0' "$tmp/single-main-pdb.json" >/dev/null \
+  || { echo "FAIL: single-main PDB must allow voluntary eviction with minAvailable = 0" >&2; exit 1; }
+
+echo "PASS: single-main passes chart schema validation with one main, HPA 1/1, Recreate, and PDB minimum 0"
 
 echo "== Verify runtime manifests (execution save policy, URL naming) =="
 
@@ -145,28 +180,28 @@ for template in deployment-main deployment-worker; do
     and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_SUCCESS"))[0].value) == "all"
     and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_PROGRESS"))[0].value) == "false"
     and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS"))[0].value) == "true"
-  ' "$tmp/${template}.json" >/dev/null \
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} execution save-policy environment values do not match the current defaults" >&2; exit 1; }
 done
 
 jq -e '
   [.spec.template.spec.containers[0].env[] | select(.name == "EXECUTIONS_DATA_SAVE_ON_ERROR")] | length == 0
-' "$tmp/deployment-webhook-processor.json" >/dev/null \
+' "$tmp/multi-main-deployment-webhook-processor.json" >/dev/null \
   || { echo "FAIL: deployment-webhook-processor unexpectedly renders execution save-policy environment entries" >&2; exit 1; }
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   jq -e --arg url "https://${domain}" '
     [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WEBHOOK_URL")][0].value == $url
-  ' "$tmp/${template}.json" >/dev/null \
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} is missing the current N8N_WEBHOOK_URL environment entry" >&2; exit 1; }
 
   jq -e '
     [.spec.template.spec.containers[0].env[] | select(.name == "WEBHOOK_URL")] | length == 0
-  ' "$tmp/${template}.json" >/dev/null \
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} unexpectedly renders the deprecated WEBHOOK_URL alias" >&2; exit 1; }
 done
 
-jq -e '(.data | has("WEBHOOK_URL")) | not' "$tmp/configmap.json" >/dev/null \
+jq -e '(.data | has("WEBHOOK_URL")) | not' "$tmp/multi-main-configmap.json" >/dev/null \
   || { echo "FAIL: the chart ConfigMap unexpectedly carries a WEBHOOK_URL key (webhook.url or ingress must remain unset)" >&2; exit 1; }
 
 echo "PASS: execution save-policy values and current URL naming are correct on every applicable container"
@@ -183,7 +218,7 @@ if [[ "$dup_count" -eq 0 ]]; then
 fi
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
-  dup_count=$(jq '[.spec.template.spec.containers[0].env[].name] | group_by(.) | map(select(length > 1)) | length' "$tmp/${template}.json")
+  dup_count=$(jq '[.spec.template.spec.containers[0].env[].name] | group_by(.) | map(select(length > 1)) | length' "$tmp/multi-main-${template}.json")
   if [[ "$dup_count" -ne 0 ]]; then
     echo "FAIL: ${template} renders duplicate environment entry names" >&2
     exit 1

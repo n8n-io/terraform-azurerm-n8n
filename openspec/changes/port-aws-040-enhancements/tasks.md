@@ -10,10 +10,10 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 2. Add single-main topology and maintenance safeguards
 
-- [ ] 2.1 Allow main minimum 1 and add consumed topology/effective-ceiling selectors in `locals.tf`; wire `multiMain.enabled`, the active replica-count path, HPA maximum, main-only `Recreate` with rolling-update clearing, and PDB minimum in `n8n.tf`. Verify focused mocked tests cover default multi-main, minimum 1 with maximum 20, restored multi-main values, and invalid counts/ranges.
-- [ ] 2.2 Use the effective main ceiling in the capacity calculation and warning text in `scaling.tf`; verify tests show that increasing the unused maximum in single-main does not increase demand and that existing managed/external-AKS diagnostics remain intact.
-- [ ] 2.3 Extend the chart check for both topology branches; verify single-main passes chart schema with one main, HPA 1/1, `Recreate` without `rollingUpdate`, main PDB minimum 0, and unchanged worker/webhook strategies, while multi-main retains chart rollout behavior and PDB minimum 1.
-- [ ] 2.4 Update root replica/license input descriptions and generated reference without changing credential sources or floating-license defaults; verify `terraform-docs --output-check .` and assertions that both topology branches retain `N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false` by default.
+- [x] 2.1 Allow main minimum 1 and add consumed topology/effective-ceiling selectors in `locals.tf`; wire `multiMain.enabled`, the active replica-count path, HPA maximum, main-only `Recreate` with rolling-update clearing, and PDB minimum in `n8n.tf`. Verify focused mocked tests cover default multi-main, minimum 1 with maximum 20, restored multi-main values, and invalid counts/ranges.
+- [x] 2.2 Use the effective main ceiling in the capacity calculation and warning text in `scaling.tf`; verify tests show that increasing the unused maximum in single-main does not increase demand and that existing managed/external-AKS diagnostics remain intact.
+- [x] 2.3 Extend the chart check for both topology branches; verify single-main passes chart schema with one main, HPA 1/1, `Recreate` without `rollingUpdate`, main PDB minimum 0, and unchanged worker/webhook strategies, while multi-main retains chart rollout behavior and PDB minimum 1.
+- [x] 2.4 Update root replica/license input descriptions and generated reference without changing credential sources or floating-license defaults; verify `terraform-docs --output-check .` and assertions that both topology branches retain `N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false` by default.
 
 ## 3. Expose PostgreSQL connection and ping timing
 

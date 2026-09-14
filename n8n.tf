@@ -215,8 +215,13 @@ resource "helm_release" "n8n" {
     # The chart renders spec.replicas unconditionally for all three workload
     # Deployments. Use each autoscaler's minimum so a Helm upgrade at the floor
     # does not scale the Deployment down before its autoscaler reconciles.
+    # Single-main (local.n8n_main_multi_enabled = false) sets top-level
+    # replicaCount instead — the chart's deployment-main.yaml selects between
+    # multiMain.replicas and replicaCount based on multiMain.enabled. The
+    # pinned schema requires multiMain.replicas >= 2 only while enabled, so
+    # leaving it at the configured minimum is safe on both branches.
     multiMain = {
-      enabled  = true
+      enabled  = local.n8n_main_multi_enabled
       replicas = var.n8n_main_hpa_min_replicas
       antiAffinity = {
         type = "preferred"
@@ -225,6 +230,20 @@ resource "helm_release" "n8n" {
         keyTtl        = 10
         checkInterval = 3
       }
+    }
+
+    # Consumed only when multiMain is disabled (deployment-main.yaml's
+    # ternary), but always set to the same effective floor for clarity.
+    replicaCount = var.n8n_main_hpa_min_replicas
+
+    # Single-main uses Recreate to avoid two main pods running briefly during
+    # a rolling upgrade, which would duplicate scheduled-trigger and webhook
+    # processing outside multi-main's leader election. Multi-main omits this
+    # override and keeps the chart's default rollout behavior. This is not a
+    # general at-most-one guarantee — it does not protect against manual pod
+    # deletion, node loss, or forced operations.
+    strategy = local.n8n_main_multi_enabled ? {} : {
+      type = "Recreate"
     }
 
     queueMode = {
@@ -468,9 +487,12 @@ resource "helm_release" "n8n" {
       }
     }
 
+    # Single-main allows voluntary eviction (minAvailable = 0) because
+    # Recreate already accepts the resulting downtime; multi-main protects
+    # one available replica during voluntary disruption.
     pdb = {
       enabled      = true
-      minAvailable = 1
+      minAvailable = local.n8n_main_multi_enabled ? 1 : 0
     }
 
     # Top-level chart values render on main, worker, and webhook-processor
@@ -506,7 +528,7 @@ resource "helm_release" "n8n" {
       main = {
         enabled                        = true
         minReplicas                    = var.n8n_main_hpa_min_replicas
-        maxReplicas                    = var.n8n_main_hpa_max_replicas
+        maxReplicas                    = local.n8n_main_hpa_effective_max_replicas
         targetCPUUtilizationPercentage = var.n8n_main_hpa_cpu_threshold
       }
     }

@@ -1419,14 +1419,14 @@ variable "n8n_webhook_memory_limit" {
 # upgrade at the autoscaler floor does not briefly scale the workload down.
 
 variable "n8n_main_hpa_min_replicas" {
-  description = "Minimum main replicas for the CPU HPA and the Helm deployment floor. Multi-main requires at least two replicas."
+  description = "Minimum main replicas for the CPU HPA and the Helm deployment floor. A minimum of 1 selects single-main queue mode (no feat:multipleMainInstances requirement); a minimum of 2 or more selects multi-main, the default."
   type        = number
   default     = 2
   nullable    = false
 
   validation {
-    condition     = var.n8n_main_hpa_min_replicas >= 2 && var.n8n_main_hpa_min_replicas == floor(var.n8n_main_hpa_min_replicas)
-    error_message = "n8n_main_hpa_min_replicas must be a whole number of at least 2 for multi-main."
+    condition     = var.n8n_main_hpa_min_replicas >= 1 && var.n8n_main_hpa_min_replicas == floor(var.n8n_main_hpa_min_replicas)
+    error_message = "n8n_main_hpa_min_replicas must be a whole number of at least 1."
   }
 
   # Terraform 1.9 cross-variable validation uses a conditional expression so
@@ -1438,14 +1438,14 @@ variable "n8n_main_hpa_min_replicas" {
 }
 
 variable "n8n_main_hpa_max_replicas" {
-  description = "Maximum main replicas for the CPU HPA. The default of 6 participates in the AKS capacity diagnostic with the main and task-runner CPU requests."
+  description = "Maximum main replicas for the CPU HPA. The default of 6 participates in the AKS capacity diagnostic with the main and task-runner CPU requests. A higher value remains valid in single-main mode (n8n_main_hpa_min_replicas = 1) but has no effect there — the effective ceiling clamps to 1."
   type        = number
   default     = 6
   nullable    = false
 
   validation {
-    condition     = var.n8n_main_hpa_max_replicas >= 2 && var.n8n_main_hpa_max_replicas == floor(var.n8n_main_hpa_max_replicas)
-    error_message = "n8n_main_hpa_max_replicas must be a whole number of at least 2."
+    condition     = var.n8n_main_hpa_max_replicas >= 1 && var.n8n_main_hpa_max_replicas == floor(var.n8n_main_hpa_max_replicas)
+    error_message = "n8n_main_hpa_max_replicas must be a whole number of at least 1."
   }
 }
 

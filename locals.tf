@@ -55,6 +55,17 @@ locals {
   n8n_redis_keda_auth_name     = "n8n-redis-keda-auth"
   n8n_service_port             = 5678
 
+  # ── Main topology selection ──────────────────────────────────────────────
+  # n8n_main_hpa_min_replicas is the only topology selector (design.md
+  # decision 2): a minimum of 1 selects single-main queue mode, which does
+  # not require feat:multipleMainInstances; a minimum above 1 selects
+  # multi-main, the default. A caller-configured higher main maximum stays
+  # valid input in single-main but has no effect — the effective ceiling
+  # below clamps to 1 so the chart HPA and scaling.tf's capacity model never
+  # exceed what the single-replica path renders.
+  n8n_main_multi_enabled              = var.n8n_main_hpa_min_replicas > 1
+  n8n_main_hpa_effective_max_replicas = local.n8n_main_multi_enabled ? var.n8n_main_hpa_max_replicas : 1
+
   n8n_webhook_path_prefixes = [
     "/webhook",
     "/webhook-waiting",

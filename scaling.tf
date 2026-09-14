@@ -197,8 +197,12 @@ locals {
     )
   }
 
+  # Use the effective main ceiling (locals.tf) rather than the raw configured
+  # maximum so a higher unused main maximum in single-main mode does not
+  # inflate modeled demand — the chart never schedules more than one main
+  # replica in that mode regardless of the configured HPA maximum.
   n8n_peak_cpu_request_millis = (
-    var.n8n_main_hpa_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) +
+    local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) +
     var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
     var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
   )
@@ -222,7 +226,7 @@ check "autoscaling_maxima_fit_aks_capacity" {
     error_message = join("", [
       "Autoscaler maxima request ${local.n8n_peak_cpu_request_millis}m CPU, but the modeled AKS supply leaves only ",
       "${local.n8n_schedulable_cpu_millis}m schedulable for n8n. Demand is main ",
-      "${var.n8n_main_hpa_max_replicas} x ${local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner}m, worker ",
+      "${local.n8n_main_hpa_effective_max_replicas} x ${local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner}m, worker ",
       "${var.n8n_worker_keda_max_replicas} x ${local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner}m, and webhook ",
       "${var.n8n_webhook_hpa_max_replicas} x ${local.n8n_cpu_request_millis.webhook}m. Supply models two pools at ",
       "aks_node_count_max=${var.aks_node_count_max}, VM size ${var.aks_node_vm_size} (${local.aks_node_vcpus} vCPU per node), ",
