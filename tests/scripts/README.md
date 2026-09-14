@@ -68,9 +68,32 @@ see the manual Azure qualification checklist for that.
 ## Smoke test
 
 Post-`terraform apply` smoke test for `terraform-azurerm-n8n`. Verifies the
-multi-main Azure deployment is healthy end to end — pod health, queue
-mode, KEDA, App Gateway HTTPS, API connectivity, and a full webhook →
-worker execution.
+Azure deployment is healthy end to end — pod health, queue mode, KEDA, App
+Gateway HTTPS, API connectivity, and a full webhook → worker execution. The
+script detects whether the cluster is running the default multi-main
+topology or the optional single-main topology
+(`n8n_main_hpa_min_replicas = 1`, port-aws-040-enhancements section 2) from
+the rendered chart resources, and branches its main replica/HPA/strategy/PDB/
+leader-election checks accordingly; every other check applies to both.
+
+### Offline self-test
+
+`detect_topology()` and `check_deployment()` — the two functions the
+topology branching depends on — can be exercised without Azure credentials,
+a live cluster, or Terraform state:
+
+```bash
+SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
+```
+
+This stubs `kubectl` with synthetic fixtures for three scenarios —
+intentional single-main, healthy multi-main, and degraded multi-main with
+one ready pod of two desired — asserts the expected topology/floor/pass-fail
+outcome for each, and exits before the script's `Preflight` section (which
+requires `az login`). Run it after touching `detect_topology()`,
+`check_deployment()`, or their fixtures; it is not wired into CI (this
+script needs a live cluster for everything past self-test) but is safe to
+run anywhere.
 
 This is the Azure sibling of
 [`terraform-aws-n8n/tests/scripts/smoke-test.sh`](https://github.com/n8n-io/terraform-aws-n8n/blob/main/tests/scripts/README.md).
@@ -86,9 +109,10 @@ Application Gateway).
 |---|---|
 | `kubectl` cluster connectivity | `az aks get-credentials` populates a kubeconfig and `kubectl get nodes` succeeds against the AKS API server |
 | Namespace exists | The configured namespace is present |
-| Main / worker / webhook-processor pod health | Each deployment is at the expected ready replica count (`MAIN_MIN=2`, `WORKER_MIN=1`, `WEBHOOK_MIN=2` — match the multi-main floor enforced by `var.n8n_main_replicas ≥ 2` and the `kubernetes_horizontal_pod_autoscaler_v2.webhook_processor` `min_replicas = 2`) |
+| Topology detection | Reads the rendered `n8n-main` HPA/Deployment/PDB to determine single-main (HPA 1/1, `Recreate`, PDB minAvailable 0) vs. multi-main (HPA floor > 1, rolling update, PDB minAvailable 1) — never inferred from the current main pod count |
+| Main / worker / webhook-processor pod health | Each deployment is at its detected-topology floor (`MAIN_MIN` = 1 for single-main or the rendered HPA floor for multi-main, `WORKER_MIN=1`, `WEBHOOK_MIN=2` — match the `kubernetes_horizontal_pod_autoscaler_v2.webhook_processor` `min_replicas = 2`) |
 | Application version | `n8n --version` (and the pod's image tag) agree across main, worker, and webhook-processor pods — catches a half-finished rollout before any functional check runs |
-| Multi-main leader election | `N8N_MULTI_MAIN_SETUP_ENABLED=true` on main pods + leadership activity in main logs |
+| Leader election | Multi-main expects `N8N_MULTI_MAIN_SETUP_ENABLED=true` on main pods plus leadership activity in main logs; single-main expects the flag unset/false and skips the log check (single-main runs no Redis leader election) |
 | Task runner sidecar (workers) | Runner sidecar is present on worker pods and connected to the broker (skipped when `n8n_task_runners_enabled = false`) |
 | KEDA `TriggerAuthentication` | `n8n-redis-keda-auth` CR is present in the n8n namespace — the n8n chart's worker `ScaledObject` references it; without it KEDA can't authenticate against Azure Managed Redis and the worker pool won't scale |
 | Autoscaler configuration | KEDA `ScaledObject` (workers, queue-depth driven against Azure Managed Redis) and HPA (`n8n-webhook-processor`) state |

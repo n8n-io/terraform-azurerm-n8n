@@ -68,12 +68,15 @@ After signing in:
 
 The license is now bound to this n8n installation. Subsequent restarts re-validate the binding against the license server; expired or revoked keys cause the **owner** account to lose access to enterprise features but do not block existing user logins.
 
+A Business license without `feat:multipleMainInstances` still activates normally, but only against the optional single-main topology (`n8n_main_hpa_min_replicas = 1`) — the default multi-main topology requires that entitlement. See ["Main topology: multi-main and single-main"](../README.md#main-topology-multi-main-and-single-main) in the root README before your first apply if you're deploying on a Business license.
+
 ## Verify the deployment
 
-A handful of post-apply checks that confirm the multi-main topology came up cleanly:
+A handful of post-apply checks that confirm the deployment came up cleanly:
 
 ```bash
-# 1. Both main pods Ready
+# 1. Main pod(s) Ready — 1 for single-main, >=2 for the default multi-main
+#    (n8n_main_hpa_min_replicas)
 kubectl -n n8n get pods -l app.kubernetes.io/component=main
 
 # 2. At least one worker pod Ready
@@ -86,7 +89,7 @@ kubectl -n n8n get pods -l app.kubernetes.io/component=webhook
 curl -fsSL "$(terraform output -raw n8n_url)/healthz" -o /dev/null && echo "OK"
 ```
 
-For a single-shot end-to-end check that exercises every layer (AKS API, namespace, pod readiness, App Gateway HTTPS, n8n license), see `tests/scripts/smoke-test.sh` (US-041) — runnable manually after `terraform apply`.
+For a single-shot end-to-end check that exercises every layer (AKS API, namespace, topology detection, pod readiness, App Gateway HTTPS, n8n license), see `tests/scripts/smoke-test.sh` — runnable manually after `terraform apply`. It detects single-main vs. multi-main from the rendered chart resources and branches its main-pod, HPA, strategy, PDB, and leader-election checks accordingly.
 
 ## Useful outputs at a glance
 

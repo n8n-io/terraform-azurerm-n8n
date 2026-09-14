@@ -113,6 +113,14 @@ The module never inspects a customer-managed storage account or container
 through a data source. See [Data sources are not a security
 audit](#data-sources-are-not-a-security-audit).
 
+A caller-managed Blob container is independent of Enterprise storage
+entitlements: `feat:binaryDataAz` / `feat:executionDataAz` still gate the
+Azure binary/execution-data modes regardless of who owns the container. A
+Business license without those entitlements should keep
+`n8n_binary_data_storage_mode` / `n8n_execution_data_storage_mode` on
+`database` even when `create_blob_storage = false` — see
+[`docs/data-storage.md`](./data-storage.md#new-deployment-without-azure-storage-entitlements-business-license).
+
 ### The n8n workload identity stays module-owned
 
 Even when `create_aks = false` and/or `create_blob_storage = false`, the

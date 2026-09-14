@@ -13,6 +13,20 @@ The license entitlements are separate:
 
 Enabling one mode does not require or grant the other entitlement. n8n refuses to start when an Azure mode is selected without its matching entitlement.
 
+## New deployment without Azure storage entitlements (Business license)
+
+A Business license without `feat:binaryDataAz` / `feat:executionDataAz` can still run this module — including the optional single-main topology (see the root [README](../README.md#main-topology-multi-main-and-single-main)) — as long as it never selects an Azure storage mode. For a **new** deployment on such a license:
+
+```hcl
+n8n_binary_data_storage_mode    = "database"
+n8n_execution_data_storage_mode = "database"
+n8n_available_binary_data_modes = ["database"]
+```
+
+This keeps every binary and execution-data write in PostgreSQL and never requires the Azure Blob entitlements. `create_blob_storage` can still default to `true` — the module-managed container simply goes unused — or be set to `false` if you don't want the storage account provisioned at all.
+
+This is a new-deployment recipe, not a migration shortcut. An **existing** deployment already writing to Azure must not switch modes to work around a missing entitlement before following the [Transition procedure](#transition-procedure) below; removing the Azure mode from `n8n_available_binary_data_modes` while objects it wrote are still referenced makes that data unreadable.
+
 ## Binary data modes
 
 `n8n_binary_data_storage_mode` selects where new binary objects are written:

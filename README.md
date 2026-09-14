@@ -12,6 +12,7 @@ An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this m
 - [Prerequisites](#prerequisites)
 - [Usage](#usage)
 - [Runtime and workload controls](#runtime-and-workload-controls)
+- [Main topology: multi-main and single-main](#main-topology-multi-main-and-single-main)
 - [Credential overwrites](#credential-overwrites)
 - [Task-runner launcher configuration](#task-runner-launcher-configuration)
 - [Managed-service topologies](#managed-service-topologies)
@@ -142,6 +143,24 @@ Beyond the base multi-main topology, this module ports the AWS sibling's operato
 - **Azure Key Vault external secrets** — the infrastructure boundary and prerequisites for n8n's own Azure Key Vault external-secrets integration are documented in [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md); this module does not manage the Entra application or workflow credentials that feature needs.
 
 n8n application version `2.29.0` or later is required for the Azure binary/execution-data modes; the module's default (`n8n_image_tag = "2.35.0"`) already meets that floor, and applying a version below it fails validation.
+
+## Main topology: multi-main and single-main
+
+`n8n_main_hpa_min_replicas` is the only topology selector:
+
+| | `n8n_main_hpa_min_replicas = 1` (single-main) | `n8n_main_hpa_min_replicas > 1` (multi-main, default) |
+|---|---|---|
+| License requirement | No `feat:multipleMainInstances` needed — Business-compatible | Requires `feat:multipleMainInstances` |
+| Main HPA | Clamped to 1/1 regardless of `n8n_main_hpa_max_replicas` | Configured floor/ceiling |
+| Main rollout strategy | `Recreate` (old pod terminates before the new one starts) | Chart's default rolling update |
+| Main `PodDisruptionBudget` | `minAvailable = 0` (voluntary eviction allowed) | `minAvailable = 1` |
+| Editor/API/scheduled-trigger availability during a main rollout | Brief downtime — there is only ever one main pod | No interruption (a healthy replica keeps serving) |
+
+Worker and webhook-processor scaling are unaffected by this choice — only the main topology changes. `Recreate` is not a general at-most-one guarantee: it prevents a rolling-upgrade overlap, but manual pod deletion, node loss, or a forced operation can still produce more than one main process.
+
+Selecting single-main does **not** grant any other Enterprise entitlement. A Business license without `feat:binaryDataAz` / `feat:executionDataAz` still cannot use the Azure binary/execution-data modes — for a new deployment on such a license, set `n8n_binary_data_storage_mode = "database"`, `n8n_execution_data_storage_mode = "database"`, and `n8n_available_binary_data_modes = ["database"]`; see [`docs/data-storage.md`](./docs/data-storage.md#new-deployment-without-azure-storage-entitlements-business-license). Do not remove an existing deployment's Azure storage modes before its retained objects are migrated or expired.
+
+Switch topology only in a maintenance window; raising the minimum above 1 without the multi-main entitlement fails the additional main pod's license activation, and `helm_release.n8n`'s `atomic = true` rolls the release back automatically after its timeout — see [`docs/troubleshooting.md`](./docs/troubleshooting.md#switching-to-multi-main-fails-because-the-license-lacks-featmultiplemaininstances) for diagnosis and recovery.
 
 ## Credential overwrites
 
@@ -312,6 +331,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 - [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md) — infrastructure prerequisites for n8n's Azure Key Vault external-secrets integration.
 - [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md) — ownership convention, reference/attestation contracts, direct `modules/controllers` composition, and the pre-release upgrade boundary for the caller-managed AKS, Blob, namespace, Secret, KEDA, and webhook-HPA layers.
 - [`examples/split-ingress/README.md`](./examples/split-ingress/README.md) — operating a split public-webhook/internal-admin topology, including how `n8n_webhook_url` advertises webhooks on the public host while the editor identity stays on the private one.
+- [`docs/manual-azure-qualification.md`](./docs/manual-azure-qualification.md) — manual, non-blocking checklist for verifying live Azure lifecycle behavior (fresh install, topology transitions, node/disk maintenance, DNS, Redis TLS/ACL) that offline tests cannot prove.
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history.
 - [`AGENTS.md`](./AGENTS.md) — contributor guide, Azure-specific deltas vs the AWS sibling, and the registry quality bar this module is held to.
 

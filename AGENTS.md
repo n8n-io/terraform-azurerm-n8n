@@ -409,6 +409,44 @@ an otherwise-correct example; move them aside before running tests locally
 and restore them afterward — they are intentionally untracked and must never
 be committed or deleted on someone else's behalf.
 
+Section 13.1 made `detect_topology()` and `check_deployment()` in
+`tests/scripts/smoke-test.sh` standalone functions (defined right after the
+script's `pass`/`fail`/`warn`/`skip`/`info` helpers, before `Preflight`)
+specifically so an `SMOKE_TEST_SELF_TEST=1` guard placed in that same spot
+can stub `kubectl` with synthetic fixtures and exercise both functions for
+single-main, healthy multi-main, and degraded multi-main (one ready pod of
+two desired) without `az login`, Terraform state, or a live cluster — the
+guard block runs and `exit`s before `Preflight`'s `require_cmd`/`az account
+show` checks, so it is unreachable during a real post-apply run. Topology
+detection reads the *rendered* `n8n-main` HorizontalPodAutoscaler
+(`minReplicas == maxReplicas == 1` selects single-main) rather than the
+current main pod count, which can transiently disagree with the configured
+floor mid-rollout; Deployment `strategy.type` and the main
+`PodDisruptionBudget`'s `minAvailable` are read only as consistency
+cross-checks against that same topology. The chart's `n8n.fullname` template
+resolves to the bare `n8n` release name (no suffix), so every rendered
+resource the smoke test inspects by name uses the `n8n-<component>`
+convention (`n8n-main` HPA/Deployment/PDB, `n8n-worker`,
+`n8n-webhook-processor`) — confirmed by pulling the pinned chart's raw
+templates rather than assuming naming from the module side.
+
+Section 13.2 added a `## Main topology: multi-main and single-main` section
+to the root `README.md` (linked from the table of contents, from
+`docs/post-deployment.md`'s license-activation step, and from
+`docs/data-storage.md`'s new database-only recipe) plus a dedicated
+`docs/troubleshooting.md` entry for the specific failure mode of raising
+`n8n_main_hpa_min_replicas` without the `feat:multipleMainInstances`
+entitlement: the additional main pod(s) fail their license check,
+`helm_release.n8n`'s existing `wait = true` blocks until `timeout`, and
+`atomic = true` / `cleanup_on_fail = true` (already present before this
+change, not new behavior) roll the release back automatically — this needed
+only documentation, not a new safeguard. A caller-managed Blob container
+(`create_blob_storage = false`) is independent of the
+`feat:binaryDataAz`/`feat:executionDataAz` entitlements gating the Azure
+storage modes, so `docs/customer-managed-infrastructure.md`'s Blob section
+cross-references the same database-only recipe rather than implying ownership
+of the container substitutes for the entitlement.
+
 ## What this repo is
 
 `terraform-azurerm-n8n` is a Terraform module that deploys a **production-grade,

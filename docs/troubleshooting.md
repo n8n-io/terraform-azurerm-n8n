@@ -237,6 +237,34 @@ kubectl -n n8n rollout status deployment/n8n --timeout=5m
 
 If the UI still hangs after a manual restart, the migration is probably wedged in `pg_stat_activity`. Connect from a bootstrap pod (see the uuid-ossp section above), run `SELECT pid, state, query FROM pg_stat_activity WHERE state != 'idle';`, and `pg_cancel_backend(pid)` any session stuck on `CREATE INDEX`. Then `kubectl -n n8n rollout restart deployment/n8n`. If the race recurs on subsequent applies, raise `var.n8n_helm_post_install_settle_seconds` (e.g. to 120) so the Ingress wait window comfortably outlasts the chart's leader-election bootstrap.
 
+## Switching to multi-main fails because the license lacks `feat:multipleMainInstances`
+
+Raising `n8n_main_hpa_min_replicas` above 1 without the multi-main entitlement active on `var.n8n_license_key` does not fail at plan time — Terraform has no way to inspect a license's entitlements. Instead:
+
+1. `helm_release.n8n` renders `multiMain.enabled = true` and the additional main pod(s) start.
+2. Each additional main pod fails its license check for `feat:multipleMainInstances` and crash-loops (or the leader stops serving, depending on which pod loses the race).
+3. `helm_release.n8n` runs with `wait = true`, so Helm never observes `replicas == readyReplicas` and blocks until `timeout` (`var.n8n_helm_timeout`, default 600 s).
+4. `atomic = true` and `cleanup_on_fail = true` then roll the release back to the last known-good revision automatically — `terraform apply` reports the Helm release resource as failed, but the cluster is left running the prior (working) topology, not a half-applied one.
+
+Diagnose with:
+
+```bash
+kubectl -n n8n get pods -l app.kubernetes.io/component=main
+kubectl -n n8n exec -it <a-main-pod> -c n8n-main -- n8n license:info
+```
+
+`n8n license:info` reports the active plan and its entitlements. If `feat:multipleMainInstances` is absent, either upgrade the license or set `n8n_main_hpa_min_replicas` back to `1` (single-main — see the root [README](../README.md#main-topology-multi-main-and-single-main)) and re-apply.
+
+If the automatic rollback does not fully recover the release (for example, a prior manual `kubectl` edit left the Deployment out of sync with the Helm release), reconcile manually:
+
+```bash
+helm -n n8n history n8n                      # find the last good revision
+helm -n n8n rollback n8n <revision>           # force it back explicitly
+terraform apply                               # reconcile Terraform's Helm values against the rolled-back release
+```
+
+This is the same recovery path for any failed `helm_release.n8n` upgrade, not something specific to topology changes — topology is simply the failure mode most likely to trip it, because it is the one input change whose success depends on an external license server rather than anything Terraform can validate.
+
 ## `terraform destroy` hangs on namespace finalizers or App Gateway frontend IP release
 
 See [`destroy-cleanup.md`](./destroy-cleanup.md) for the standard manual cleanup steps: removing stuck `kubernetes` finalizers from the n8n namespace, manually deleting the App Gateway frontend IP configuration if it survives the App Gateway destroy, and the safe re-apply path after a partial destroy.
