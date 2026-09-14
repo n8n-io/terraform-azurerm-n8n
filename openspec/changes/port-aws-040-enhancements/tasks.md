@@ -59,9 +59,9 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 10. Adapt node disk sizing to AKS
 
-- [ ] 10.1 Add nullable `aks_node_os_disk_size_gb` with positive-whole-number validation and wire both managed pools, preserving the system rotation name and adding a distinct valid user-pool rotation name; verify mocked tests for null, 256, invalid values, unchanged disk type, and existing node-count lifecycle ignores.
-- [ ] 10.2 Extend ignored-AKS-tuning diagnostics for a supplied size with `create_aks = false`; verify the external-cluster test expects the warning and zero managed cluster/pool resources while the default external path stays warning-free.
-- [ ] 10.3 Document provider-driven cycling, lack of automatic cordon/drain, maintenance/headroom requirements, and provider/Azure default sizing; verify generated docs pass and the diff adds no AWS disk default, disk-type control, drain provisioner, or example sizing change.
+- [x] 10.1 Add nullable `aks_node_os_disk_size_gb` with positive-whole-number validation and wire both managed pools, preserving the system rotation name and adding a distinct valid user-pool rotation name; verify mocked tests for null, 256, invalid values, unchanged disk type, and existing node-count lifecycle ignores.
+- [x] 10.2 Extend ignored-AKS-tuning diagnostics for a supplied size with `create_aks = false`; verify the external-cluster test expects the warning and zero managed cluster/pool resources while the default external path stays warning-free.
+- [x] 10.3 Document provider-driven cycling, lack of automatic cordon/drain, maintenance/headroom requirements, and provider/Azure default sizing; verify generated docs pass and the diff adds no AWS disk default, disk-type control, drain provisioner, or example sizing change.
 
 ## 11. Correct editor and split-webhook URLs
 

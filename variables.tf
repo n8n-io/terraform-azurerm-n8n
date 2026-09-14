@@ -181,6 +181,17 @@ variable "aks_api_warmup_seconds" {
   }
 }
 
+variable "aks_node_os_disk_size_gb" {
+  description = "OS-disk size (GiB) for both module-managed AKS node pools (system and user). Null (the default) leaves sizing to the provider/Azure default for the selected VM size. Changing this on an existing pool cycles its nodes via AzureRM's rotation mechanism, which does not cordon or drain workloads automatically \u2014 plan a maintenance window and confirm node/subnet/quota headroom before changing an existing cluster's value. Has no effect when create_aks = false; the existing cluster's disk sizing is unmanaged by this module."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.aks_node_os_disk_size_gb == null ? true : (var.aks_node_os_disk_size_gb == floor(var.aks_node_os_disk_size_gb) && var.aks_node_os_disk_size_gb > 0)
+    error_message = "aks_node_os_disk_size_gb must be null or a positive whole number of GiB."
+  }
+}
+
 # Consumed by database.tf (section 3).
 variable "postgres_subnet_id" {
   description = "Resource ID of the subnet the PostgreSQL Flexible Server is injected into. Must be delegated to `Microsoft.DBforPostgreSQL/flexibleServers` and contain no other workloads (Flexible Server consumes the entire subnet). Format: /subscriptions/<sub>/.../subnets/<name>."

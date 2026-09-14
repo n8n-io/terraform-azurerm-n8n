@@ -36,6 +36,29 @@ aks_availability_zones = ["1", "3"]
 
 Every example already exposes this variable for exactly this reason (see the `aks_availability_zones` input description). Re-running `terraform apply` after the fix picks up cleanly: resources created before the AKS failure (e.g. the Application Gateway) are left untouched and reused.
 
+## Changing `aks_node_os_disk_size_gb` on an existing cluster disrupts workloads
+
+**Symptom**
+
+After changing `aks_node_os_disk_size_gb` on a cluster that already exists, `terraform apply` succeeds but pods on the affected node pool restart unexpectedly, or the apply takes noticeably longer than a routine change.
+
+**Root cause**
+
+`aks_node_os_disk_size_gb` is null by default, which leaves OS-disk sizing to the provider/Azure default for the selected VM size — this module makes no 20 GiB/100 GiB assumption and adds no disk-type control. Setting or changing this value on an existing `default_node_pool` or `n8n_user` pool requires AzureRM to cycle that pool through its `temporary_name_for_rotation` (`systemtemp` for the system pool, `n8nusrtemp` for the user pool): nodes are recreated with the new disk size. This rotation is **not** a cordon-and-drain operation — AzureRM does not guarantee pods are gracefully evicted before their node is replaced, and neither the AKS node-pool `max_surge` upgrade setting nor the n8n PDBs promise an uninterrupted rotation.
+
+This control has no effect at all when `create_aks = false`; `check.aks_tuning_requires_module_managed_aks` warns (non-failing) if the input is left non-null in that mode, because the existing cluster's disk sizing is owned by whoever created it.
+
+**Resolution**
+
+Treat an OS-disk size change as its own maintenance operation, separate from any topology or application change in the same apply:
+
+1. Run `terraform plan` first and confirm which node pool(s) the change affects.
+2. Confirm subnet IP headroom, node quota, and available capacity for the temporary rotation node before applying — the rotation briefly needs room for an extra node per pool being resized.
+3. Apply during a maintenance window. Expect workloads scheduled on the affected pool to be interrupted; the multi-main topology, worker KEDA scaling, and webhook HPA reduce — but do not eliminate — the chance of simultaneous downtime across every main pod.
+4. Verify pod health and re-run the smoke test (`tests/scripts/smoke-test.sh`) after the rotation completes.
+
+A valid `aks_node_os_disk_size_gb` value is not a promise that every Azure VM/disk combination accepts that size — confirm against Azure's current documentation for the configured `aks_node_vm_size` before applying.
+
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
 **Symptom**

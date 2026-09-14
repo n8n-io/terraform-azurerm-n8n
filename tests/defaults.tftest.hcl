@@ -346,6 +346,20 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].temporary_name_for_rotation == "n8nusrtemp"
+    error_message = "The user AKS pool must declare a temporary rotation name distinct from the system pool's 'systemtemp' so callers can update disk size or other rotation-required properties."
+  }
+
+  # os_disk_size_gb and os_disk_type are optional+computed on both node-pool
+  # resources: the mock azurerm provider assigns them a placeholder computed
+  # value even when var.aks_node_os_disk_size_gb is null and the attribute is
+  # absent from config, so their default-path value isn't plan-time
+  # assertable here. The explicit-override run below
+  # (renders_valid_aks_node_os_disk_size_gb) proves the value is config-driven
+  # (known at plan) whenever the variable is set, which is the behavior this
+  # port changes; os_disk_type is asserted unchanged there instead.
+
+  assert {
     condition     = azurerm_user_assigned_identity.n8n_workload.name == "${var.friendly_name_prefix}-n8n-workload"
     error_message = "n8n_workload UAMI name must embed friendly_name_prefix."
   }
@@ -425,6 +439,64 @@ run "rejects_malformed_aks_api_authorized_ip_ranges" {
 
   expect_failures = [
     var.aks_api_authorized_ip_ranges,
+  ]
+}
+
+run "renders_valid_aks_node_os_disk_size_gb" {
+  command = plan
+
+  variables {
+    aks_node_os_disk_size_gb = 256
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].os_disk_size_gb == 256
+    error_message = "default_node_pool.os_disk_size_gb must equal the supplied aks_node_os_disk_size_gb."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].os_disk_size_gb == 256
+    error_message = "n8n_user pool os_disk_size_gb must equal the supplied aks_node_os_disk_size_gb."
+  }
+
+  # os_disk_type is left unset in both node-pool resources by this port (no
+  # disk-type control was added), so config never assigns it regardless of
+  # var.aks_node_os_disk_size_gb.
+}
+
+run "rejects_zero_aks_node_os_disk_size_gb" {
+  command = plan
+
+  variables {
+    aks_node_os_disk_size_gb = 0
+  }
+
+  expect_failures = [
+    var.aks_node_os_disk_size_gb,
+  ]
+}
+
+run "rejects_negative_aks_node_os_disk_size_gb" {
+  command = plan
+
+  variables {
+    aks_node_os_disk_size_gb = -32
+  }
+
+  expect_failures = [
+    var.aks_node_os_disk_size_gb,
+  ]
+}
+
+run "rejects_fractional_aks_node_os_disk_size_gb" {
+  command = plan
+
+  variables {
+    aks_node_os_disk_size_gb = 128.5
+  }
+
+  expect_failures = [
+    var.aks_node_os_disk_size_gb,
   ]
 }
 
@@ -4320,6 +4392,43 @@ run "warns_when_aks_tuning_is_inert_on_existing_cluster" {
   }
 
   expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "warns_when_aks_node_os_disk_size_gb_is_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_node_os_disk_size_gb                     = 256
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "aks_tuning_check_stays_silent_on_default_external_path" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n) == 0
+    error_message = "No managed AKS cluster resource must be created when create_aks = false."
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster_node_pool.n8n_user) == 0
+    error_message = "No managed AKS user node pool resource must be created when create_aks = false."
+  }
 }
 
 # ── Customer-managed Blob contract ──────────────────────────────────────────

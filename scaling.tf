@@ -260,14 +260,15 @@ check "aks_tuning_requires_module_managed_aks" {
       var.aks_availability_zones == tolist(["1", "2", "3"]) &&
       length(var.aks_api_authorized_ip_ranges) == 0 &&
       var.aks_node_upgrade_max_surge == "10%" &&
-      var.aks_api_warmup_seconds == 90
+      var.aks_api_warmup_seconds == 90 &&
+      var.aks_node_os_disk_size_gb == null
     )
     error_message = join("", [
       "An aks_kubernetes_version, aks_node_vm_size, aks_node_count_min, aks_node_count_max, ",
-      "aks_availability_zones, aks_api_authorized_ip_ranges, aks_node_upgrade_max_surge, or ",
-      "aks_api_warmup_seconds override is set while create_aks = false. The module creates no AKS ",
-      "cluster or node pool in that mode, so none of these apply — sizing, version, zones, API access, ",
-      "and upgrade behavior are properties of the existing cluster you supplied.",
+      "aks_availability_zones, aks_api_authorized_ip_ranges, aks_node_upgrade_max_surge, ",
+      "aks_api_warmup_seconds, or aks_node_os_disk_size_gb override is set while create_aks = false. The ",
+      "module creates no AKS cluster or node pool in that mode, so none of these apply — sizing, version, ",
+      "zones, API access, upgrade behavior, and disk size are properties of the existing cluster you supplied.",
     ])
   }
 }
