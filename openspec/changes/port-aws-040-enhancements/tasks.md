@@ -23,9 +23,9 @@ Use plan-time mocked tests by default. Fully mocked apply is allowed only when n
 
 ## 4. Expose Bull worker timing safely
 
-- [ ] 4.1 Add the three nullable `n8n_queue_worker_*` inputs, whole-number/minimum validation, and the effective renewal-before-duration check on one variable; assemble one inner worker map and merge it into `redis`. Verify mocked tests retain all three simultaneous overrides and omit unset keys.
-- [ ] 4.2 Add boundary tests for short locks with implicit renewal, equal/longer renewal, fractional values, sub-1000 values, and stalled interval zero; verify expected failures identify the dedicated variables rather than failing at Helm apply.
-- [ ] 4.3 Extend rendered ConfigMap/environment checks and generated input docs; verify numeric chart values, one effective entry per worker-timing name, unchanged queue/auth/TLS settings, and no unsupported maximum-stalled-count input.
+- [x] 4.1 Add the three nullable `n8n_queue_worker_*` inputs, whole-number/minimum validation, and the effective renewal-before-duration check on one variable; assemble one inner worker map and merge it into `redis`. Verify mocked tests retain all three simultaneous overrides and omit unset keys.
+- [x] 4.2 Add boundary tests for short locks with implicit renewal, equal/longer renewal, fractional values, sub-1000 values, and stalled interval zero; verify expected failures identify the dedicated variables rather than failing at Helm apply.
+- [x] 4.3 Extend rendered ConfigMap/environment checks and generated input docs; verify numeric chart values, one effective entry per worker-timing name, unchanged queue/auth/TLS settings, and no unsupported maximum-stalled-count input.
 
 ## 5. Expose execution-save policy controls
 

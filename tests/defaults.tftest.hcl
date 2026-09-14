@@ -4880,6 +4880,165 @@ run "rejects_postgres_connection_timeout_above_max" {
   expect_failures = [var.postgres_connection_timeout_ms]
 }
 
+# ── Bull worker timing controls (section 4) ──────────────────────────────────
+
+run "omits_queue_worker_settings_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(local.n8n_queue_worker_settings) == 0
+    error_message = "local.n8n_queue_worker_settings must be empty when all three worker timing inputs are null."
+  }
+}
+
+run "accepts_all_queue_worker_timing_overrides" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration    = 90000
+    n8n_queue_worker_lock_renew_time  = 15000
+    n8n_queue_worker_stalled_interval = 45000
+  }
+
+  assert {
+    condition = (
+      local.n8n_queue_worker_settings.lockDuration == 90000 &&
+      local.n8n_queue_worker_settings.lockRenewTime == 15000 &&
+      local.n8n_queue_worker_settings.stalledInterval == 45000
+    )
+    error_message = "local.n8n_queue_worker_settings must retain all three overrides when set together."
+  }
+}
+
+run "renders_queue_worker_settings_on_redis_worker_block" {
+  command = plan
+
+  variables {
+    create_database                   = false
+    postgres_external_host            = "external-pg.example.com"
+    postgres_external_username        = "n8n"
+    postgres_external_password        = "external-password-value"
+    create_redis                      = false
+    redis_external_host               = "redis.external.example.com"
+    n8n_queue_worker_lock_duration    = 90000
+    n8n_queue_worker_lock_renew_time  = 15000
+    n8n_queue_worker_stalled_interval = 45000
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).redis.worker.lockDuration == 90000 &&
+      yamldecode(helm_release.n8n.values[0]).redis.worker.lockRenewTime == 15000 &&
+      yamldecode(helm_release.n8n.values[0]).redis.worker.stalledInterval == 45000 &&
+      length([
+        for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env
+        if startswith(env.name, "QUEUE_WORKER_")
+      ]) == 0
+    )
+    error_message = "All three worker timing overrides must render on the chart-native redis.worker block, and no QUEUE_WORKER_* name may be duplicated in config.extraEnv."
+  }
+}
+
+run "omits_redis_worker_block_when_unset" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = "external-password-value"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).redis), "worker")
+    error_message = "redis.worker must be omitted entirely when every worker timing input is null, so the chart's own defaults apply."
+  }
+}
+
+run "rejects_short_lock_duration_with_default_renewal" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 10000
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_renew_time]
+}
+
+run "rejects_renewal_equal_to_duration" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration   = 20000
+    n8n_queue_worker_lock_renew_time = 20000
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_renew_time]
+}
+
+run "rejects_renewal_above_duration" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration   = 20000
+    n8n_queue_worker_lock_renew_time = 30000
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_renew_time]
+}
+
+run "rejects_fractional_queue_worker_timing" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 60000.5
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_duration]
+}
+
+run "rejects_queue_worker_timing_below_minimum" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 500
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_duration]
+}
+
+run "rejects_queue_worker_stalled_interval_zero" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_stalled_interval = 0
+  }
+
+  expect_failures = [var.n8n_queue_worker_stalled_interval]
+}
+
 run "rejects_redis_password_secret_ref_with_managed_redis" {
   command = plan
 

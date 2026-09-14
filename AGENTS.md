@@ -279,7 +279,23 @@ evaluated doesn't itself depend on that unresolved value. This is what
 lets a chart-check script pull real `var.*`/`local.*` values from the
 root module via `terraform console` without any Azure auth, provided the
 expression only touches plan-time-known inputs (variables and literals,
-not managed-resource attributes like a Flexible Server FQDN).
+not managed-resource attributes like a Flexible Server FQDN). Section 4
+added the three nullable `n8n_queue_worker_*` Bull timing inputs, composed
+into one `local.n8n_queue_worker_settings` map merged into the chart's
+`redis.worker` block only when non-empty. The pinned chart's own
+`values.yaml` already ships non-zero `redis.worker.lockDuration` /
+`lockRenewTime` / `stalledInterval` defaults (60000/10000/30000 ms) and its
+`_configmap-env.tpl` guards each `QUEUE_WORKER_*` entry with a truthy check
+on that same value — so those three ConfigMap keys and pod env references
+render unconditionally with the chart's own defaults even when this module's
+inputs are null and contributes no override. "Omitted by default" for these
+three inputs means the module-owned local list is empty, not that the
+rendered manifest lacks the keys; `check-n8n-chart.sh`'s default-fixture
+assertion checks for the chart's literal default values, not key absence.
+The effective-renewal-below-duration cross-variable validation lives on
+`n8n_queue_worker_lock_renew_time` only, using `coalesce(var, pinned_default)`
+on both sides so an omitted duration or renewal still resolves against the
+chart's real default before comparing.
 
 ## What this repo is
 

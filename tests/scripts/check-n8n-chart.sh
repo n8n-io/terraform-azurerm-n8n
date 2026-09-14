@@ -79,7 +79,7 @@ render_topology_values() {
   local out="$1"
   shift
   console "$@" <<'HCL' > "$out"
-jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError="all",saveOnSuccess="all",saveOnProgress=false,saveManualExecutions=true}},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env)}})
+jsonencode({multiMain={enabled=local.n8n_main_multi_enabled,replicas=var.n8n_main_hpa_min_replicas},replicaCount=var.n8n_main_hpa_min_replicas,strategy=local.n8n_main_multi_enabled?{}:{type="Recreate"},hpa={main={enabled=true,minReplicas=var.n8n_main_hpa_min_replicas,maxReplicas=local.n8n_main_hpa_effective_max_replicas,targetCPUUtilizationPercentage=var.n8n_main_hpa_cpu_threshold}},pdb={enabled=true,minAvailable=local.n8n_main_multi_enabled?1:0},queueMode={enabled=true,workerReplicaCount=var.n8n_worker_keda_min_replicas,workerConcurrency=var.n8n_worker_concurrency},webhookProcessor={enabled=true,replicaCount=var.n8n_webhook_hpa_min_replicas,disableProductionWebhooksOnMainProcess=true},executions={data={saveOnError="all",saveOnSuccess="all",saveOnProgress=false,saveManualExecutions=true}},redis=length(local.n8n_queue_worker_settings)==0?{}:{worker=local.n8n_queue_worker_settings},keda={enabled=true,worker={pollingInterval=15,cooldownPeriod=300,minReplicaCount=var.n8n_worker_keda_min_replicas,maxReplicaCount=var.n8n_worker_keda_max_replicas,triggers=[for list_name in ["bull:jobs:wait","bull:jobs:active"] : {type="redis",metadata={listName=list_name,listLength=tostring(var.n8n_worker_keda_jobs_per_replica),enableTLS="false"}}]}},config={extraEnv=concat([{name="N8N_WEBHOOK_URL",value="https://${var.n8n_domain}"}],local.n8n_postgres_runtime_env)}})
 HCL
 }
 
@@ -107,6 +107,12 @@ render_topology_values "$tmp/pg-runtime-values.json" \
   -var='postgres_ping_interval_seconds=5' \
   -var='postgres_ping_max_failures_before_recovery=6'
 
+echo "== Rendering Bull worker timing values fixture (all three timing overrides) =="
+render_topology_values "$tmp/worker-timing-values.json" \
+  -var='n8n_queue_worker_lock_duration=90000' \
+  -var='n8n_queue_worker_lock_renew_time=15000' \
+  -var='n8n_queue_worker_stalled_interval=45000'
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
@@ -117,6 +123,10 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/pg-runtime-values.json" pg-runtime "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor configmap; do
+  render "$tmp/worker-timing-values.json" worker-timing "$template"
 done
 
 main_min=$(console <<< 'var.n8n_main_hpa_min_replicas')
@@ -238,6 +248,36 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
 done
 
 echo "PASS: PostgreSQL connection/ping timing renders on all three application pod families and is omitted by default"
+
+echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval) =="
+
+jq -e '
+  .data.QUEUE_WORKER_LOCK_DURATION == "90000"
+  and .data.QUEUE_WORKER_LOCK_RENEW_TIME == "15000"
+  and .data.QUEUE_WORKER_STALLED_INTERVAL == "45000"
+' "$tmp/worker-timing-configmap.json" >/dev/null \
+  || { echo "FAIL: the chart ConfigMap is missing one or more Bull worker timing overrides" >&2; exit 1; }
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_LOCK_DURATION")] | length == 1)
+    and ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_LOCK_RENEW_TIME")] | length == 1)
+    and ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_STALLED_INTERVAL")] | length == 1)
+  ' "$tmp/worker-timing-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} is missing one or more Bull worker timing ConfigMap references" >&2; exit 1; }
+done
+
+jq -e '
+  .data.QUEUE_WORKER_LOCK_DURATION == "60000"
+  and .data.QUEUE_WORKER_LOCK_RENEW_TIME == "10000"
+  and .data.QUEUE_WORKER_STALLED_INTERVAL == "30000"
+' "$tmp/multi-main-configmap.json" >/dev/null \
+  || { echo "FAIL: the default fixture (all three worker timing inputs null) must retain the chart's own pinned defaults (60000/10000/30000 ms) unchanged" >&2; exit 1; }
+
+jq -e '.data.QUEUE_WORKER_MAX_STALLED_COUNT == "1"' "$tmp/worker-timing-configmap.json" >/dev/null \
+  || { echo "FAIL: the chart's own QUEUE_WORKER_MAX_STALLED_COUNT default must remain untouched (this module exposes no such input)" >&2; exit 1; }
+
+echo "PASS: Bull worker timing overrides render exactly once per name on every application pod family, and the default fixture keeps the chart's own pinned defaults"
 
 echo "== Self-test: duplicate managed environment-entry detector =="
 # This does not scan module output; it proves the jq expression the checks

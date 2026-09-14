@@ -219,6 +219,16 @@ locals {
     ],
   )
 
+  # Bull worker timing (port-aws-040-enhancements section 4): one inner map
+  # with only non-null keys, merged into the chart's redis.worker block in
+  # n8n.tf. A shallow merge of three separate worker maps would lose values,
+  # so this local composes them together up front.
+  n8n_queue_worker_settings = merge(
+    var.n8n_queue_worker_lock_duration == null ? {} : { lockDuration = var.n8n_queue_worker_lock_duration },
+    var.n8n_queue_worker_lock_renew_time == null ? {} : { lockRenewTime = var.n8n_queue_worker_lock_renew_time },
+    var.n8n_queue_worker_stalled_interval == null ? {} : { stalledInterval = var.n8n_queue_worker_stalled_interval },
+  )
+
   # The chart appends config.extraEnv after its own environment variables, and
   # Kubernetes resolves duplicates last-wins. Reserve every current module and
   # chart-owned connection, identity, storage, license, runner, and topology

@@ -283,12 +283,20 @@ resource "helm_release" "n8n" {
       port        = local.redis_connection.port
       username    = local.redis_connection.username == null ? "" : local.redis_connection.username
       tls         = local.redis_connection.tls_enabled
-      }, local.redis_password_present ? {
-      passwordSecret = {
-        name = local.redis_password_secret_name
-        key  = local.redis_password_secret_key
-      }
-    } : {})
+      },
+      local.redis_password_present ? {
+        passwordSecret = {
+          name = local.redis_password_secret_name
+          key  = local.redis_password_secret_key
+        }
+      } : {},
+      # Bull worker timing overrides (section 4). Empty when every input is
+      # null, so the chart's own redis.worker defaults (60000/10000/30000 ms)
+      # apply unchanged.
+      length(local.n8n_queue_worker_settings) == 0 ? {} : {
+        worker = local.n8n_queue_worker_settings
+      },
+    )
 
     podLabels = {
       "azure.workload.identity/use" = "true"

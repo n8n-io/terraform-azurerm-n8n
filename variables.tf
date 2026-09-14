@@ -1614,6 +1614,52 @@ variable "n8n_worker_concurrency" {
   }
 }
 
+# Bull worker timing controls (port-aws-040-enhancements section 4). Each
+# input maps to one chart-native redis.worker.* field (values.schema.json),
+# which the pinned chart renders as QUEUE_WORKER_LOCK_DURATION,
+# QUEUE_WORKER_LOCK_RENEW_TIME, and QUEUE_WORKER_STALLED_INTERVAL. Null
+# preserves the chart's own pinned defaults (60000, 10000, 30000 ms). The
+# chart schema rejects a value below 1000 or a stalled interval of zero, and
+# n8n v2 no longer honors QUEUE_WORKER_MAX_STALLED_COUNT as a runtime control,
+# so neither is exposed here.
+variable "n8n_queue_worker_lock_duration" {
+  description = "Milliseconds a worker holds a job lease before Bull considers it stalled (writes chart value redis.worker.lockDuration, rendered as QUEUE_WORKER_LOCK_DURATION). Null (default) omits the value and retains the chart's pinned default (60000 ms). Must be a whole number of at least 1000 when set. The effective lock-renewal time (n8n_queue_worker_lock_renew_time) must remain strictly below the effective value of this input."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_lock_duration == null ? true : (var.n8n_queue_worker_lock_duration == floor(var.n8n_queue_worker_lock_duration) && var.n8n_queue_worker_lock_duration >= 1000)
+    error_message = "n8n_queue_worker_lock_duration must be null or a whole number of at least 1000 milliseconds."
+  }
+}
+
+variable "n8n_queue_worker_lock_renew_time" {
+  description = "Milliseconds between a worker's lock-renewal heartbeats for a job it is processing (writes chart value redis.worker.lockRenewTime, rendered as QUEUE_WORKER_LOCK_RENEW_TIME). Null (default) omits the value and retains the chart's pinned default (10000 ms). Must be a whole number of at least 1000 when set, and strictly below the effective lock duration (n8n_queue_worker_lock_duration, pinned default 60000 ms when both are null) — a renewal interval at or above the lock duration lets the lease expire before it is renewed."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_lock_renew_time == null ? true : (var.n8n_queue_worker_lock_renew_time == floor(var.n8n_queue_worker_lock_renew_time) && var.n8n_queue_worker_lock_renew_time >= 1000)
+    error_message = "n8n_queue_worker_lock_renew_time must be null or a whole number of at least 1000 milliseconds."
+  }
+
+  validation {
+    condition     = coalesce(var.n8n_queue_worker_lock_renew_time, 10000) < coalesce(var.n8n_queue_worker_lock_duration, 60000)
+    error_message = "The effective n8n_queue_worker_lock_renew_time must be strictly below the effective n8n_queue_worker_lock_duration (pinned defaults 10000 and 60000 ms apply when either is null)."
+  }
+}
+
+variable "n8n_queue_worker_stalled_interval" {
+  description = "Milliseconds between Bull's checks for stalled jobs (writes chart value redis.worker.stalledInterval, rendered as QUEUE_WORKER_STALLED_INTERVAL). Null (default) omits the value and retains the chart's pinned default (30000 ms). Must be a whole number of at least 1000 when set; the pinned chart schema rejects zero, so stall checking cannot be disabled through this input."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_stalled_interval == null ? true : (var.n8n_queue_worker_stalled_interval == floor(var.n8n_queue_worker_stalled_interval) && var.n8n_queue_worker_stalled_interval >= 1000)
+    error_message = "n8n_queue_worker_stalled_interval must be null or a whole number of at least 1000 milliseconds."
+  }
+}
+
 variable "n8n_execution_timeout" {
   description = "Default execution timeout in seconds. Set to -1 to disable the timeout."
   type        = number
