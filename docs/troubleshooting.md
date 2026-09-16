@@ -237,14 +237,39 @@ kubectl -n n8n rollout status deployment/n8n --timeout=5m
 
 If the UI still hangs after a manual restart, the migration is probably wedged in `pg_stat_activity`. Connect from a bootstrap pod (see the uuid-ossp section above), run `SELECT pid, state, query FROM pg_stat_activity WHERE state != 'idle';`, and `pg_cancel_backend(pid)` any session stuck on `CREATE INDEX`. Then `kubectl -n n8n rollout restart deployment/n8n`. If the race recurs on subsequent applies, raise `var.n8n_helm_post_install_settle_seconds` (e.g. to 120) so the Ingress wait window comfortably outlasts the chart's leader-election bootstrap.
 
+## Main topology changes report competing leaders or missing execution data
+
+A live single-main to multi-main transition can finish successfully while old
+single-main processes overlap with the destination topology. Observed symptoms
+include multiple instances claiming leadership, duplicate scheduled attempts,
+and a worker failing to find execution data. Successful execution counts can
+hide failed attempts because schedule deduplication suppresses some duplicates.
+
+Live changes between single-main and multi-main are unsupported in either
+direction. Follow the [maintenance-only transition checklist](./topology-maintenance.md):
+stop execution producers, prevent controllers from recreating the source
+workload, and verify that all old main processes have stopped before starting
+the destination. A maintenance window, `Recreate`, or a successful Helm rollback
+alone does not enforce this boundary. The current module does not enforce it
+either.
+
+If a live transition has already produced these symptoms, pause further topology
+changes, preserve logs from all affected pods, and reconcile queue jobs and
+execution outcomes. Do not treat healthy replacement pods as proof that the
+transition was safe.
+
 ## Switching to multi-main fails because the license lacks `feat:multipleMainInstances`
 
-Raising `n8n_main_hpa_min_replicas` above 1 without the multi-main entitlement active on `var.n8n_license_key` does not fail at plan time — Terraform has no way to inspect a license's entitlements. Instead:
+Check the destination license before the
+[maintenance-only transition](./topology-maintenance.md). Raising
+`n8n_main_hpa_min_replicas` above 1 without the multi-main entitlement active on
+`var.n8n_license_key` does not fail at plan time: Terraform cannot inspect the
+license's entitlements. Instead:
 
 1. `helm_release.n8n` renders `multiMain.enabled = true` and the additional main pod(s) start.
 2. Each additional main pod fails its license check for `feat:multipleMainInstances` and crash-loops (or the leader stops serving, depending on which pod loses the race).
 3. `helm_release.n8n` runs with `wait = true`, so Helm never observes `replicas == readyReplicas` and blocks until `timeout` (`var.n8n_helm_timeout`, default 600 s).
-4. `atomic = true` and `cleanup_on_fail = true` then roll the release back to the last known-good revision automatically — `terraform apply` reports the Helm release resource as failed, but the cluster is left running the prior (working) topology, not a half-applied one.
+4. `atomic = true` makes Helm attempt an automatic rollback to the previous revision; `cleanup_on_fail = true` permits cleanup of newly created upgrade resources. Terraform reports the failed upgrade. Inspect the resulting workload rather than assuming the prior topology is healthy or that no source and destination processes overlapped.
 
 Diagnose with:
 
@@ -253,17 +278,16 @@ kubectl -n n8n get pods -l app.kubernetes.io/component=main
 kubectl -n n8n exec -it <a-main-pod> -c n8n-main -- n8n license:info
 ```
 
-`n8n license:info` reports the active plan and its entitlements. If `feat:multipleMainInstances` is absent, either upgrade the license or set `n8n_main_hpa_min_replicas` back to `1` (single-main — see the root [README](../README.md#main-topology-multi-main-and-single-main)) and re-apply.
+`n8n license:info` reports the active plan and its entitlements. If
+`feat:multipleMainInstances` is absent, keep traffic and triggers disabled while
+you choose either a suitable license or recovery to single-main. Inspect Helm
+history, actual controllers, and surviving pods before planning recovery.
 
-If the automatic rollback does not fully recover the release (for example, a prior manual `kubectl` edit left the Deployment out of sync with the Helm release), reconcile manually:
-
-```bash
-helm -n n8n history n8n                      # find the last good revision
-helm -n n8n rollback n8n <revision>           # force it back explicitly
-terraform apply                               # reconcile Terraform's Helm values against the rolled-back release
-```
-
-This is the same recovery path for any failed `helm_release.n8n` upgrade, not something specific to topology changes — topology is simply the failure mode most likely to trip it, because it is the one input change whose success depends on an external license server rather than anything Terraform can validate.
+Do not blindly toggle the input, run `helm rollback`, or reapply. Follow the
+[maintenance failure and rollback procedure](./topology-maintenance.md#failure-and-rollback),
+re-establish the stopped-workload boundary, and review a fresh recovery plan.
+Neither automatic nor manual Helm rollback provides a topology-transition
+safety guarantee.
 
 ## `terraform destroy` hangs on namespace finalizers or App Gateway frontend IP release
 

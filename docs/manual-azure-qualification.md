@@ -91,34 +91,47 @@ stuck `CrashLoopBackOff` after either apply.
 
 **Result:** _______________________________________________
 
-### 4. Multi-main → single-main transition
+### 4. Multi-main to single-main maintenance transition
 
-**Setup:** Starting from a healthy multi-main deployment, set
-`n8n_main_hpa_min_replicas = 1` and apply.
+**Setup:** Follow the [maintenance-only transition checklist](./topology-maintenance.md)
+on a disposable deployment. Disable triggers and incoming execution traffic,
+resolve outstanding work, and prevent controllers from recreating old mains.
+Record proof that all old main processes and their source workload controllers
+are gone before applying a freshly reviewed plan with
+`n8n_main_hpa_min_replicas = 1`. A direct live change is unsupported.
 
-**Expected outcome:** Helm reduces the main Deployment to one replica, using
-`Recreate`. Editor/API/scheduled-trigger requests are briefly interrupted
-during the swap. `tests/scripts/smoke-test.sh` detects `single-main` and
-passes with one ready main and no leader-election warning.
+**Expected outcome:** The destination has one ready main, HPA bounds 1/1,
+`Recreate`, and PDB minimum 0. No source main overlaps with the destination.
+Before restoring business workflows, a temporary scheduled fixture completes
+at least three healthy ticks. Reconcile canonical scheduled times, execution
+IDs, queue jobs, and all main/worker logs; successful execution counts alone
+do not rule out duplicate attempts. Record maintenance downtime and missed
+ticks separately. Resume traffic only after verification and a no-op plan.
 
 **Result:** _______________________________________________
 
-### 5. Single-main → multi-main transition
+### 5. Single-main to multi-main maintenance transition
 
-**Setup:** Starting from a healthy single-main deployment on a license that
-has `feat:multipleMainInstances`, set `n8n_main_hpa_min_replicas` back to 2+
-and apply. Repeat once more on a license that does **not** have the
-entitlement to confirm the failure/rollback path in
-[`docs/troubleshooting.md`](./troubleshooting.md#switching-to-multi-main-fails-because-the-license-lacks-featmultiplemaininstances).
+**Setup:** Use the same [stop-before-start procedure](./topology-maintenance.md)
+with a destination license that has `feat:multipleMainInstances`. Verify all
+old single-main processes and their source workload controllers are gone
+before applying a freshly reviewed plan with `n8n_main_hpa_min_replicas = 2`
+or more. A direct live change is unsupported, even during a maintenance window.
 
-**Expected outcome (entitled license):** The additional main pod(s) start,
-pass their license check, and elect a leader; `tests/scripts/smoke-test.sh`
-detects `multi-main` and shows leader-election activity.
-**Expected outcome (non-entitled license):** The additional main pod(s)
-fail their license check, the Helm release times out, and `atomic = true`
-rolls it back to the prior single-main revision. `terraform apply` reports
-the Helm release as failed, but the cluster is left serving the old,
-working topology.
+**Expected outcome:** New mains pass licensing and converge on the destination
+topology without source-process overlap. HPA bounds and PDB match the selected
+floor. Capture leadership, duplicate suppression, queue jobs, worker failures,
+and execution outcomes through at least three healthy schedule ticks. Inspect
+all main logs; a leader-election message alone does not prove unique leadership.
+Resume business workflows and traffic only after verification and a no-op plan.
+
+**Separate failure case:** With explicit approval on a disposable deployment,
+repeat destination startup without the required entitlement to qualify the
+[license-failure path](./troubleshooting.md#switching-to-multi-main-fails-because-the-license-lacks-featmultiplemaininstances).
+Keep triggers and traffic disabled. Record the failed apply, automatic rollback,
+actual remaining processes, and recovery steps. Do not assume rollback preserves
+the stop-before-start boundary or restores a healthy topology. Review a fresh
+recovery plan before restarting either topology.
 
 **Result:** _______________________________________________
 
