@@ -289,6 +289,38 @@ re-establish the stopped-workload boundary, and review a fresh recovery plan.
 Neither automatic nor manual Helm rollback provides a topology-transition
 safety guarantee.
 
+## `terraform plan -replace` on the AKS cluster fails with `connection refused`
+
+**Symptom:** planning a replacement of `azurerm_kubernetes_cluster.n8n[0]`
+(explicitly with `-replace`, or implicitly through a change that forces a new
+cluster, such as a new `friendly_name_prefix`, subnet, or SKU-level immutable
+attribute) exits 1 with
+`Get "http://localhost/api/v1/namespaces/n8n": dial tcp [::1]:80: connect: connection refused`
+for `kubernetes_namespace.n8n` and `module.controllers.kubernetes_namespace.keda`.
+
+**Cause:** the caller's `kubernetes`, `helm`, and `kubectl` providers are
+configured from `module.n8n.aks_kube_config` (or, with `create_aks = false`,
+from the caller's own cluster resource). When the cluster is planned for
+replacement those values are unknown during plan, and the providers fall back
+to an empty configuration that targets `localhost`. HashiCorp states that a
+provider "cannot refer to anything unknown before it's configured" and that
+this "cannot work if the provider needs to use that configuration during plan
+or refresh" ([hashicorp/terraform#24131](https://github.com/hashicorp/terraform/issues/24131)).
+The module's one-apply contract covers fresh installs and updates on an
+existing cluster, not in-place cluster replacement.
+
+**Resolution:** do not replace the cluster in place. Back up the encryption
+key (`terraform output -raw n8n_encryption_key`) and durable data, run
+`terraform destroy` while the AKS API is reachable, and re-apply. PostgreSQL,
+Redis, Blob storage, and the Key Vault certificate are separate resources and
+are not affected by the failed plan, but a full destroy removes the
+module-managed database and storage account; restore from backup or move to
+the `create_database = false` / `create_blob_storage = false` reference
+inputs first if the data must survive. Targeted destroys or `terraform state
+rm` of the Kubernetes-provider resources can make the replacement plan
+succeed, but that is manual state surgery outside the supported path and is
+not covered by the module's tests.
+
 ## `terraform destroy` hangs on namespace finalizers or App Gateway frontend IP release
 
 See [`destroy-cleanup.md`](./destroy-cleanup.md) for the standard manual cleanup steps: removing stuck `kubernetes` finalizers from the n8n namespace, manually deleting the App Gateway frontend IP configuration if it survives the App Gateway destroy, and the safe re-apply path after a partial destroy.

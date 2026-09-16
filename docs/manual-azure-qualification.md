@@ -41,8 +41,8 @@ Operator:        <name>
 Use a disposable deployment with separate state and an agreed spending limit.
 Before disruptive cases, back up state, the n8n encryption key, and durable data.
 Confirm node quota and subnet capacity, review each saved Terraform plan, and
-obtain operator approval before applying it. Run AKS replacement and destroy
-last. Never commit state, saved plans, Secrets, or credential-bearing logs.
+obtain operator approval before applying it. Run the AKS replacement plan check
+and destroy last. Never commit state, saved plans, Secrets, or credential-bearing logs.
 
 A smoke-test exit code of 0 is not sufficient evidence by itself. Record and
 resolve warnings and skips relevant to each case. Supply an API key for the
@@ -251,18 +251,30 @@ certificate keys or kubeconfig contents in the qualification results.
 
 **Setup:** Use a disposable module-managed deployment with backed-up encryption
 key and durable data. Request replacement of its AKS resource through a saved
-Terraform plan. Review all dependent changes before approval: PostgreSQL,
-Redis, Blob storage, and the encryption key must not be replaced unexpectedly.
-Apply the approved plan without routine targeting or manual state removal.
+Terraform plan (`terraform plan -replace='module.n8n.azurerm_kubernetes_cluster.n8n[0]'`).
+Review all dependent changes: PostgreSQL, Redis, Blob storage, the Key Vault
+certificate, the Application Gateway, and the encryption key must not be
+replaced.
 
-**Expected outcome:** Terraform replaces AKS and restores the Kubernetes
-resources, KEDA CRDs, authentication, and n8n workload through the combined
-provider graph. Existing credentials still decrypt, workflows execute, and
-retained binaries download. Record the number of applies and any recovery
-steps; a second pass does not establish a verified one-apply replacement.
-A final plan reports no changes.
+**Expected outcome:** The plan cannot be produced. Replacing the cluster makes
+`aks_kube_config` unknown at plan time, and the caller's `kubernetes`, `helm`,
+and `kubectl` providers, which are configured from it, fall back to an empty
+configuration. Refreshing the existing namespaces then fails with
+`Get "http://localhost/api/v1/namespaces/n8n": dial tcp [::1]:80: connect: connection refused`.
+This is a Terraform provider-configuration constraint, not a module defect
+(see [`troubleshooting.md`](./troubleshooting.md#terraform-plan--replace-on-the-aks-cluster-fails-with-connection-refused)).
+In-place AKS replacement is therefore **outside the one-apply contract**.
+Record the failing plan as evidence; do not fall back to `-target` or
+`terraform state rm` in the qualification. The supported path is destroy and
+recreate with the backed-up encryption key and durable data, exercised by
+case 15 followed by case 1.
 
-**Result:** _______________________________________________
+**Result:** Plan fails as described above (checked 2026-09-16, Terraform 1.16.1,
+AzureRM 4.81.0, Kubernetes 2.38.0, Helm 2.17.0). Dependent changes were
+computed correctly: cluster and user pool replaced, four AGIC role assignments
+and the API warm-up gate replaced, workload federated credential updated for
+the new OIDC issuer; no data-bearing resource or the encryption key was
+touched. No apply was attempted.
 
 ### 15. Normal destroy and caller-owned resource preservation
 

@@ -118,7 +118,9 @@ creation depends on `time_sleep.aks_api_warmup`; KEDA installs before the
 CRD-aware TriggerAuthentication; the n8n release installs after both. Mocked
 plans and `terraform graph` verify those static edges, but they do not prove
 live Azure lifecycle behavior — track cold create, no-op apply, Helm-only
-update, AKS credential rotation, partial-apply recovery, AKS replacement,
+update, AKS credential rotation, partial-apply recovery, AKS replacement
+(known to fail at plan time because the caller's Kubernetes-side providers
+are configured from `aks_kube_config`; see `docs/troubleshooting.md`),
 normal destroy, and unavailable-API recovery per `openspec/changes/
 align-azure-with-aws-capabilities/tasks.md` section 17.4 before treating the
 one-apply contract as a release guarantee for a given release.
