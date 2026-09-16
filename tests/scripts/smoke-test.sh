@@ -324,6 +324,56 @@ check_deployment() {
   fi
 }
 
+# Inspect captured history, not current leader uniqueness. Diagnostics take
+# precedence over role messages so a later recovery cannot hide a conflict.
+check_leader_logs() {
+  local logs="$1" label="$2" diagnostics activity
+  diagnostics=$(printf '%s\n' "$logs" | grep -iE \
+    'Detected ([2-9]|[1-9][0-9]+) instances claiming leader role|Leader failed to renew leader key|Failed to (set leader key|clear leader key|get leader key|renew leader TTL|try leader key set)' || true)
+  if [[ -n "$diagnostics" ]]; then
+    fail "$label: leader-election conflict/failure diagnostic in captured logs (may be historical; does not establish ongoing split-brain)"
+    while IFS= read -r line; do info "$line"; done <<< "$diagnostics"
+    return
+  fi
+
+  if printf '%s\n' "$logs" | grep -qi 'MaxListenersExceededWarning'; then
+    warn "$label: listener warnings in captured logs are not leader-election success evidence"
+  fi
+
+  activity=$(printf '%s\n' "$logs" \
+    | grep -viE 'warn|error|fail' \
+    | grep -E '\[Instance ID [^]]+\] (Leader is now this instance|Leader is this instance|Leader is other instance "[^"]+"|This is now a follower instance)[[:space:]]*$' \
+    | tail -3 || true)
+  if [[ -n "$activity" ]]; then
+    info "$label: historical leader-role activity (not proof of a unique current leader)"
+    while IFS= read -r line; do info "$line"; done <<< "$activity"
+  else
+    skip "$label: no explicit leader-role activity in captured logs; leader uniqueness is unverified"
+  fi
+}
+
+check_main_leader_logs() {
+  local leader_pods leader_pod leader_logs
+  if ! leader_pods=$(kubectl get pods -n "$NAMESPACE" \
+      -l app.kubernetes.io/component=main \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); then
+    fail "Could not enumerate main pods for leader-log inspection"
+    return
+  fi
+  if [[ -z "$leader_pods" ]]; then
+    fail "No main pods available for leader-log inspection"
+    return
+  fi
+  while IFS= read -r leader_pod; do
+    [[ -z "$leader_pod" ]] && continue
+    if leader_logs=$(kubectl logs "$leader_pod" -n "$NAMESPACE" -c n8n-main --tail=200); then
+      check_leader_logs "$leader_logs" "$leader_pod"
+    else
+      fail "$leader_pod: could not read main container logs"
+    fi
+  done <<< "$leader_pods"
+}
+
 # ── Self-test (offline, no Azure credentials) ─────────────────────────────────
 # `SMOKE_TEST_SELF_TEST=1 ./smoke-test.sh` exercises detect_topology() and
 # check_deployment() against recorded/synthetic kubectl fixtures for
@@ -445,6 +495,60 @@ multi-main missing PDB|2|6|RollingUpdate|
 FIXTURES
 
   echo ""
+  echo "== Self-test: leader-log evidence =="
+  while IFS='|' read -r fixture_name expected_fail expected_warn expected_skip fixture_logs; do
+    before_pass="$PASS" before_fail="$FAIL" before_warn="$WARN" before_skip="$SKIPPED"
+    check_leader_logs "$(printf '%b' "$fixture_logs")" "$fixture_name"
+    delta_pass=$((PASS - before_pass)) delta_fail=$((FAIL - before_fail))
+    delta_warn=$((WARN - before_warn)) delta_skip=$((SKIPPED - before_skip))
+    assert_eq "$fixture_name counters (pass/fail/warn/skip)" \
+      "0/$expected_fail/$expected_warn/$expected_skip" "$delta_pass/$delta_fail/$delta_warn/$delta_skip"
+  done <<'LEADER_FIXTURES'
+multiple leaders|1|0|0|Cluster check warning Detected 2 instances claiming leader role: a, b
+many leaders|1|0|0|Cluster check warning Detected 12 instances claiming leader role: a, b
+listener warning|0|1|1|MaxListenersExceededWarning: 11 leader-takeover listeners added to [MultiMainSetup]
+positive|0|0|0|[Instance ID a] Leader is now this instance
+follower|0|0|0|[Instance ID b] This is now a follower instance
+mixed conflict and recovery|1|0|0|Detected 2 instances claiming leader role: a, b\n[Instance ID a] Leader is now this instance\n[Instance ID a] Leader is this instance\n[Instance ID a] Leader is this instance\n[Instance ID a] Leader is this instance
+listener and positive|0|1|0|MaxListenersExceededWarning: 11 leader-stepdown listeners\n[Instance ID a] Leader is now this instance
+warning with positive text|0|0|1|Warning: [Instance ID a] Leader is now this instance
+renewal failure|1|0|0|[Multi-main setup] Leader failed to renew leader key
+Redis leader failure|1|0|0|Failed to set leader key in Redis during init: connection refused
+resolved audit event|0|0|1|n8n.audit.cluster.split-brain.resolved
+unrelated|0|0|1|Initializing n8n process
+empty|0|0|1|
+LEADER_FIXTURES
+
+  # Exercise real failure handling, including continuing after a failed read.
+  kubectl() {
+    if [[ "$1" == "get" ]]; then
+      [[ "$LEADER_READ_FIXTURE" == "enumeration failure" ]] && return 1
+      [[ "$LEADER_READ_FIXTURE" == "no pods" ]] && return 0
+      printf 'main-a\nmain-b\n'
+    elif [[ "$1" == "logs" ]]; then
+      if [[ "$LEADER_READ_FIXTURE" == "first read failure" && "$2" == "main-a" ]]; then
+        return 1
+      elif [[ "$2" == "main-b" ]]; then
+        echo 'Detected 2 instances claiming leader role: a, b'
+      else
+        echo '[Instance ID a] Leader is now this instance'
+      fi
+    else
+      return 1
+    fi
+  }
+  while IFS='|' read -r LEADER_READ_FIXTURE expected_fail; do
+    before_pass="$PASS" before_fail="$FAIL"
+    check_main_leader_logs
+    delta_pass=$((PASS - before_pass)) delta_fail=$((FAIL - before_fail))
+    assert_eq "$LEADER_READ_FIXTURE counters (pass/fail)" "0/$expected_fail" "$delta_pass/$delta_fail"
+  done <<'LEADER_READ_FIXTURES'
+enumeration failure|1
+no pods|1
+second pod conflict|1
+first read failure|2
+LEADER_READ_FIXTURES
+
   echo "Self-test summary: $PASS passed, $FAIL failed (includes expected failures), $WARN warned"
   if [[ "$self_test_failures" -gt 0 ]]; then
     echo "SELF-TEST RESULT: FAIL"
@@ -686,20 +790,13 @@ else
   multi_main=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
     -- printenv N8N_MULTI_MAIN_SETUP_ENABLED 2>/dev/null || echo "")
   if [[ "$multi_main" == "true" ]]; then
-    pass "N8N_MULTI_MAIN_SETUP_ENABLED=true on main pods (Redis leader election active)"
+    pass "N8N_MULTI_MAIN_SETUP_ENABLED=true on selected main pod (configuration check only)"
   else
     warn "N8N_MULTI_MAIN_SETUP_ENABLED is not 'true' (got: '${multi_main:-<unset>}')"
     info "Expected when n8n_main_hpa_min_replicas > 1"
   fi
 
-  leader_log=$(kubectl logs "$main_pod" -n "$NAMESPACE" -c n8n-main --tail=200 2>/dev/null \
-    | grep -iE "leader|leadership|multi-main|multi main" | tail -3 || true)
-  if [[ -n "$leader_log" ]]; then
-    pass "Leader-election activity in main pod logs"
-    while IFS= read -r line; do info "$line"; done <<< "$leader_log"
-  else
-    info "No leader-election log lines in last 200 lines — normal if recently rolled"
-  fi
+  check_main_leader_logs
 fi
 
 # ── Task runner sidecar (workers) ─────────────────────────────────────────────
