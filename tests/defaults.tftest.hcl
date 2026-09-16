@@ -1429,6 +1429,11 @@ run "base_release_outputs_match_chart_service_contract" {
   }
 
   assert {
+    condition     = tolist(output.n8n_test_webhook_path_prefixes) == tolist(["/webhook-test", "/form-test", "/mcp-test"])
+    error_message = "The test-mode path output must list every editor test endpoint family served only by main pods."
+  }
+
+  assert {
     condition     = output.n8n_url == "https://${var.n8n_domain}"
     error_message = "n8n_url must expose the canonical HTTPS domain."
   }
@@ -4018,15 +4023,25 @@ run "every_ingress_host_routes_all_webhook_prefixes_before_main" {
   assert {
     condition = alltrue([
       for rule in kubernetes_ingress_v1.n8n[0].spec[0].rule :
-      [for path in rule.http[0].path : path.path] == concat(local.n8n_webhook_path_prefixes, ["/"])
+      [for path in rule.http[0].path : path.path] == concat(local.n8n_test_webhook_path_prefixes, local.n8n_webhook_path_prefixes, ["/"])
     ])
-    error_message = "Every host must declare all five webhook prefixes before the main-service catch-all."
+    error_message = "Every host must declare the three test-mode prefixes, then all five webhook prefixes, then the main-service catch-all."
   }
 
   assert {
     condition = alltrue(flatten([
       for rule in kubernetes_ingress_v1.n8n[0].spec[0].rule : [
-        for path in slice(rule.http[0].path, 0, length(local.n8n_webhook_path_prefixes)) :
+        for path in slice(rule.http[0].path, 0, length(local.n8n_test_webhook_path_prefixes)) :
+        path.backend[0].service[0].name == "n8n-main" && path.backend[0].service[0].port[0].number == 5678
+      ]
+    ]))
+    error_message = "Every test-mode prefix on every host must target the main Service on port 5678 ahead of the production webhook prefixes."
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      for rule in kubernetes_ingress_v1.n8n[0].spec[0].rule : [
+        for path in slice(rule.http[0].path, length(local.n8n_test_webhook_path_prefixes), length(local.n8n_test_webhook_path_prefixes) + length(local.n8n_webhook_path_prefixes)) :
         path.backend[0].service[0].name == "n8n-webhook-processor" && path.backend[0].service[0].port[0].number == 5678
       ]
     ]))
@@ -4036,7 +4051,7 @@ run "every_ingress_host_routes_all_webhook_prefixes_before_main" {
   assert {
     condition = alltrue([
       for rule in kubernetes_ingress_v1.n8n[0].spec[0].rule :
-      rule.http[0].path[length(local.n8n_webhook_path_prefixes)].backend[0].service[0].name == "n8n-main"
+      rule.http[0].path[length(local.n8n_test_webhook_path_prefixes) + length(local.n8n_webhook_path_prefixes)].backend[0].service[0].name == "n8n-main"
     ])
     error_message = "The final catch-all path on every host must target the main Service."
   }

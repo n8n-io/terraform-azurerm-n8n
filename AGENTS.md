@@ -179,8 +179,13 @@ live capacity testing.
 private-only Application Gateway, subnet NSG, WAF policy, AGIC permissions,
 and Kubernetes Ingress. `create_ingress = false` must also remove the AKS
 AGIC addon while preserving the resource-derived service-discovery outputs.
-Keep all five entries in `local.n8n_webhook_path_prefixes` before `/` for
-every host. The subnet NSG must retain `GatewayManager` access on
+Keep the three `local.n8n_test_webhook_path_prefixes` entries (main
+Service) before all five `local.n8n_webhook_path_prefixes` entries (webhook
+processors) before `/` for every host: AGIC renders `Prefix` rules as
+string-prefix patterns and Application Gateway evaluates them in declared
+order, so `/webhook*` would otherwise capture `/webhook-test`. Do not add
+`ssl_certificate` back to the gateway's `ignore_changes`; that silently
+turns `app_gateway_tls_cert_secret_id` rotations into no-ops. The subnet NSG must retain `GatewayManager` access on
 65200-65535 and `AzureLoadBalancer` probe access before its deny rule. Source
 restrictions apply to the editor and webhook paths together.
 

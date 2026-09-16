@@ -324,6 +324,27 @@ resource "kubernetes_ingress_v1" "n8n" {
       host = var.n8n_domain
 
       http {
+        # Editor test-mode prefixes first: Application Gateway matches string
+        # prefixes in declared order, so /webhook* would otherwise capture
+        # /webhook-test and send it to webhook processors that return 404.
+        dynamic "path" {
+          for_each = module.n8n.n8n_test_webhook_path_prefixes
+
+          content {
+            path      = path.value
+            path_type = "Prefix"
+
+            backend {
+              service {
+                name = module.n8n.n8n_service_name
+                port {
+                  number = module.n8n.n8n_service_port
+                }
+              }
+            }
+          }
+        }
+
         dynamic "path" {
           for_each = module.n8n.n8n_webhook_path_prefixes
 

@@ -248,6 +248,11 @@ resource "azurerm_application_gateway" "n8n" {
 
   tags = merge(local.common_tags, { Name = local.app_gateway_name })
 
+  # AGIC owns the listener, pool, probe, and path-map blocks it renders from
+  # the Ingress. ssl_certificate is deliberately not ignored: AGIC references
+  # the module-owned `appgw-ssl-cert` by name and never rewrites it, and
+  # ignoring it would silently drop every rotation of
+  # var.app_gateway_tls_cert_secret_id on an existing gateway.
   lifecycle {
     ignore_changes = [
       backend_address_pool,
@@ -258,7 +263,6 @@ resource "azurerm_application_gateway" "n8n" {
       redirect_configuration,
       request_routing_rule,
       rewrite_rule_set,
-      ssl_certificate,
       url_path_map,
       tags["ingress-for-aks-cluster-id"],
       tags["managed-by-k8s-ingress"],
@@ -299,9 +303,13 @@ resource "azurerm_role_assignment" "agic_addon_appgw_subnet_network_contributor"
 }
 
 # ── AGIC-managed Kubernetes Ingress ──────────────────────────────────────────
-# For every host, all five production webhook prefixes are declared before the
-# catch-all so AGIC routes waiting webhooks, forms, and MCP traffic to the
-# webhook processors instead of mains where production webhooks are disabled.
+# For every host, the three editor test-mode prefixes are declared first and
+# target the main Service, then all five production webhook prefixes target
+# the webhook processors, then the catch-all targets main. AGIC renders
+# Prefix rules as string-prefix patterns (`/webhook*` also matches
+# `/webhook-test`), and Application Gateway evaluates them in declared order,
+# so this ordering is what keeps test webhooks on mains and production
+# webhooks off them.
 resource "kubernetes_ingress_v1" "n8n" {
   count = var.create_ingress ? 1 : 0
 
@@ -321,6 +329,24 @@ resource "kubernetes_ingress_v1" "n8n" {
         host = rule.value
 
         http {
+          dynamic "path" {
+            for_each = local.n8n_test_webhook_path_prefixes
+
+            content {
+              path      = path.value
+              path_type = "Prefix"
+
+              backend {
+                service {
+                  name = "${helm_release.n8n.name}-main"
+                  port {
+                    number = local.n8n_service_port
+                  }
+                }
+              }
+            }
+          }
+
           dynamic "path" {
             for_each = local.n8n_webhook_path_prefixes
 

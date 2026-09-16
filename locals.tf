@@ -74,6 +74,19 @@ locals {
     "/mcp",
   ]
 
+  # Editor test-mode endpoints are served by main pods only. AGIC renders a
+  # pathType=Prefix rule as an Application Gateway string-prefix pattern
+  # (`/webhook*`), which also matches `/webhook-test/...`, and the gateway
+  # evaluates path rules in declared order. These prefixes therefore have to
+  # be routed to the main Service ahead of the production prefixes above, or
+  # test webhooks, Form Trigger test mode, and MCP test mode land on
+  # webhook-processor pods that return 404.
+  n8n_test_webhook_path_prefixes = [
+    "/webhook-test",
+    "/form-test",
+    "/mcp-test",
+  ]
+
   # The canonical host remains authoritative for n8n's advertised editor and
   # webhook URLs. Additional domains are routing aliases only. Normalize every
   # host once so the Ingress, section 12 DNS records, and certificate guidance

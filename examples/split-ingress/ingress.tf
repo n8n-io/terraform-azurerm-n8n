@@ -639,6 +639,27 @@ resource "kubernetes_ingress_v1" "admin_internal" {
       host = var.n8n_domain
 
       http {
+        # Editor test-mode prefixes first (served by mains only): Application Gateway matches string
+        # prefixes in declared order, so /webhook* would otherwise capture
+        # /webhook-test and send it to webhook processors that return 404.
+        dynamic "path" {
+          for_each = module.n8n.n8n_test_webhook_path_prefixes
+
+          content {
+            path      = path.value
+            path_type = "Prefix"
+
+            backend {
+              service {
+                name = module.n8n.n8n_service_name
+                port {
+                  number = module.n8n.n8n_service_port
+                }
+              }
+            }
+          }
+        }
+
         # Same prefixes as the public gateway, same reason: mains serve none
         # of them. Declared before the catch-all so the specific paths win.
         dynamic "path" {

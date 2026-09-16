@@ -20,6 +20,30 @@ against Managed Redis's always-on TLS). Every input below defaults to
 preserve existing behavior; none of this release's tuning is applied
 automatically.
 
+### Fixed
+
+- **Editor test-mode routing through the managed Ingress.** AGIC renders
+  `pathType: Prefix` rules as Application Gateway string-prefix patterns, so
+  the `/webhook`, `/form`, and `/mcp` rules also captured `/webhook-test`,
+  `/form-test`, and `/mcp-test` and sent test webhooks, Form Trigger test
+  mode, and MCP test mode to webhook-processor pods, which answered 404. The
+  root Ingress now declares the three test-mode prefixes first, targeting the
+  main Service, and exposes them as the new `n8n_test_webhook_path_prefixes`
+  output. The caller-owned ingress examples (`split-ingress`,
+  `customer-managed-cluster`, `customer-managed-everything`) apply the same
+  ordering.
+- **TLS certificate rotation via `app_gateway_tls_cert_secret_id` was a
+  no-op on an existing gateway.** `azurerm_application_gateway.n8n` listed
+  `ssl_certificate` in `lifecycle.ignore_changes`, so a new versioned Key
+  Vault secret URI never reached the listener and the gateway kept serving
+  the old pinned version. The block is no longer ignored (AGIC references the
+  gateway certificate by name and never rewrites it), and
+  `docs/tls-rotation.md` now describes the versioned-URI behavior and the
+  Key Vault `Self` issuer the self-signed helper actually uses. Callers who
+  rotated out-of-band with `az network application-gateway ssl-cert update`
+  should expect one plan that repoints the listener at the Terraform-declared
+  URI.
+
 ### Added
 
 - **Optional single-main queue mode** (`n8n_main_hpa_min_replicas = 1`): a
@@ -46,7 +70,12 @@ automatically.
   `n8n_executions_data_save_on_error`, `n8n_executions_data_save_on_progress`,
   and `n8n_executions_data_save_manual_executions`, replacing the module's
   previously hardcoded `executions.data` literals with the same default
-  values.
+  values. The four settings are also rendered into the webhook-processor
+  containers (`webhookProcessor.extraEnv`): the pinned chart only renders
+  `executions.data` on main and worker pods, yet the webhook process decides
+  retention when a queued webhook run finishes, so without this the
+  configured success/error policy was silently ignored for webhook-triggered
+  executions.
 - `n8n_node_max_old_space_size_mb`: an opt-in V8 heap ceiling rendered as
   `NODE_OPTIONS=--max-old-space-size=<value>` on every application container
   (main, worker, webhook processor). Rejects a caller-supplied `NODE_OPTIONS`

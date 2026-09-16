@@ -75,8 +75,12 @@ audit](#data-sources-are-not-a-security-audit) below).
 `create_aks = false` **requires `create_ingress = false`.** This module
 cannot manage the AGIC addon, or the identities and role assignments AGIC
 needs, on a cluster it does not own. Route the exported `n8n_service_name` /
-`n8n_webhook_service_name` / `n8n_webhook_path_prefixes` outputs through a
-caller-owned ingress instead — see
+`n8n_webhook_service_name` / `n8n_webhook_path_prefixes` /
+`n8n_test_webhook_path_prefixes` outputs through a caller-owned ingress
+instead. Declare the test-mode prefixes (main Service) before the production
+webhook prefixes (webhook processors): Application Gateway matches string
+prefixes in declared order, so `/webhook*` would otherwise capture
+`/webhook-test`. See
 [`examples/customer-managed-cluster`](../examples/customer-managed-cluster/)
 for a caller-installed AGIC on the same cluster used as the AKS stand-in.
 

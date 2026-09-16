@@ -186,6 +186,13 @@ output "n8n_webhook_path_prefixes" {
   depends_on = [helm_release.n8n]
 }
 
+output "n8n_test_webhook_path_prefixes" {
+  description = "Editor test-mode path prefixes (test webhooks, Form Trigger test mode, MCP test mode) caller-owned ingress must route to n8n_service_name ahead of n8n_webhook_path_prefixes. Application Gateway matches string prefixes in declared order, so /webhook* would otherwise capture /webhook-test."
+  value       = local.n8n_test_webhook_path_prefixes
+
+  depends_on = [helm_release.n8n]
+}
+
 output "n8n_url" {
   description = "Canonical HTTPS URL for the n8n editor UI (N8N_EDITOR_BASE_URL). This is also the default webhook base unless n8n_webhook_url overrides it — see the n8n_webhook_url output for the effective advertised webhook base."
   value       = "https://${var.n8n_domain}"

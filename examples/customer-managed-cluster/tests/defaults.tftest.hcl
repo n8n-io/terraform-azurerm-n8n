@@ -142,6 +142,16 @@ run "customer_managed_cluster_plan" {
     error_message = "The Ingress must route every webhook prefix to the webhook processor Service."
   }
 
+  # Test-mode prefixes must precede the production prefixes and target main:
+  # Application Gateway evaluates string-prefix rules in declared order.
+  assert {
+    condition = (
+      slice([for p in kubernetes_ingress_v1.n8n.spec[0].rule[0].http[0].path : p.path], 0, 3) == ["/webhook-test", "/form-test", "/mcp-test"] &&
+      alltrue([for p in slice(kubernetes_ingress_v1.n8n.spec[0].rule[0].http[0].path, 0, 3) : p.backend[0].service[0].name == "n8n-main"])
+    )
+    error_message = "The Ingress must route the three editor test-mode prefixes to the main Service ahead of the production webhook prefixes."
+  }
+
   assert {
     condition = one([
       for p in kubernetes_ingress_v1.n8n.spec[0].rule[0].http[0].path :
