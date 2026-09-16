@@ -82,6 +82,16 @@ variables {
 
 run "multi_main" {
   command = plan
+
+  assert {
+    condition = { for env in yamldecode(helm_release.n8n.values[0]).webhookProcessor.extraEnv : env.name => env.value } == {
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS        = "all"
+      EXECUTIONS_DATA_SAVE_ON_ERROR          = "all"
+      EXECUTIONS_DATA_SAVE_ON_PROGRESS       = "false"
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS = "true"
+    }
+    error_message = "Webhook processors must receive the default execution-save policies."
+  }
 }
 
 run "single_main" {
@@ -122,6 +132,37 @@ run "save_policy" {
     n8n_executions_data_save_on_error          = "all"
     n8n_executions_data_save_on_progress       = true
     n8n_executions_data_save_manual_executions = false
+  }
+
+  assert {
+    condition = { for env in yamldecode(helm_release.n8n.values[0]).webhookProcessor.extraEnv : env.name => env.value } == {
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS        = "none"
+      EXECUTIONS_DATA_SAVE_ON_ERROR          = "all"
+      EXECUTIONS_DATA_SAVE_ON_PROGRESS       = "true"
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS = "false"
+    }
+    error_message = "Webhook processors must receive independent save policies and stringified booleans."
+  }
+}
+
+run "save_policy_inverse" {
+  command = plan
+
+  variables {
+    n8n_executions_data_save_on_success        = "all"
+    n8n_executions_data_save_on_error          = "none"
+    n8n_executions_data_save_on_progress       = false
+    n8n_executions_data_save_manual_executions = true
+  }
+
+  assert {
+    condition = { for env in yamldecode(helm_release.n8n.values[0]).webhookProcessor.extraEnv : env.name => env.value } == {
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS        = "all"
+      EXECUTIONS_DATA_SAVE_ON_ERROR          = "none"
+      EXECUTIONS_DATA_SAVE_ON_PROGRESS       = "false"
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS = "true"
+    }
+    error_message = "Webhook error retention must vary independently from success retention."
   }
 }
 

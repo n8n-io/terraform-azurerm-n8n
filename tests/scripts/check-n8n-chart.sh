@@ -102,6 +102,7 @@ export_values worker_timing "$tmp/worker-timing-values.json"
 
 echo "== Rendering execution save-policy values fixture (independent success/error policies, both booleans changed) =="
 export_values save_policy "$tmp/save-policy-values.json"
+export_values save_policy_inverse "$tmp/save-policy-inverse-values.json"
 
 echo "== Rendering application heap ceiling values fixture =="
 export_values heap "$tmp/heap-values.json"
@@ -133,6 +134,7 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/save-policy-values.json" save-policy "$template"
+  render "$tmp/save-policy-inverse-values.json" save-policy-inverse "$template"
 done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
@@ -217,35 +219,28 @@ echo "PASS: single-main passes chart schema validation with one main, HPA 1/1, R
 
 echo "== Verify runtime manifests (execution save policy, URL naming) =="
 
-for template in deployment-main deployment-worker; do
-  jq -e '
-    (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_ERROR"))[0].value) == "all"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_SUCCESS"))[0].value) == "all"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_PROGRESS"))[0].value) == "false"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS"))[0].value) == "true"
-  ' "$tmp/multi-main-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} execution save-policy environment values do not match the current defaults" >&2; exit 1; }
+# Check all roles: webhook processors decide final retention for production
+# webhooks even though the chart omits its native save-policy env on that role.
+for fixture in multi-main save-policy save-policy-inverse; do
+  case "$fixture" in
+    multi-main)          success=all  error=all  progress=false manual=true ;;
+    save-policy)         success=none error=all  progress=true  manual=false ;;
+    save-policy-inverse) success=all  error=none progress=false manual=true ;;
+  esac
+  for template in deployment-main deployment-worker deployment-webhook-processor; do
+    jq -e --arg success "$success" --arg error "$error" --arg progress "$progress" --arg manual "$manual" '
+      [.spec.template.spec.containers[0].env[] | select(.name | startswith("EXECUTIONS_DATA_SAVE_"))] as $entries
+      | ($entries | length) == 4
+      and ([$entries[] | {key: .name, value: .value}] | from_entries) == {
+        "EXECUTIONS_DATA_SAVE_ON_SUCCESS": $success,
+        "EXECUTIONS_DATA_SAVE_ON_ERROR": $error,
+        "EXECUTIONS_DATA_SAVE_ON_PROGRESS": $progress,
+        "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS": $manual
+      }
+    ' "$tmp/${fixture}-${template}.json" >/dev/null \
+      || { echo "FAIL: ${fixture} ${template} must render each execution save-policy entry exactly once with the expected value" >&2; exit 1; }
+  done
 done
-
-jq -e '
-  [.spec.template.spec.containers[0].env[] | select(.name == "EXECUTIONS_DATA_SAVE_ON_ERROR")] | length == 0
-' "$tmp/multi-main-deployment-webhook-processor.json" >/dev/null \
-  || { echo "FAIL: deployment-webhook-processor unexpectedly renders execution save-policy environment entries" >&2; exit 1; }
-
-for template in deployment-main deployment-worker; do
-  jq -e '
-    (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_ERROR"))[0].value) == "all"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_SUCCESS"))[0].value) == "none"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_ON_PROGRESS"))[0].value) == "true"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS"))[0].value) == "false"
-  ' "$tmp/save-policy-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} execution save-policy environment values do not match the independently overridden fixture" >&2; exit 1; }
-done
-
-jq -e '
-  [.spec.template.spec.containers[0].env[] | select(.name == "EXECUTIONS_DATA_SAVE_ON_ERROR")] | length == 0
-' "$tmp/save-policy-deployment-webhook-processor.json" >/dev/null \
-  || { echo "FAIL: deployment-webhook-processor unexpectedly renders execution save-policy environment entries in the overridden fixture" >&2; exit 1; }
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   jq -e --arg url "https://${domain}" '

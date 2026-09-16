@@ -256,6 +256,17 @@ resource "helm_release" "n8n" {
       enabled                                = true
       replicaCount                           = var.n8n_webhook_hpa_min_replicas
       disableProductionWebhooksOnMainProcess = true
+
+      # Chart 1.10.0 renders executions.data only on main and worker pods.
+      # The webhook process also decides retention when a queued run finishes,
+      # so it must receive the same defaults. Keep these role-specific to avoid
+      # duplicating the chart-owned entries on main and worker containers.
+      extraEnv = [
+        { name = "EXECUTIONS_DATA_SAVE_ON_SUCCESS", value = var.n8n_executions_data_save_on_success },
+        { name = "EXECUTIONS_DATA_SAVE_ON_ERROR", value = var.n8n_executions_data_save_on_error },
+        { name = "EXECUTIONS_DATA_SAVE_ON_PROGRESS", value = tostring(var.n8n_executions_data_save_on_progress) },
+        { name = "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS", value = tostring(var.n8n_executions_data_save_manual_executions) },
+      ]
     }
 
     database = {

@@ -18,7 +18,7 @@ provide.
 
 `check-n8n-chart.sh` renders the pinned n8n Helm chart
 (`var.n8n_chart_version`) with the actual `helm_release.n8n.values`
-exported from nine mocked, plan-only fixtures in
+exported from ten mocked, plan-only fixtures in
 `tests/chart-values.tftest.hcl`, then asserts on the manifests Helm
 actually produces. It therefore catches regressions in the wiring in
 `n8n.tf`, rather than testing a separately reconstructed values map.
@@ -51,9 +51,10 @@ tests/scripts/check-n8n-chart.sh
   `PodDisruptionBudget` minimum/selector.
 - The worker `ScaledObject`'s replica bounds and both `bull:jobs:wait` /
   `bull:jobs:active` triggers.
-- Execution save-policy environment values (`EXECUTIONS_DATA_SAVE_*`) on
-  main and worker only — the chart does not render them on the
-  webhook-processor container.
+- Execution save-policy environment values (`EXECUTIONS_DATA_SAVE_*`) exactly
+  once on main, worker, and webhook-processor containers. The module supplies
+  the webhook entries because the pinned chart omits them for that role.
+  Webhook processors need these settings to decide final execution retention.
 - The current `N8N_WEBHOOK_URL` environment entry on all three
   application containers, and the absence of the chart's own deprecated
   `WEBHOOK_URL` alias (which only renders when `webhook.url` or
