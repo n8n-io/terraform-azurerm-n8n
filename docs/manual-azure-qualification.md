@@ -269,12 +269,10 @@ Record the failing plan as evidence; do not fall back to `-target` or
 recreate with the backed-up encryption key and durable data, exercised by
 case 15 followed by case 1.
 
-**Result:** Plan fails as described above (checked 2026-09-16, Terraform 1.16.1,
-AzureRM 4.81.0, Kubernetes 2.38.0, Helm 2.17.0). Dependent changes were
-computed correctly: cluster and user pool replaced, four AGIC role assignments
-and the API warm-up gate replaced, workload federated credential updated for
-the new OIDC issuer; no data-bearing resource or the encryption key was
-touched. No apply was attempted.
+See [`qualification-runs/`](./qualification-runs/) for filled-in copies of
+this checklist from previous runs.
+
+**Result:** _______________________________________________
 
 ### 15. Normal destroy and caller-owned resource preservation
 

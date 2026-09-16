@@ -541,7 +541,7 @@ concern, and one deliberate nested call to the directly composable
 | `examples/small/`, `examples/medium/`, `examples/large/` | End-to-end sizing examples with caller-owned Azure foundations, a Key Vault certificate helper, and one root `module "n8n"` call. |
 | `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |
 | `tests/scripts/smoke-test.sh`     | Post-`apply` smoke test for live deployments.               |
-| `docs/`                           | Long-form supplementary docs (troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets). |
+| `docs/`                           | Long-form supplementary docs (troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
 | `README.md`                       | Human entry point — architecture, prerequisites, usage, and the auto-generated Reference block. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |
 | `.copywrite.hcl`                  | Enforces the `# Copyright n8n GmbH 2025` / `# SPDX-License-Identifier: MIT` header on every `.tf`. |
