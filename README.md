@@ -56,7 +56,7 @@ The module **expects a pre-existing VNet** and five pre-sized subnets (AKS, Appl
 ## Prerequisites
 
 - **Terraform** `>= 1.9` (the floor that supports the cross-variable validation this module relies on, e.g. `var.app_gateway_keyvault_id` against `var.app_gateway_keyvault_role_assignment_enabled`).
-- **Azure CLI** `>= 2.50` (`az login`, plus the few imperative steps in the docs under `docs/`).
+- **Azure CLI** `>= 2.50` (`az login`, plus the few imperative steps in the docs under `docs/`). Before the first `apply` in a new region or subscription, run `tests/scripts/preflight-region-check.sh` from your root: it reads the region and SKUs from your own `terraform plan` and checks AKS zone support, PostgreSQL Flexible Server version/SKU availability, and (with `--probe-redis`) Azure Managed Redis capacity, the three gaps that otherwise fail 10-20 minutes into an apply (see the first entries of [`docs/troubleshooting.md`](./docs/troubleshooting.md)).
 - **kubectl** `>= 1.30` (used by `tests/scripts/smoke-test.sh` for post-apply verification; the module itself never shells out to `kubectl` — the `kubernetes`, `helm`, and `gavinbunney/kubectl` Terraform providers talk to the AKS API directly).
 - **Helm** `>= 3.14` (the `helm` provider invokes the local Helm binary).
 - A configured `azurerm` provider with `storage_use_azuread = true`, plus `kubernetes` / `helm` / `kubectl` providers wired against the cluster this module creates (see [Usage](#usage) below) — this module declares `required_providers` but never configures a provider itself.

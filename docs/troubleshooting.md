@@ -6,6 +6,8 @@ If you hit something not covered here, open an issue with the resource address t
 
 Every recipe below assumes the module-managed AKS, namespace, and KEDA paths (the defaults). On a customer-managed layer (`create_aks = false`, `create_namespace = false`, or `install_keda = false`), the failure surfaces the same way but the fix is usually on the caller's side of the boundary — see [`docs/customer-managed-infrastructure.md`](./customer-managed-infrastructure.md) for what each attestation actually requires before assuming a module bug.
 
+The first three entries are region/subscription capability gaps that surface 10-20 minutes into an apply, after the network, Key Vault, and Application Gateway already exist. Run [`tests/scripts/preflight-region-check.sh`](../tests/scripts/preflight-region-check.sh) from the root you are about to apply to catch all three first: it plans your configuration, reads the region and SKUs you actually selected, and checks them against what the subscription is offered in that region (add `--probe-redis` to also test Managed Redis capacity with a throwaway cluster).
+
 ## `terraform apply`: AKS cluster creation fails with `AvailabilityZoneNotSupported`
 
 **Symptom**
@@ -24,17 +26,60 @@ Error: creating Kubernetes Cluster ...: unexpected status 400 (400 Bad Request) 
 
 **Root cause**
 
-`var.aks_availability_zones` defaults to `["1", "2", "3"]`, but not every region/VM-SKU/subscription combination supports all three zones for AKS node pools (observed against `germanywestcentral` with `Standard_D2s_v5` in at least one subscription). This may be a subscription- or SKU-level constraint rather than a fixed regional limitation, so don't take the exact zone list above as gospel for every account. Confirm current zone support with `az aks list-vm-skus --location <region> --query "[?name=='<vm size>']"` or the Azure documentation before applying.
+`var.aks_availability_zones` defaults to `["1", "2", "3"]`, but not every region/VM-SKU/subscription combination supports all three zones for AKS node pools. Observed: `germanywestcentral` with `Standard_D2s_v5` offered only `'1,3'` in one subscription, and `eastus` reported `The supported zones for location 'eastus' are ''` (no zones at all) in another, where `az vm list-skus -l eastus --size Standard_D2s_v5` did not list the SKU for that subscription. This is a subscription- or SKU-level constraint as often as a fixed regional one, so don't take any zone list as gospel for every account. Confirm current zone support with `az vm list-skus --location <region> --size <vm size> --resource-type virtualMachines --query "[0].locationInfo[0].zones"` (slow, ~1 minute) or run the preflight script.
 
 **Resolution**
 
-Restrict `aks_availability_zones` to the zones your subscription/SKU/region combination actually supports:
+Restrict `aks_availability_zones` to the zones your subscription/SKU/region combination actually supports, or clear it when the region offers none:
 
 ```hcl
-aks_availability_zones = ["1", "3"]
+aks_availability_zones = ["1", "3"]   # or [] for a zone-less region
 ```
 
 Every example already exposes this variable for exactly this reason (see the `aks_availability_zones` input description). Re-running `terraform apply` after the fix picks up cleanly: resources created before the AKS failure (e.g. the Application Gateway) are left untouched and reused.
+
+## `terraform apply`: PostgreSQL Flexible Server fails with `ParameterOutOfRange: The value of the 'Version' should be in: []`
+
+**Symptom**
+
+`azurerm_postgresql_flexible_server.n8n` fails to create:
+
+```
+Error: creating Flexible Server ...: unexpected status 400 (400 Bad Request) with error:
+ParameterOutOfRange: The value of the 'Version' should be in: []. Verify that the specified parameter value is correct.
+```
+
+**Root cause**
+
+The empty list is the tell: Flexible Server offers *no* PostgreSQL versions to this subscription in this region, so no `pg_version` value can satisfy it. Observed against `eastus` in a subscription where `az postgres flexible-server list-skus -l eastus` returned no `supportedServerVersions` while `centralus` returned 11 through 18. It is a subscription/region offering gap, not a wrong `pg_version`; the same apply usually also fails AKS zone placement in that region (previous entry).
+
+**Resolution**
+
+Pick a region where `az postgres flexible-server list-skus -l <region> --query "[0].supportedServerVersions[].name"` lists your `pg_version` (and `pg_sku_name` under `supportedServerEditions`), or set `create_database = false` and point the module at an existing PostgreSQL endpoint. The preflight script checks both the version and the SKU. Resources created before the failure are reused on the next apply.
+
+## `terraform apply`: Azure Managed Redis fails with `InsufficientCapacity`
+
+**Symptom**
+
+`azurerm_managed_redis.n8n` fails after a few minutes of polling:
+
+```
+Error: creating Redis Enterprise ...: polling after Create: polling failed:
+Code: "InsufficientCapacity"
+Message: "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region."
+```
+
+The Azure resource is left behind in `resourceState = CreateFailed`, and the next `terraform apply` collides with it (`Conflict`).
+
+**Root cause**
+
+Azure Managed Redis is capacity-constrained per region and the constraint is point-in-time: the same `Balanced_B0` request was rejected in `germanywestcentral`, `westeurope`, `northeurope`, and `eastus2` on one day while `centralus`, `eastus`, `westus2`, `westus3`, `swedencentral`, `uksouth`, and `francecentral` accepted it within minutes. There is no capacity API, so a SKU being "available" in the region's catalogue says nothing about whether a create will succeed right now. Retrying the same SKU in the same region rarely helps within the hour; changing SKU (`Balanced_B1`, `MemoryOptimized_M10`) sometimes does, changing region usually does. See [`docs/redis.md`](./redis.md) for the allowed SKUs and the `NoCluster` ceiling.
+
+**Resolution**
+
+1. Delete the failed orphan before re-applying (Terraform never recorded it): `az redisenterprise delete --name <prefix>-redis --resource-group <prefix>-n8n-rg --yes`.
+2. Change region, change `redis_sku_name`, or set `create_redis = false` with an external Redis endpoint, then run a fresh `terraform plan`; a partial apply safely retains everything created before the Redis failure.
+3. Before the next attempt, run the preflight script with `--probe-redis`: it creates a throwaway cluster of your configured SKU in your configured region (a rejection surfaces in under a minute, success in about five) and deletes it, so you learn about capacity before the 15-minute AKS/Postgres/App Gateway build instead of after it.
 
 ## Changing `aks_node_os_disk_size_gb` on an existing cluster disrupts workloads
 

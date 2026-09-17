@@ -541,6 +541,7 @@ concern, and one deliberate nested call to the directly composable
 | `examples/small/`, `examples/medium/`, `examples/large/` | End-to-end sizing examples with caller-owned Azure foundations, a Key Vault certificate helper, and one root `module "n8n"` call. |
 | `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |
 | `tests/scripts/smoke-test.sh`     | Post-`apply` smoke test for live deployments.               |
+| `tests/scripts/preflight-region-check.sh` | Pre-`apply` region/subscription capability check (AKS SKU zones, PostgreSQL Flexible Server versions/SKU, optional Managed Redis capacity probe); reads region and SKUs from the caller's own `terraform plan`. |
 | `docs/`                           | Long-form supplementary docs (troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
 | `README.md`                       | Human entry point — architecture, prerequisites, usage, and the auto-generated Reference block. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |
@@ -826,6 +827,31 @@ done
 
 A real deployment uses `terraform apply` from the selected sizing example with
 a populated `terraform.tfvars`, but **never apply from CI** in this repo.
+
+### Running `tests/scripts/preflight-region-check.sh` before a live apply
+
+Three failures only surface 10-20 minutes into an apply and are region or
+subscription gaps, not module bugs: AKS `AvailabilityZoneNotSupported`,
+PostgreSQL Flexible Server `ParameterOutOfRange 'Version' ... in: []`, and
+Managed Redis `InsufficientCapacity` (see the first three entries of
+`docs/troubleshooting.md`). Run the preflight from the root you will apply;
+with no flags it plans that root (`-refresh=false`) and reads the region, VM
+size, zones, PostgreSQL version/SKU, and Redis SKU the plan would request, so
+the check matches the caller's configuration rather than the module defaults:
+
+```bash
+az login
+cd examples/small
+terraform init                                          # populated terraform.tfvars
+../../tests/scripts/preflight-region-check.sh            # reads region + SKUs from the plan
+../../tests/scripts/preflight-region-check.sh --probe-redis   # also creates+deletes a throwaway Managed Redis cluster
+```
+
+Every value can be overridden (`--region`, `--vm-size`, `--zones`,
+`--pg-version`, `--pg-sku`, `--redis-sku`); `--region` alone skips the plan.
+Azure has no capacity API for Managed Redis, so only the probe answers that
+question, and only for the moment it runs. Like the smoke test it needs
+live credentials and is not wired into CI.
 
 ### Running `tests/scripts/smoke-test.sh` against a live deployment
 
