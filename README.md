@@ -152,11 +152,12 @@ n8n application version `2.29.0` or later is required for the Azure binary/execu
 |---|---|---|
 | License requirement | No `feat:multipleMainInstances` needed — Business-compatible | Requires `feat:multipleMainInstances` |
 | Main HPA | Clamped to 1/1 regardless of `n8n_main_hpa_max_replicas` | Configured floor/ceiling |
-| Main rollout strategy | `Recreate` (old pod terminates before the new one starts) | Chart's default rolling update |
+| Rollout strategy (main, worker, and webhook-processor Deployments; the chart has one shared `strategy` value) | `Recreate` (old pods terminate before new ones start) | Chart's default rolling update |
 | Main `PodDisruptionBudget` | `minAvailable = 0` (voluntary eviction allowed) | `minAvailable = 1` |
 | Editor/API/scheduled-trigger availability during a main rollout | Brief downtime — there is only ever one main pod | No interruption (a healthy replica keeps serving) |
+| Worker and webhook-processor availability during a Helm rollout | Brief downtime (shared `Recreate`) | No interruption |
 
-Worker and webhook-processor scaling are unaffected by this choice — only the main topology changes. `Recreate` is not a general at-most-one guarantee: it prevents a rolling-upgrade overlap, but manual pod deletion, node loss, or a forced operation can still produce more than one main process.
+Worker and webhook-processor scaling (KEDA `ScaledObject`, webhook HPA) are unaffected by this choice; only their rollout strategy follows the main topology, because chart `1.10.0` exposes a single top-level `strategy` for all three Deployments. `Recreate` is not a general at-most-one guarantee: it prevents a rolling-upgrade overlap, but manual pod deletion, node loss, or a forced operation can still produce more than one main process.
 
 Selecting single-main does **not** grant any other Enterprise entitlement. A Business license without `feat:binaryDataAz` / `feat:executionDataAz` still cannot use the Azure binary/execution-data modes — for a new deployment on such a license, set `n8n_binary_data_storage_mode = "database"`, `n8n_execution_data_storage_mode = "database"`, and `n8n_available_binary_data_modes = ["database"]`; see [`docs/data-storage.md`](./docs/data-storage.md#new-deployment-without-azure-storage-entitlements-business-license). Do not remove an existing deployment's Azure storage modes before its retained objects are migrated or expired.
 

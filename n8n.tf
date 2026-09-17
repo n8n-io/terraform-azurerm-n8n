@@ -239,9 +239,13 @@ resource "helm_release" "n8n" {
     # Single-main uses Recreate to avoid two main pods running briefly during
     # a rolling upgrade, which would duplicate scheduled-trigger and webhook
     # processing outside multi-main's leader election. Multi-main omits this
-    # override and keeps the chart's default rollout behavior. This is not a
-    # general at-most-one guarantee — it does not protect against manual pod
-    # deletion, node loss, or forced operations.
+    # override ({} deep-merges as a no-op; null would delete the chart's
+    # default and break `.Values.strategy.type`) and keeps the chart's default
+    # rollout behavior. The chart exposes only this one top-level `strategy`,
+    # consumed by the main, worker, and webhook-processor Deployments alike,
+    # so single-main also rolls workers and webhook processors with Recreate.
+    # This is not a general at-most-one guarantee: it does not protect against
+    # manual pod deletion, node loss, or forced operations.
     strategy = local.n8n_main_multi_enabled ? {} : {
       type = "Recreate"
     }

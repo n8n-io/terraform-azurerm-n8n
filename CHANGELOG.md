@@ -52,7 +52,9 @@ automatically.
 - **Optional single-main queue mode** (`n8n_main_hpa_min_replicas = 1`): a
   Business-compatible topology for licenses without
   `feat:multipleMainInstances`. Clamps the main HPA to 1/1 regardless of
-  `n8n_main_hpa_max_replicas`, switches the main rollout to `Recreate`, and
+  `n8n_main_hpa_max_replicas`, switches the rollout strategy to `Recreate`
+  (the chart's one shared `strategy` value, so worker and webhook-processor
+  Deployments roll with `Recreate` too), and
   relaxes the main `PodDisruptionBudget` to `minAvailable = 0`. Multi-main
   (`n8n_main_hpa_min_replicas > 1`) remains the default. See ["Main topology:
   multi-main and single-main"](./README.md#main-topology-multi-main-and-single-main).
