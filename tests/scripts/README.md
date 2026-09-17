@@ -1,19 +1,123 @@
-# Post-deployment scripts
+# Post-deployment and chart-rendering scripts
 
-Two manual verification scripts. Neither runs in CI: both need a live
-cluster, which a pull request check cannot provide.
+Four scripts. `check-n8n-chart.sh` is offline and runs in CI on every
+pull request. `smoke-test.sh`'s topology-detection self-test
+(`SMOKE_TEST_SELF_TEST=1`) also runs offline in CI; the rest of
+`smoke-test.sh` and all of `verify-custom-image.sh` are manual verification
+scripts that need a live cluster, which a pull request check cannot
+provide.
 
 | Script | Use it when |
 |---|---|
-| [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. |
+| [`check-n8n-chart.sh`](#chart-rendering-check) | Any change to `n8n.tf`, chart-affecting variables, or the pinned `n8n_chart_version`. Runs offline in CI. |
+| [`check-redis-exporter.py`](#redis-exporter-outage-check) | Changes to exporter probes, timeouts, or the pinned image. Runs against a local hanging TCP peer in CI. |
+| [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. Its offline self-test runs in CI on every pull request. |
 | [`verify-custom-image.sh`](#custom-image-verification) | The deployment sets `n8n_image_repository` and `n8n_custom_extensions_path` to bake community packages into the image. |
+
+## Chart-rendering check
+
+`check-n8n-chart.sh` renders the pinned n8n Helm chart
+(`var.n8n_chart_version`) with the actual `helm_release.n8n.values`
+exported from ten mocked, plan-only fixtures in
+`tests/chart-values.tftest.hcl`, then asserts on the manifests Helm
+actually produces. It therefore catches regressions in the wiring in
+`n8n.tf`, rather than testing a separately reconstructed values map.
+
+It needs no Azure or Kubernetes credentials and creates no
+infrastructure: all providers are mocked, Terraform only plans, and
+`helm template` renders locally against the chart pulled from its OCI
+registry.
+
+### Prerequisites
+
+- Terraform 1.11+ (`override_during` is used by the mocked fixture)
+- `helm` v3+ (Helm's built-in JSON-schema validation runs automatically
+  on every `helm template` call this script makes; no flag is needed to
+  enable it)
+- `jq`
+
+### Running it locally
+
+```bash
+terraform init -backend=false   # once, from the repo root
+tests/scripts/check-n8n-chart.sh
+```
+
+### What it covers
+
+- Deployment families (`deployment-main`, `deployment-worker`,
+  `deployment-webhook-processor`) at their configured replica floors.
+- The main `HorizontalPodAutoscaler` bounds/threshold and the main
+  `PodDisruptionBudget` minimum/selector.
+- The worker `ScaledObject`'s replica bounds and both `bull:jobs:wait` /
+  `bull:jobs:active` triggers.
+- Execution save-policy environment values (`EXECUTIONS_DATA_SAVE_*`) exactly
+  once on main, worker, and webhook-processor containers. The module supplies
+  the webhook entries because the pinned chart omits them for that role.
+  Webhook processors need these settings to decide final execution retention.
+- The current `N8N_WEBHOOK_URL` environment entry on all three
+  application containers, and the absence of the chart's own deprecated
+  `WEBHOOK_URL` alias (which only renders when `webhook.url` or
+  `ingress.enabled` is set — neither is set by this module).
+- A self-test proving the script's duplicate-environment-name detector
+  actually flags an intentionally duplicated fixture, followed by a real
+  duplicate-name scan of every rendered container.
+
+This script does not prove a live Helm upgrade or rollback succeeds;
+see the manual Azure qualification checklist for that.
+
+## Redis exporter outage check
+
+The check reads the exporter environment and probe paths from a mocked
+Terraform plan. It starts the pinned exporter against a local TCP server
+that accepts connections but never responds. Both probes must return `ok`
+while a scrape is blocked, and the scrape must report `redis_up 0` within
+10 seconds. This tests the upstream binary, not Kubernetes restart behavior
+or the container image's TLS trust store.
+
+Requires Python 3, Go, and initialized Terraform. Building the binary needs
+network access; the test itself uses only loopback and mocked providers.
+The check verifies that the binary's module version matches the default image.
+
+```bash
+export GOBIN="$(mktemp -d)"
+go install github.com/oliver006/redis_exporter@v1.90.0
+python3 tests/scripts/check-redis-exporter.py "$GOBIN/redis_exporter"
+rm -rf "$GOBIN"
+```
 
 ## Smoke test
 
 Post-`terraform apply` smoke test for `terraform-azurerm-n8n`. Verifies the
-multi-main Azure deployment is healthy end to end — pod health, queue
-mode, KEDA, App Gateway HTTPS, API connectivity, and a full webhook →
-worker execution.
+Azure deployment is healthy end to end — pod health, queue mode, KEDA, App
+Gateway HTTPS, API connectivity, and a full webhook → worker execution. The
+script detects whether the cluster is running the default multi-main
+topology or the optional single-main topology
+(`n8n_main_hpa_min_replicas = 1`, port-aws-040-enhancements section 2) from
+the rendered chart resources, and branches its main replica/HPA/strategy/PDB/
+leader-election checks accordingly; every other check applies to both.
+
+### Offline self-test
+
+`detect_topology()` and `check_deployment()` — the two functions the
+topology branching depends on — can be exercised without Azure credentials,
+a live cluster, or Terraform state:
+
+```bash
+SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
+```
+
+This stubs `kubectl` with synthetic fixtures for intentional single-main,
+healthy multi-main, degraded multi-main with one ready pod of two desired,
+and invalid HPA/strategy/PDB combinations. It asserts the expected
+topology/floor/pass-fail outcome for each and exits before the script's
+`Preflight` section (which requires `az login`). Missing or inconsistent
+topology safeguards fail the live smoke test rather than producing warnings.
+The self-test summary includes intentional failures from negative fixtures;
+its final exit code reports whether all fixtures behaved as expected. Run it
+after touching `detect_topology()`, `check_deployment()`, or their fixtures. This self-test (only) runs in CI on
+every pull request; the live smoke test past it needs a real cluster and
+stays a manual, post-`apply` step — see "Smoke test" above.
 
 This is the Azure sibling of
 [`terraform-aws-n8n/tests/scripts/smoke-test.sh`](https://github.com/n8n-io/terraform-aws-n8n/blob/main/tests/scripts/README.md).
@@ -29,9 +133,10 @@ Application Gateway).
 |---|---|
 | `kubectl` cluster connectivity | `az aks get-credentials` populates a kubeconfig and `kubectl get nodes` succeeds against the AKS API server |
 | Namespace exists | The configured namespace is present |
-| Main / worker / webhook-processor pod health | Each deployment is at the expected ready replica count (`MAIN_MIN=2`, `WORKER_MIN=1`, `WEBHOOK_MIN=2` — match the multi-main floor enforced by `var.n8n_main_replicas ≥ 2` and the `kubernetes_horizontal_pod_autoscaler_v2.webhook_processor` `min_replicas = 2`) |
+| Topology detection | Reads the rendered `n8n-main` HPA/Deployment/PDB to determine single-main (HPA 1/1, `Recreate`, PDB minAvailable 0) vs. multi-main (HPA floor > 1, rolling update, PDB minAvailable 1) — never inferred from the current main pod count |
+| Main / worker / webhook-processor pod health | Each deployment is at its detected-topology floor (`MAIN_MIN` = 1 for single-main or the rendered HPA floor for multi-main, `WORKER_MIN=1`, `WEBHOOK_MIN=2` — match the `kubernetes_horizontal_pod_autoscaler_v2.webhook_processor` `min_replicas = 2`) |
 | Application version | `n8n --version` (and the pod's image tag) agree across main, worker, and webhook-processor pods — catches a half-finished rollout before any functional check runs |
-| Multi-main leader election | `N8N_MULTI_MAIN_SETUP_ENABLED=true` on main pods + leadership activity in main logs |
+| Leader election | Multi-main expects `N8N_MULTI_MAIN_SETUP_ENABLED=true` on main pods plus leadership activity in main logs; single-main expects the flag unset/false and skips the log check (single-main runs no Redis leader election) |
 | Task runner sidecar (workers) | Runner sidecar is present on worker pods and connected to the broker (skipped when `n8n_task_runners_enabled = false`) |
 | KEDA `TriggerAuthentication` | `n8n-redis-keda-auth` CR is present in the n8n namespace — the n8n chart's worker `ScaledObject` references it; without it KEDA can't authenticate against Azure Managed Redis and the worker pool won't scale |
 | Autoscaler configuration | KEDA `ScaledObject` (workers, queue-depth driven against Azure Managed Redis) and HPA (`n8n-webhook-processor`) state |

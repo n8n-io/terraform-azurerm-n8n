@@ -1,64 +1,76 @@
 #!/usr/bin/env bash
 # smoke-test.sh — post-`terraform apply` smoke test for terraform-azurerm-n8n.
 #
-# This module deploys the multi-main topology (multiple n8n-main pods +
-# dedicated n8n-worker pods + n8n-webhook-processor pods, behind Application
-# Gateway with AGIC, fronted by Azure Cache for Redis and PostgreSQL Flexible
-# Server). The script runs the post-apply assertions that prove the
-# deployment is healthy end-to-end:
+# This module deploys either the default multi-main topology (multiple
+# n8n-main pods + dedicated n8n-worker pods + n8n-webhook-processor pods) or,
+# when `n8n_main_hpa_min_replicas = 1`, an optional single-main topology for
+# licenses without `feat:multipleMainInstances` (port-aws-040-enhancements
+# section 2) — both sit behind Application Gateway with AGIC, fronted by
+# Azure Managed Redis and PostgreSQL Flexible Server. The script detects
+# which topology is actually rendered on the cluster and branches its main
+# replica/HPA/strategy/PDB/leader-election checks accordingly; every other
+# assertion (worker, webhook-processor, ingress, storage, license) applies to
+# both:
 #
 #   ── Cluster + workload ─────────────────────────────────────────────────────
 #   1.  kubectl is configured against the AKS cluster and the API server
 #       responds.
 #   2.  The n8n namespace exists.
-#   3.  ≥2 n8n-main pods Ready, ≥1 n8n-worker pod Ready, ≥2
-#       n8n-webhook-processor pods Ready (the multi-main floor enforced
-#       by `var.n8n_main_replicas ≥ 2` and the chart's HPA min_replicas).
-#   4.  Application version: `n8n --version` agrees across main, worker,
+#   3.  Topology detection: reads the rendered `n8n-main` HPA/Deployment/PDB
+#       to determine single-main (HPA 1/1, `Recreate`, PDB minAvailable 0)
+#       vs. multi-main (HPA floor > 1, rolling update, PDB minAvailable 1) —
+#       never inferred from the current main pod count.
+#   4.  ≥1 (single-main) or ≥2 (multi-main, or the configured floor)
+#       n8n-main pods Ready, ≥1 n8n-worker pod Ready, ≥2
+#       n8n-webhook-processor pods Ready.
+#   5.  Application version: `n8n --version` agrees across main, worker,
 #       and webhook-processor pods (catches a half-finished rollout).
-#   5.  Multi-main leader election: `N8N_MULTI_MAIN_SETUP_ENABLED=true`
-#       on main pods + leadership activity in main logs.
-#   6.  Task runner sidecar present + connected to the broker on worker
+#   6.  Leader election: multi-main expects `N8N_MULTI_MAIN_SETUP_ENABLED=true`
+#       on main pods plus leadership activity in main logs; single-main
+#       expects the flag unset/false and skips the log check (single-main
+#       runs no Redis leader election).
+#   7.  Task runner sidecar present + connected to the broker on worker
 #       pods (warning when task runners are disabled).
-#   7.  KEDA `TriggerAuthentication` `n8n-redis-keda-auth` present in the
+#   8.  KEDA `TriggerAuthentication` `n8n-redis-keda-auth` present in the
 #       n8n namespace — the chart's worker `ScaledObject` references it.
-#   8.  Autoscaler state surface: KEDA `ScaledObject` (workers, queue-
+#   9.  Autoscaler state surface: KEDA `ScaledObject` (workers, queue-
 #       depth driven against Azure Cache for Redis) + HPA
 #       (`n8n-webhook-processor`, CPU-based).
-#   9.  Worker pods see `QUEUE_BULL_REDIS_HOST` (the Azure Cache for Redis
+#   10. Worker pods see `QUEUE_BULL_REDIS_HOST` (the Azure Cache for Redis
 #       FQDN) + queue-related log activity.
-#   10. PostgreSQL: main pod's `DB_POSTGRESDB_HOST` matches
+#   11. PostgreSQL: main pod's `DB_POSTGRESDB_HOST` matches
 #       `terraform output postgres_fqdn` and its logs show no connection
 #       or authentication errors.
-#   11. Azure Blob: main pod's `N8N_EXTERNAL_STORAGE_AZURE_*` environment
+#   12. Azure Blob: main pod's `N8N_EXTERNAL_STORAGE_AZURE_*` environment
 #       matches the storage outputs and its logs show no Blob
 #       authorization errors (skipped unless the binary-data mode is
 #       `azure`).
 #
 #   ── Ingress + reachability ─────────────────────────────────────────────────
-#   12. App Gateway public IP reachable on TCP/443.
-#   13. HTTPS GET on `n8n_url` returns HTTP 200 — uses regular DNS first,
+#   13. App Gateway public IP reachable on TCP/443.
+#   14. HTTPS GET on `n8n_url` returns HTTP 200 — uses regular DNS first,
 #       falls back to `curl --resolve <fqdn>:443:<APPGW_PUBLIC_IP>` when
 #       the parent zone hasn't been delegated to Azure DNS yet.
-#   14. HTTP → HTTPS redirect on port 80 returns 30x (the chart sets
+#   15. HTTP → HTTPS redirect on port 80 returns 30x (the chart sets
 #       `appgw.ingress.kubernetes.io/ssl-redirect = "true"`).
-#   15. Webhook route ownership: every prefix in
+#   16. Webhook route ownership: every prefix in
 #       `n8n_webhook_path_prefixes` (`/webhook`, `/webhook-waiting`,
 #       `/form`, `/form-waiting`, `/mcp`) routes to the
 #       webhook-processor Service, and `/` routes to the main Service.
 #
 #   ── Application + license ──────────────────────────────────────────────────
-#   16. API connectivity: GET `/api/v1/workflows?limit=1` returns 200
+#   17. API connectivity: GET `/api/v1/workflows?limit=1` returns 200
 #       (skipped when N8N_API_KEY is unset).
-#   17. Workflow execution: webhook → set workflow round-trip via the
+#   18. Workflow execution: webhook → set workflow round-trip via the
 #       App Gateway listener (skipped when N8N_API_KEY is unset).
-#   18. n8n license is valid via `n8n license:info` exec'd inside a Ready
+#   19. n8n license is valid via `n8n license:info` exec'd inside a Ready
 #       main pod (no API key needed).
 #
 #   ── Optional load test ─────────────────────────────────────────────────────
-#   19. Worker scaling: queues CPU-burning webhook executions and verifies
+#   20. Worker scaling: queues CPU-burning webhook executions and verifies
 #       KEDA scales `n8n-worker` up via Azure Redis queue depth (opt-in
-#       via LOAD_TEST=true; requires N8N_API_KEY).
+#       via LOAD_TEST=true; requires N8N_API_KEY). Topology-agnostic — it
+#       exercises worker KEDA scaling regardless of the main topology.
 #
 # This script is intentionally NOT wired into CI — it requires a live
 # applied stack and an `az login`'d operator. See ./README.md for usage,
@@ -68,8 +80,11 @@
 # (sibling module). Same structure, same env-var contract, same `.env`
 # loading priority. Azure-specific deltas:
 #
-#   - Always multi-main (this module doesn't ship a single-instance
-#     topology), so the AWS sibling's DEPLOY_MODE auto-detect is gone.
+#   - Topology is detected from the rendered `n8n-main` HPA/Deployment/PDB
+#     (port-aws-040-enhancements section 2), not from a caller-supplied
+#     DEPLOY_MODE switch like the AWS sibling's — this module derives
+#     topology from one input (`n8n_main_hpa_min_replicas`), so there is
+#     no separate mode flag to auto-detect from.
 #   - kubectl is populated via `az aks get-credentials` (the
 #     `kubectl_config_command` Terraform output) into a transient
 #     kubeconfig — the operator's `~/.kube/config` is never touched.
@@ -105,8 +120,9 @@ done
 
 TERRAFORM_DIR="${TERRAFORM_DIR:-$(pwd)}"
 
-# Multi-main minimum replica counts (match the chart-rendered floor +
-# scaling.tf's HPA / ScaledObject defaults).
+# Main replica floor is detected per-topology in the "Topology detection"
+# section below (single-main clamps to 1; multi-main reads the rendered
+# n8n-main HPA's minReplicas). Invalid topology stops the live smoke test.
 MAIN_MIN=2
 WORKER_MIN=1
 WEBHOOK_MIN=2
@@ -197,6 +213,350 @@ CURL_RESOLVE_ARGS=()
 curl_to_n8n() {
   curl -sk ${CURL_RESOLVE_ARGS[@]+"${CURL_RESOLVE_ARGS[@]}"} "$@"
 }
+
+# ── Topology detection ─────────────────────────────────────────────────────────
+# Detect single-main vs. multi-main from the *rendered* chart resources
+# rather than the current main pod count, which can transiently differ from
+# the configured floor mid-rollout. The n8n-main HorizontalPodAutoscaler is
+# the canonical signal: single-main always clamps minReplicas = maxReplicas
+# = 1 (design.md decision 2, n8n.tf local.n8n_main_hpa_effective_max_replicas).
+# Multi-main requires a floor of at least 2 and a maximum at or above it.
+# Missing or inconsistent HPA/Deployment/PDB settings fail the check.
+# Deployment strategy and PDB minAvailable are read as consistency
+# cross-checks against that same topology, not as a second source of truth.
+# Defined here (rather than inline where it's called) so the self-test block
+# below can exercise it against fixtures without duplicating the logic.
+detect_topology() {
+  TOPOLOGY="unknown"
+
+  local main_hpa_min main_hpa_max main_strategy main_pdb_min
+  local fail_before="$FAIL"
+  main_hpa_min=$(kubectl get hpa n8n-main -n "$NAMESPACE" \
+    -o jsonpath='{.spec.minReplicas}' 2>/dev/null || true)
+  main_hpa_max=$(kubectl get hpa n8n-main -n "$NAMESPACE" \
+    -o jsonpath='{.spec.maxReplicas}' 2>/dev/null || true)
+  main_strategy=$(kubectl get deployment n8n-main -n "$NAMESPACE" \
+    -o jsonpath='{.spec.strategy.type}' 2>/dev/null || true)
+  main_pdb_min=$(kubectl get pdb n8n-main -n "$NAMESPACE" \
+    -o jsonpath='{.spec.minAvailable}' 2>/dev/null || true)
+
+  if [[ ! "$main_hpa_min" =~ ^[1-9][0-9]*$ || ! "$main_hpa_max" =~ ^[1-9][0-9]*$ ]]; then
+    fail "n8n-main HPA bounds are missing or invalid: min='${main_hpa_min:-<unset>}' max='${main_hpa_max:-<unset>}'"
+    return 1
+  fi
+
+  if [[ "$main_hpa_max" -lt "$main_hpa_min" || ( "$main_hpa_min" == "1" && "$main_hpa_max" != "1" ) ]]; then
+    fail "n8n-main HPA must use 1/1 for single-main or 2+ with max >= min for multi-main (got $main_hpa_min/$main_hpa_max)"
+    return 1
+  fi
+
+  if [[ "$main_hpa_min" == "1" ]]; then
+    TOPOLOGY="single-main"
+    MAIN_MIN=1
+    pass "Detected topology: single-main (n8n-main HPA minReplicas=maxReplicas=1)"
+
+    if [[ "$main_strategy" == "Recreate" ]]; then
+      pass "n8n-main deployment strategy is Recreate (matches the single-main safeguard)"
+    else
+      fail "n8n-main deployment strategy is '${main_strategy:-<unset>}', expected Recreate for single-main"
+    fi
+
+    if [[ "$main_pdb_min" == "0" ]]; then
+      pass "n8n-main PDB minAvailable=0 (voluntary eviction permitted, matches single-main)"
+    else
+      fail "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected 0 for single-main"
+    fi
+  else
+    TOPOLOGY="multi-main"
+    MAIN_MIN="$main_hpa_min"
+    pass "Detected topology: multi-main (n8n-main HPA minReplicas=$main_hpa_min, maxReplicas=${main_hpa_max:-?})"
+
+    if [[ "$main_strategy" == "RollingUpdate" ]]; then
+      pass "n8n-main deployment strategy is RollingUpdate (chart default, matches multi-main)"
+    else
+      fail "n8n-main deployment strategy is '${main_strategy:-<unset>}', expected RollingUpdate for multi-main"
+    fi
+
+    if [[ "$main_pdb_min" == "1" ]]; then
+      pass "n8n-main PDB minAvailable=1 (protects one replica during voluntary disruption, matches multi-main)"
+    else
+      fail "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected 1 for multi-main"
+    fi
+  fi
+
+  info "Topology: $TOPOLOGY (main floor: $MAIN_MIN)"
+  [[ "$FAIL" -eq "$fail_before" ]]
+}
+
+# ── Pod readiness helper ─────────────────────────────────────────────────────
+# Defined here (rather than inline in the "Pod readiness" section below) for
+# the same self-test reason as detect_topology() above.
+check_deployment() {
+  local name="$1"
+  local min_replicas="$2"
+  local label="$3"
+
+  if ! kubectl get deployment "$name" -n "$NAMESPACE" &>/dev/null; then
+    fail "$label: deployment '$name' not found"
+    return
+  fi
+
+  local ready desired
+  ready=$(kubectl get deployment "$name" -n "$NAMESPACE" \
+    -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+  ready="${ready:-0}"
+  desired=$(kubectl get deployment "$name" -n "$NAMESPACE" \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+
+  if [[ "$ready" -ge "$min_replicas" && "$ready" -eq "$desired" ]]; then
+    pass "$label: $ready/$desired pods Ready (min $min_replicas)"
+  else
+    fail "$label: $ready/$desired pods Ready (need ≥ $min_replicas)"
+    local bad_pods
+    bad_pods=$(kubectl get pods -n "$NAMESPACE" \
+      -l "app.kubernetes.io/component=${name#n8n-}" \
+      --no-headers 2>/dev/null \
+      | awk '{print $1, $3}' \
+      | grep -v "Running\|Completed" || true)
+    if [[ -n "$bad_pods" ]]; then
+      while IFS= read -r line; do info "$line"; done <<< "$bad_pods"
+    fi
+  fi
+}
+
+# Inspect captured history, not current leader uniqueness. Diagnostics take
+# precedence over role messages so a later recovery cannot hide a conflict.
+check_leader_logs() {
+  local logs="$1" label="$2" diagnostics activity
+  diagnostics=$(printf '%s\n' "$logs" | grep -iE \
+    'Detected ([2-9]|[1-9][0-9]+) instances claiming leader role|Leader failed to renew leader key|Failed to (set leader key|clear leader key|get leader key|renew leader TTL|try leader key set)' || true)
+  if [[ -n "$diagnostics" ]]; then
+    fail "$label: leader-election conflict/failure diagnostic in captured logs (may be historical; does not establish ongoing split-brain)"
+    while IFS= read -r line; do info "$line"; done <<< "$diagnostics"
+    return
+  fi
+
+  if printf '%s\n' "$logs" | grep -qi 'MaxListenersExceededWarning'; then
+    warn "$label: listener warnings in captured logs are not leader-election success evidence"
+  fi
+
+  activity=$(printf '%s\n' "$logs" \
+    | grep -viE 'warn|error|fail' \
+    | grep -E '\[Instance ID [^]]+\] (Leader is now this instance|Leader is this instance|Leader is other instance "[^"]+"|This is now a follower instance)[[:space:]]*$' \
+    | tail -3 || true)
+  if [[ -n "$activity" ]]; then
+    info "$label: historical leader-role activity (not proof of a unique current leader)"
+    while IFS= read -r line; do info "$line"; done <<< "$activity"
+  else
+    skip "$label: no explicit leader-role activity in captured logs; leader uniqueness is unverified"
+  fi
+}
+
+check_main_leader_logs() {
+  local leader_pods leader_pod leader_logs
+  if ! leader_pods=$(kubectl get pods -n "$NAMESPACE" \
+      -l app.kubernetes.io/component=main \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); then
+    fail "Could not enumerate main pods for leader-log inspection"
+    return
+  fi
+  if [[ -z "$leader_pods" ]]; then
+    fail "No main pods available for leader-log inspection"
+    return
+  fi
+  while IFS= read -r leader_pod; do
+    [[ -z "$leader_pod" ]] && continue
+    if leader_logs=$(kubectl logs "$leader_pod" -n "$NAMESPACE" -c n8n-main --tail=200); then
+      check_leader_logs "$leader_logs" "$leader_pod"
+    else
+      fail "$leader_pod: could not read main container logs"
+    fi
+  done <<< "$leader_pods"
+}
+
+# ── Self-test (offline, no Azure credentials) ─────────────────────────────────
+# `SMOKE_TEST_SELF_TEST=1 ./smoke-test.sh` exercises detect_topology() and
+# check_deployment() against recorded/synthetic kubectl fixtures for
+# single-main, healthy multi-main, degraded multi-main (one ready pod of
+# two desired), and invalid HPA/strategy/PDB combinations, proving the logic offline,
+# without az login, terraform state, or a live cluster. Runs and exits before
+# Preflight's require_cmd/az-login checks, so `bash -n` plus this mode is the
+# full offline verification surface for this script.
+if [[ "${SMOKE_TEST_SELF_TEST:-0}" == "1" ]]; then
+  NAMESPACE="n8n"
+  self_test_failures=0
+
+  assert_eq() {
+    local desc="$1" expected="$2" actual="$3"
+    if [[ "$expected" == "$actual" ]]; then
+      pass "$desc (got '$actual')"
+    else
+      fail "$desc (expected '$expected', got '$actual')"
+      self_test_failures=$((self_test_failures + 1))
+    fi
+  }
+
+  # Fixture-driven stub replacing the real kubectl for the duration of the
+  # self-test. FIXTURE_HPA_MIN/MAX, FIXTURE_STRATEGY, FIXTURE_PDB_MIN, and
+  # FIXTURE_MAIN_READY/FIXTURE_MAIN_DESIRED drive every call detect_topology()
+  # and check_deployment() make; anything else (e.g. the bad-pods listing)
+  # returns an empty, successful result.
+  kubectl() {
+    if [[ "$1" == "get" && "$2" == "hpa" && "$3" == "n8n-main" ]]; then
+      case "$*" in
+        *minReplicas*) echo "$FIXTURE_HPA_MIN" ;;
+        *maxReplicas*) echo "$FIXTURE_HPA_MAX" ;;
+      esac
+      return 0
+    elif [[ "$1" == "get" && "$2" == "deployment" && "$3" == "n8n-main" ]]; then
+      case "$*" in
+        *strategy.type*)   echo "$FIXTURE_STRATEGY" ;;
+        *readyReplicas*)   echo "$FIXTURE_MAIN_READY" ;;
+        *spec.replicas*)   echo "$FIXTURE_MAIN_DESIRED" ;;
+      esac
+      return 0
+    elif [[ "$1" == "get" && "$2" == "pdb" && "$3" == "n8n-main" ]]; then
+      echo "$FIXTURE_PDB_MIN"
+      return 0
+    fi
+    return 0
+  }
+
+  echo "== Self-test: single-main =="
+  FIXTURE_HPA_MIN=1 FIXTURE_HPA_MAX=1 FIXTURE_STRATEGY="Recreate" FIXTURE_PDB_MIN=0 \
+    FIXTURE_MAIN_READY=1 FIXTURE_MAIN_DESIRED=1
+  detect_topology
+  assert_eq "single-main topology" "single-main" "$TOPOLOGY"
+  assert_eq "single-main floor" "1" "$MAIN_MIN"
+  check_deployment "n8n-main" "$MAIN_MIN" "n8n-main"
+
+  echo "== Self-test: healthy multi-main =="
+  before_fail="$FAIL"
+  FIXTURE_HPA_MIN=2 FIXTURE_HPA_MAX=6 FIXTURE_STRATEGY="RollingUpdate" FIXTURE_PDB_MIN=1 \
+    FIXTURE_MAIN_READY=2 FIXTURE_MAIN_DESIRED=2
+  detect_topology
+  assert_eq "multi-main topology" "multi-main" "$TOPOLOGY"
+  assert_eq "multi-main floor" "2" "$MAIN_MIN"
+  check_deployment "n8n-main" "$MAIN_MIN" "n8n-main"
+  if [[ "$FAIL" -eq "$before_fail" ]]; then
+    pass "healthy multi-main pod-readiness check raised no failures"
+  else
+    fail "healthy multi-main fixture unexpectedly raised a pod-readiness failure"
+    self_test_failures=$((self_test_failures + 1))
+  fi
+
+  echo "== Self-test: degraded multi-main (one ready pod of two desired) =="
+  before_fail="$FAIL"
+  FIXTURE_HPA_MIN=2 FIXTURE_HPA_MAX=6 FIXTURE_STRATEGY="RollingUpdate" FIXTURE_PDB_MIN=1 \
+    FIXTURE_MAIN_READY=1 FIXTURE_MAIN_DESIRED=2
+  detect_topology
+  assert_eq "degraded multi-main topology" "multi-main" "$TOPOLOGY"
+  check_deployment "n8n-main" "$MAIN_MIN" "n8n-main"
+  if [[ "$FAIL" -gt "$before_fail" ]]; then
+    pass "degraded multi-main correctly reported as failing (1/2 ready < floor 2)"
+  else
+    fail "degraded multi-main fixture did not trip a failed pod-readiness check"
+    self_test_failures=$((self_test_failures + 1))
+  fi
+
+  echo "== Self-test: invalid topology safeguards =="
+  while IFS='|' read -r fixture_name FIXTURE_HPA_MIN FIXTURE_HPA_MAX FIXTURE_STRATEGY FIXTURE_PDB_MIN; do
+    before_fail="$FAIL"
+    if detect_topology; then
+      fail "$fixture_name unexpectedly passed topology detection"
+      self_test_failures=$((self_test_failures + 1))
+    elif [[ "$FAIL" -gt "$before_fail" ]]; then
+      pass "$fixture_name correctly failed topology detection"
+    else
+      fail "$fixture_name returned failure without recording a failed check"
+      self_test_failures=$((self_test_failures + 1))
+    fi
+  done <<'FIXTURES'
+missing HPA||||
+missing minimum||6|RollingUpdate|1
+missing maximum|2||RollingUpdate|1
+nonnumeric minimum|invalid|6|RollingUpdate|1
+nonnumeric maximum|2|invalid|RollingUpdate|1
+zero minimum|0|6|RollingUpdate|1
+zero maximum|2|0|RollingUpdate|1
+negative minimum|-1|6|RollingUpdate|1
+fractional minimum|1.5|6|RollingUpdate|1
+fractional maximum|2|6.5|RollingUpdate|1
+inverted bounds|3|2|RollingUpdate|1
+unclamped single-main|1|6|RollingUpdate|1
+single-main rolling update|1|1|RollingUpdate|0
+single-main missing strategy|1|1||0
+single-main wrong PDB|1|1|Recreate|1
+single-main missing PDB|1|1|Recreate|
+multi-main recreate|2|6|Recreate|1
+multi-main missing strategy|2|6||1
+multi-main wrong PDB|2|6|RollingUpdate|0
+multi-main missing PDB|2|6|RollingUpdate|
+FIXTURES
+
+  echo ""
+  echo "== Self-test: leader-log evidence =="
+  while IFS='|' read -r fixture_name expected_fail expected_warn expected_skip fixture_logs; do
+    before_pass="$PASS" before_fail="$FAIL" before_warn="$WARN" before_skip="$SKIPPED"
+    check_leader_logs "$(printf '%b' "$fixture_logs")" "$fixture_name"
+    delta_pass=$((PASS - before_pass)) delta_fail=$((FAIL - before_fail))
+    delta_warn=$((WARN - before_warn)) delta_skip=$((SKIPPED - before_skip))
+    assert_eq "$fixture_name counters (pass/fail/warn/skip)" \
+      "0/$expected_fail/$expected_warn/$expected_skip" "$delta_pass/$delta_fail/$delta_warn/$delta_skip"
+  done <<'LEADER_FIXTURES'
+multiple leaders|1|0|0|Cluster check warning Detected 2 instances claiming leader role: a, b
+many leaders|1|0|0|Cluster check warning Detected 12 instances claiming leader role: a, b
+listener warning|0|1|1|MaxListenersExceededWarning: 11 leader-takeover listeners added to [MultiMainSetup]
+positive|0|0|0|[Instance ID a] Leader is now this instance
+follower|0|0|0|[Instance ID b] This is now a follower instance
+mixed conflict and recovery|1|0|0|Detected 2 instances claiming leader role: a, b\n[Instance ID a] Leader is now this instance\n[Instance ID a] Leader is this instance\n[Instance ID a] Leader is this instance\n[Instance ID a] Leader is this instance
+listener and positive|0|1|0|MaxListenersExceededWarning: 11 leader-stepdown listeners\n[Instance ID a] Leader is now this instance
+warning with positive text|0|0|1|Warning: [Instance ID a] Leader is now this instance
+renewal failure|1|0|0|[Multi-main setup] Leader failed to renew leader key
+Redis leader failure|1|0|0|Failed to set leader key in Redis during init: connection refused
+resolved audit event|0|0|1|n8n.audit.cluster.split-brain.resolved
+unrelated|0|0|1|Initializing n8n process
+empty|0|0|1|
+LEADER_FIXTURES
+
+  # Exercise real failure handling, including continuing after a failed read.
+  kubectl() {
+    if [[ "$1" == "get" ]]; then
+      [[ "$LEADER_READ_FIXTURE" == "enumeration failure" ]] && return 1
+      [[ "$LEADER_READ_FIXTURE" == "no pods" ]] && return 0
+      printf 'main-a\nmain-b\n'
+    elif [[ "$1" == "logs" ]]; then
+      if [[ "$LEADER_READ_FIXTURE" == "first read failure" && "$2" == "main-a" ]]; then
+        return 1
+      elif [[ "$2" == "main-b" ]]; then
+        echo 'Detected 2 instances claiming leader role: a, b'
+      else
+        echo '[Instance ID a] Leader is now this instance'
+      fi
+    else
+      return 1
+    fi
+  }
+  while IFS='|' read -r LEADER_READ_FIXTURE expected_fail; do
+    before_pass="$PASS" before_fail="$FAIL"
+    check_main_leader_logs
+    delta_pass=$((PASS - before_pass)) delta_fail=$((FAIL - before_fail))
+    assert_eq "$LEADER_READ_FIXTURE counters (pass/fail)" "0/$expected_fail" "$delta_pass/$delta_fail"
+  done <<'LEADER_READ_FIXTURES'
+enumeration failure|1
+no pods|1
+second pod conflict|1
+first read failure|2
+LEADER_READ_FIXTURES
+
+  echo "Self-test summary: $PASS passed, $FAIL failed (includes expected failures), $WARN warned"
+  if [[ "$self_test_failures" -gt 0 ]]; then
+    echo "SELF-TEST RESULT: FAIL"
+    exit 1
+  fi
+  echo "SELF-TEST RESULT: PASS"
+  exit 0
+fi
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
@@ -343,42 +703,18 @@ if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
 fi
 pass "namespace '$NAMESPACE' exists"
 
+# ── Topology detection ─────────────────────────────────────────────────────────
+# detect_topology() is defined earlier (alongside the self-test block) so it
+# can be exercised offline against fixtures without duplicating the logic.
+
+header "Topology detection"
+
+detect_topology
+
 # ── Pod readiness (main / worker / webhook-processor) ─────────────────────────
+# check_deployment() is defined earlier for the same self-test reason.
 
 header "Pod readiness"
-
-check_deployment() {
-  local name="$1"
-  local min_replicas="$2"
-  local label="$3"
-
-  if ! kubectl get deployment "$name" -n "$NAMESPACE" &>/dev/null; then
-    fail "$label: deployment '$name' not found"
-    return
-  fi
-
-  local ready desired
-  ready=$(kubectl get deployment "$name" -n "$NAMESPACE" \
-    -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-  ready="${ready:-0}"
-  desired=$(kubectl get deployment "$name" -n "$NAMESPACE" \
-    -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
-
-  if [[ "$ready" -ge "$min_replicas" && "$ready" -eq "$desired" ]]; then
-    pass "$label: $ready/$desired pods Ready (min $min_replicas)"
-  else
-    fail "$label: $ready/$desired pods Ready (need ≥ $min_replicas)"
-    local bad_pods
-    bad_pods=$(kubectl get pods -n "$NAMESPACE" \
-      -l "app.kubernetes.io/component=${name#n8n-}" \
-      --no-headers 2>/dev/null \
-      | awk '{print $1, $3}' \
-      | grep -v "Running\|Completed" || true)
-    if [[ -n "$bad_pods" ]]; then
-      while IFS= read -r line; do info "$line"; done <<< "$bad_pods"
-    fi
-  fi
-}
 
 check_deployment "n8n-main"              "$MAIN_MIN"    "n8n-main"
 check_deployment "n8n-worker"            "$WORKER_MIN"  "n8n-worker"
@@ -425,13 +761,14 @@ else
   fail "Pod families report $unique_versions different n8n application versions — rollout is not converged"
 fi
 
-# ── Multi-main leader election ────────────────────────────────────────────────
-# n8n's multi-main topology elects a single leader pod via Redis to run
-# DB migrations + the schedule trigger; followers wait for the leader's
-# signal. Confirm the feature flag is on AND the leader-election logic
-# has emitted at least one log line.
+# ── Leader election ───────────────────────────────────────────────────────────
+# Multi-main elects a single leader pod via Redis to run DB migrations + the
+# schedule trigger; followers wait for the leader's signal. Single-main runs
+# no leader election at all (there is only ever one main pod), so this
+# section branches on $TOPOLOGY (detected above) instead of unconditionally
+# expecting N8N_MULTI_MAIN_SETUP_ENABLED=true.
 
-header "Multi-main leader election"
+header "Leader election"
 
 main_pod=$(kubectl get pods -n "$NAMESPACE" \
   -l "app.kubernetes.io/component=main" \
@@ -440,24 +777,26 @@ main_pod=$(kubectl get pods -n "$NAMESPACE" \
 
 if [[ -z "$main_pod" ]]; then
   warn "No Ready n8n-main pod available to check leader election"
+elif [[ "$TOPOLOGY" == "single-main" ]]; then
+  multi_main=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
+    -- printenv N8N_MULTI_MAIN_SETUP_ENABLED 2>/dev/null || echo "")
+  if [[ "$multi_main" != "true" ]]; then
+    pass "N8N_MULTI_MAIN_SETUP_ENABLED is not 'true' on the single main pod (got: '${multi_main:-<unset>}')"
+  else
+    warn "N8N_MULTI_MAIN_SETUP_ENABLED=true on a single-main deployment (unexpected for n8n_main_hpa_min_replicas = 1)"
+  fi
+  skip "Leader-election log check (single-main runs no Redis leader election)"
 else
   multi_main=$(kubectl exec "$main_pod" -n "$NAMESPACE" -c n8n-main \
     -- printenv N8N_MULTI_MAIN_SETUP_ENABLED 2>/dev/null || echo "")
   if [[ "$multi_main" == "true" ]]; then
-    pass "N8N_MULTI_MAIN_SETUP_ENABLED=true on main pods (Redis leader election active)"
+    pass "N8N_MULTI_MAIN_SETUP_ENABLED=true on selected main pod (configuration check only)"
   else
     warn "N8N_MULTI_MAIN_SETUP_ENABLED is not 'true' (got: '${multi_main:-<unset>}')"
-    info "Expected when n8n_main_replicas > 1"
+    info "Expected when n8n_main_hpa_min_replicas > 1"
   fi
 
-  leader_log=$(kubectl logs "$main_pod" -n "$NAMESPACE" -c n8n-main --tail=200 2>/dev/null \
-    | grep -iE "leader|leadership|multi-main|multi main" | tail -3 || true)
-  if [[ -n "$leader_log" ]]; then
-    pass "Leader-election activity in main pod logs"
-    while IFS= read -r line; do info "$line"; done <<< "$leader_log"
-  else
-    info "No leader-election log lines in last 200 lines — normal if recently rolled"
-  fi
+  check_main_leader_logs
 fi
 
 # ── Task runner sidecar (workers) ─────────────────────────────────────────────

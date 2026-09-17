@@ -6,6 +6,11 @@ output "n8n_url" {
   value       = module.n8n.n8n_url
 }
 
+output "main_hpa_min_replicas" {
+  description = "Effective main-topology floor passed to the root module's n8n_main_hpa_min_replicas."
+  value       = var.n8n_main_hpa_min_replicas
+}
+
 output "appgw_public_ip" {
   description = "Public IPv4 address of the caller-owned Application Gateway (ingress.tf)."
   value       = azurerm_public_ip.n8n.ip_address

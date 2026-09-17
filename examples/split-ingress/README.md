@@ -20,14 +20,14 @@ AKS's built-in `ingress_application_gateway` addon binds to exactly one Applicat
 
 Both gateways issue lab-grade self-signed certificates from `modules/tls-self-signed`, one per hostname, imported into one shared Key Vault. Replace both with real certificates before production use.
 
-## Known limitation: `N8N_WEBHOOK_URL`
+## Editor and webhook URLs
 
-The root module always derives n8n's `N8N_WEBHOOK_URL` (what n8n hands out in generated webhook, form, and MCP links) from `n8n_domain`, which this example serves on the **private** admin gateway. There is currently no root-module input to point `N8N_WEBHOOK_URL` at a different hostname, so out of the box n8n advertises webhook URLs on a host that is not reachable from the internet.
+The root module's `n8n_webhook_url` input (port-aws-040-enhancements section 11) lets this example advertise webhooks on the public host while the editor identity stays on the private one. This example passes `n8n_webhook_url = "https://${local.webhook_domain}"`, so:
 
-The public gateway still routes every webhook prefix correctly (that is what the mocked tests in `tests/defaults.tftest.hcl` assert), so payload delivery to a URL you construct yourself against `webhook_base_url` (this example's output) works. What does not work without further changes is n8n's own UI copying a *directly usable* webhook URL. Workarounds:
+- `N8N_WEBHOOK_URL` (what n8n hands out in generated webhook, form, and MCP links) is `https://hooks.n8n.example.com`, the public gateway's hostname.
+- `N8N_EDITOR_BASE_URL` stays `https://n8n.example.com`, the private admin gateway's hostname, so the OAuth2 credential callback (`/rest/oauth2-credential/callback`) keeps returning to the admin host.
 
-- Hand out `webhook_base_url` to external systems out of band instead of relying on n8n's generated links.
-- Track the root module's `n8n_extra_env` guard list (`N8N_WEBHOOK_URL` is currently reserved) for a future override input, or open an issue if you need this now.
+The public gateway routes every webhook prefix (that is what the mocked tests in `tests/defaults.tftest.hcl` assert), so both n8n's own generated links and a URL you construct yourself against `webhook_base_url` (this example's output, which always matches `n8n_webhook_url`) resolve correctly. This fix only changes what n8n advertises; it does not redesign routing — the public gateway already routed the same five prefixes before this change. The pinned n8n version also uses the configured webhook base for test-webhook and form-trigger URLs in the editor; verify that behavior manually against a real deployment, since it is not covered by the offline chart-rendering check.
 
 ## Apply
 
@@ -135,6 +135,7 @@ Two Application Gateways cost roughly twice one, and this example runs two addit
 | <a name="input_location"></a> [location](#input\_location) | Azure region for the example. Confirm that the selected AKS, PostgreSQL, Redis, zone, and storage SKUs are available there. | `string` | `"eastus"` | no |
 | <a name="input_n8n_domain"></a> [n8n\_domain](#input\_n8n\_domain) | Fully-qualified domain name for the n8n editor UI and REST API (e.g. n8n.example.com). Served by the internal (admin) Application Gateway, so it resolves to a private address and is reachable only from inside the VNet or over a VPN/peering. This example issues its own lab-grade self-signed certificate for it (main.tf), so replace that with a real certificate before production use. | `string` | n/a | yes |
 | <a name="input_n8n_license_key"></a> [n8n\_license\_key](#input\_n8n\_license\_key) | n8n Enterprise license activation key. | `string` | n/a | yes |
+| <a name="input_n8n_main_hpa_min_replicas"></a> [n8n\_main\_hpa\_min\_replicas](#input\_n8n\_main\_hpa\_min\_replicas) | Minimum main replicas passed through to the root module's n8n\_main\_hpa\_min\_replicas, the sole topology selector. The default of 2 keeps this example on multi-main. Set to 1 to select single-main queue mode for a license without feat:multipleMainInstances (including Business licenses); other selected features, such as Azure Blob binary/execution-data entitlements, still require their own license grants and are not affected by this setting. | `number` | `2` | no |
 | <a name="input_webhook_subdomain"></a> [webhook\_subdomain](#input\_webhook\_subdomain) | Label prepended to n8n\_domain to form the public webhook hostname. With the default and n8n\_domain = n8n.example.com, webhooks are served from hooks.n8n.example.com by the internet-facing (webhook) Application Gateway. A separate hostname is required because a DNS name resolves to one gateway's frontend. | `string` | `"hooks"` | no |
 
 ## Outputs
@@ -143,10 +144,11 @@ Two Application Gateways cost roughly twice one, and this example runs two addit
 | ---- | ----------- |
 | <a name="output_admin_appgw_private_ip"></a> [admin\_appgw\_private\_ip](#output\_admin\_appgw\_private\_ip) | Private IPv4 address of the internal admin Application Gateway's frontend, once AGIC provisions it. Null until then. |
 | <a name="output_kubectl_config_command"></a> [kubectl\_config\_command](#output\_kubectl\_config\_command) | Command that writes the AKS context into the local kubeconfig. |
+| <a name="output_main_hpa_min_replicas"></a> [main\_hpa\_min\_replicas](#output\_main\_hpa\_min\_replicas) | Effective main-topology floor passed to the root module's n8n\_main\_hpa\_min\_replicas. See module.n8n.n8n\_url for confirmation the module accepted it. |
 | <a name="output_n8n_url"></a> [n8n\_url](#output\_n8n\_url) | URL for the n8n editor UI. Resolves to the internal (admin) Application Gateway, so it is reachable only from inside the VNet or over VPN/peering. |
 | <a name="output_namespace"></a> [namespace](#output\_namespace) | Kubernetes namespace n8n is deployed into. |
 | <a name="output_postgres_password"></a> [postgres\_password](#output\_postgres\_password) | Generated PostgreSQL administrator password. Back it up in a secret manager. |
 | <a name="output_webhook_appgw_fqdn"></a> [webhook\_appgw\_fqdn](#output\_webhook\_appgw\_fqdn) | FQDN of the public webhook Application Gateway. |
-| <a name="output_webhook_base_url"></a> [webhook\_base\_url](#output\_webhook\_base\_url) | Public base URL for webhooks, forms, and MCP. n8n's own N8N\_WEBHOOK\_URL is not repointed here (the root module derives it from n8n\_domain), so hand this URL to external systems out of band. See the README caveat on this limitation. |
+| <a name="output_webhook_base_url"></a> [webhook\_base\_url](#output\_webhook\_base\_url) | Public base URL for webhooks, forms, and MCP. Passed to the root module as n8n\_webhook\_url, so n8n's own N8N\_WEBHOOK\_URL matches this value — see module.n8n.n8n\_webhook\_url for the module's own confirmation of the effective value. |
 | <a name="output_webhook_path_prefixes"></a> [webhook\_path\_prefixes](#output\_webhook\_path\_prefixes) | Path prefixes routed to the webhook processors on the public gateway. Sourced from the module so this example cannot drift from what n8n actually serves. |
 <!-- END_TF_DOCS -->

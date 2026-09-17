@@ -62,6 +62,7 @@ run "small_tier_plan" {
       redis_sku_name           = "Balanced_B0"
       storage_replication_type = "LRS"
       webhook_max_replicas     = 8
+      main_min_replicas        = 2
     }
     error_message = "The small example must preserve its documented root-module sizing decisions."
   }
@@ -69,5 +70,31 @@ run "small_tier_plan" {
   assert {
     condition     = module.n8n.n8n_url == "https://n8n.test.example.com"
     error_message = "The root module URL output must preserve the canonical domain."
+  }
+}
+
+run "small_tier_single_main_override" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.tier_configuration.main_min_replicas == 1
+    error_message = "Setting main minimum to 1 must pass 1 through to the root module."
+  }
+
+  assert {
+    condition     = module.n8n.n8n_url == "https://n8n.test.example.com"
+    error_message = "Unrelated example settings must remain unchanged when selecting single-main."
   }
 }

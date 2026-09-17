@@ -215,8 +215,13 @@ resource "helm_release" "n8n" {
     # The chart renders spec.replicas unconditionally for all three workload
     # Deployments. Use each autoscaler's minimum so a Helm upgrade at the floor
     # does not scale the Deployment down before its autoscaler reconciles.
+    # Single-main (local.n8n_main_multi_enabled = false) sets top-level
+    # replicaCount instead — the chart's deployment-main.yaml selects between
+    # multiMain.replicas and replicaCount based on multiMain.enabled. The
+    # pinned schema requires multiMain.replicas >= 2 only while enabled, so
+    # leaving it at the configured minimum is safe on both branches.
     multiMain = {
-      enabled  = true
+      enabled  = local.n8n_main_multi_enabled
       replicas = var.n8n_main_hpa_min_replicas
       antiAffinity = {
         type = "preferred"
@@ -225,6 +230,24 @@ resource "helm_release" "n8n" {
         keyTtl        = 10
         checkInterval = 3
       }
+    }
+
+    # Consumed only when multiMain is disabled (deployment-main.yaml's
+    # ternary), but always set to the same effective floor for clarity.
+    replicaCount = var.n8n_main_hpa_min_replicas
+
+    # Single-main uses Recreate to avoid two main pods running briefly during
+    # a rolling upgrade, which would duplicate scheduled-trigger and webhook
+    # processing outside multi-main's leader election. Multi-main omits this
+    # override ({} deep-merges as a no-op; null would delete the chart's
+    # default and break `.Values.strategy.type`) and keeps the chart's default
+    # rollout behavior. The chart exposes only this one top-level `strategy`,
+    # consumed by the main, worker, and webhook-processor Deployments alike,
+    # so single-main also rolls workers and webhook processors with Recreate.
+    # This is not a general at-most-one guarantee: it does not protect against
+    # manual pod deletion, node loss, or forced operations.
+    strategy = local.n8n_main_multi_enabled ? {} : {
+      type = "Recreate"
     }
 
     queueMode = {
@@ -237,6 +260,17 @@ resource "helm_release" "n8n" {
       enabled                                = true
       replicaCount                           = var.n8n_webhook_hpa_min_replicas
       disableProductionWebhooksOnMainProcess = true
+
+      # Chart 1.10.0 renders executions.data only on main and worker pods.
+      # The webhook process also decides retention when a queued run finishes,
+      # so it must receive the same defaults. Keep these role-specific to avoid
+      # duplicating the chart-owned entries on main and worker containers.
+      extraEnv = [
+        { name = "EXECUTIONS_DATA_SAVE_ON_SUCCESS", value = var.n8n_executions_data_save_on_success },
+        { name = "EXECUTIONS_DATA_SAVE_ON_ERROR", value = var.n8n_executions_data_save_on_error },
+        { name = "EXECUTIONS_DATA_SAVE_ON_PROGRESS", value = tostring(var.n8n_executions_data_save_on_progress) },
+        { name = "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS", value = tostring(var.n8n_executions_data_save_manual_executions) },
+      ]
     }
 
     database = {
@@ -264,12 +298,20 @@ resource "helm_release" "n8n" {
       port        = local.redis_connection.port
       username    = local.redis_connection.username == null ? "" : local.redis_connection.username
       tls         = local.redis_connection.tls_enabled
-      }, local.redis_password_present ? {
-      passwordSecret = {
-        name = local.redis_password_secret_name
-        key  = local.redis_password_secret_key
-      }
-    } : {})
+      },
+      local.redis_password_present ? {
+        passwordSecret = {
+          name = local.redis_password_secret_name
+          key  = local.redis_password_secret_key
+        }
+      } : {},
+      # Bull worker timing overrides (section 4). Empty when every input is
+      # null, so the chart's own redis.worker defaults (60000/10000/30000 ms)
+      # apply unchanged.
+      length(local.n8n_queue_worker_settings) == 0 ? {} : {
+        worker = local.n8n_queue_worker_settings
+      },
+    )
 
     podLabels = {
       "azure.workload.identity/use" = "true"
@@ -312,10 +354,10 @@ resource "helm_release" "n8n" {
       timeoutMax  = var.n8n_execution_timeout_max
       concurrency = { productionLimit = var.n8n_execution_concurrency_limit }
       data = {
-        saveOnError          = "all"
-        saveOnSuccess        = "all"
-        saveOnProgress       = false
-        saveManualExecutions = true
+        saveOnError          = var.n8n_executions_data_save_on_error
+        saveOnSuccess        = var.n8n_executions_data_save_on_success
+        saveOnProgress       = var.n8n_executions_data_save_on_progress
+        saveManualExecutions = var.n8n_executions_data_save_manual_executions
       }
       pruning = {
         enabled            = true
@@ -334,12 +376,20 @@ resource "helm_release" "n8n" {
           { name = "N8N_LOG_LEVEL", value = var.n8n_log_level },
           { name = "N8N_LOG_OUTPUT", value = var.n8n_log_output },
           { name = "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", value = "true" },
-          { name = "N8N_WEBHOOK_URL", value = "https://${var.n8n_domain}" },
+          { name = "N8N_EDITOR_BASE_URL", value = local.n8n_editor_base_url },
+          { name = "N8N_WEBHOOK_URL", value = local.n8n_effective_webhook_url },
           { name = "N8N_PROXY_HOPS", value = "1" },
           { name = "DB_POSTGRESDB_POOL_SIZE", value = tostring(local.postgres_connection.pool_size) },
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
           { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = tostring(var.n8n_license_detach_floating_on_shutdown) },
         ],
+        # PostgreSQL connection/health-check runtime tuning (section 3). Null
+        # inputs contribute no entries and retain n8n's pinned defaults.
+        local.n8n_postgres_runtime_env,
+        # Optional shared V8 heap ceiling (section 6). Null contributes no
+        # entries and leaves n8n/Node's own default and any caller NODE_OPTIONS
+        # in n8n_extra_env in place.
+        local.n8n_node_heap_env,
         # Storage-mode variables live in config.extraEnv because the chart has no
         # Azure-native values block. This shared list renders on main, worker,
         # and webhook containers, which queue mode requires. The active binary
@@ -468,15 +518,24 @@ resource "helm_release" "n8n" {
       }
     }
 
+    # Single-main allows voluntary eviction (minAvailable = 0) because
+    # Recreate already accepts the resulting downtime; multi-main protects
+    # one available replica during voluntary disruption.
     pdb = {
       enabled      = true
-      minAvailable = 1
+      minAvailable = local.n8n_main_multi_enabled ? 1 : 0
     }
 
     # Top-level chart values render on main, worker, and webhook-processor
     # application containers.
     extraVolumes      = local.n8n_extra_volumes
     extraVolumeMounts = local.n8n_extra_volume_mounts
+
+    # Optional pod DNS configuration (port-aws-040-enhancements section 8).
+    # local.n8n_dns_config_values is already null-stripped; {} renders as an
+    # empty map that the chart's `with` guard treats as absent, so leaving
+    # this unconditional keeps every default deployment's dnsConfig omitted.
+    dnsConfig = local.n8n_dns_config_values
 
     taskRunners = {
       enabled            = var.n8n_task_runners_enabled
@@ -493,6 +552,10 @@ resource "helm_release" "n8n" {
         logLevel            = "info"
         autoShutdownTimeout = var.n8n_task_runner_auto_shutdown_timeout
       }
+      # Caller-owned ConfigMap; the module never creates or reads its
+      # payload. Omitted (enabled = false) keeps the runner image's own
+      # default launcher configuration file.
+      customConfig = local.n8n_task_runner_custom_config_values
       resources = {
         requests = { cpu = var.n8n_task_runner_cpu_request, memory = var.n8n_task_runner_memory_request }
         limits   = { cpu = var.n8n_task_runner_cpu_limit, memory = var.n8n_task_runner_memory_limit }
@@ -506,7 +569,7 @@ resource "helm_release" "n8n" {
       main = {
         enabled                        = true
         minReplicas                    = var.n8n_main_hpa_min_replicas
-        maxReplicas                    = var.n8n_main_hpa_max_replicas
+        maxReplicas                    = local.n8n_main_hpa_effective_max_replicas
         targetCPUUtilizationPercentage = var.n8n_main_hpa_cpu_threshold
       }
     }
@@ -523,7 +586,7 @@ resource "helm_release" "n8n" {
         minReplicaCount = var.n8n_worker_keda_min_replicas
         maxReplicaCount = var.n8n_worker_keda_max_replicas
         triggers = [
-          for list_name in ["bull:jobs:wait", "bull:jobs:active"] : {
+          for list_name in local.n8n_bull_queue_keys : {
             type = "redis"
             metadata = {
               address    = "${local.redis_connection.host}:${local.redis_connection.port}"

@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== Tool check =="
-for tool in terraform tflint checkov terraform-docs; do
+for tool in terraform tflint checkov terraform-docs helm jq; do
   if command -v "$tool" >/dev/null 2>&1; then
     echo "  ok: $tool ($("$tool" --version 2>/dev/null | head -1))"
   else
@@ -62,6 +62,25 @@ for dir in "${DIRS[@]}"; do
     fi
   )
 done
+
+echo
+echo "== n8n chart rendering check =="
+# Renders the pinned n8n Helm chart against the root module's actual
+# variables/locals and asserts on the manifests Helm produces. Offline: no
+# cluster, no Azure credentials, no apply. Needs helm + jq (checked above)
+# and the root's own "terraform init -backend=false", already run in the
+# loop above. See tests/scripts/README.md#chart-rendering-check.
+tests/scripts/check-n8n-chart.sh
+
+echo
+echo "== smoke-test.sh offline self-test =="
+# Exercises detect_topology() and check_deployment() against synthetic
+# kubectl fixtures. Exits before the script's Preflight/az-login section, so
+# it needs no live cluster or Azure credentials. This is not a live smoke
+# test against a real deployment; that stays manual, per
+# tests/scripts/README.md#smoke-test.
+bash -n tests/scripts/smoke-test.sh
+SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
 
 echo
 echo "== Smoke check passed =="

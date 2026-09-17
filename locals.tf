@@ -55,12 +55,36 @@ locals {
   n8n_redis_keda_auth_name     = "n8n-redis-keda-auth"
   n8n_service_port             = 5678
 
+  # ── Main topology selection ──────────────────────────────────────────────
+  # n8n_main_hpa_min_replicas is the only topology selector (design.md
+  # decision 2): a minimum of 1 selects single-main queue mode, which does
+  # not require feat:multipleMainInstances; a minimum above 1 selects
+  # multi-main, the default. A caller-configured higher main maximum stays
+  # valid input in single-main but has no effect — the effective ceiling
+  # below clamps to 1 so the chart HPA and scaling.tf's capacity model never
+  # exceed what the single-replica path renders.
+  n8n_main_multi_enabled              = var.n8n_main_hpa_min_replicas > 1
+  n8n_main_hpa_effective_max_replicas = local.n8n_main_multi_enabled ? var.n8n_main_hpa_max_replicas : 1
+
   n8n_webhook_path_prefixes = [
     "/webhook",
     "/webhook-waiting",
     "/form",
     "/form-waiting",
     "/mcp",
+  ]
+
+  # Editor test-mode endpoints are served by main pods only. AGIC renders a
+  # pathType=Prefix rule as an Application Gateway string-prefix pattern
+  # (`/webhook*`), which also matches `/webhook-test/...`, and the gateway
+  # evaluates path rules in declared order. These prefixes therefore have to
+  # be routed to the main Service ahead of the production prefixes above, or
+  # test webhooks, Form Trigger test mode, and MCP test mode land on
+  # webhook-processor pods that return 404.
+  n8n_test_webhook_path_prefixes = [
+    "/webhook-test",
+    "/form-test",
+    "/mcp-test",
   ]
 
   # The canonical host remains authoritative for n8n's advertised editor and
@@ -71,6 +95,15 @@ locals {
     [lower(var.n8n_domain)],
     [for domain in var.n8n_additional_domains : lower(domain)],
   ))
+
+  # Editor identity always stays on n8n_domain (design.md decision 8): REST
+  # and OAuth2 credential callbacks must return to the same host that serves
+  # the editor UI. The webhook base is independently overridable so a caller
+  # can advertise production webhooks on a different public host (e.g.
+  # examples/split-ingress) without moving editor traffic. Null retains the
+  # prior single-host behavior.
+  n8n_editor_base_url       = "https://${var.n8n_domain}"
+  n8n_effective_webhook_url = coalesce(var.n8n_webhook_url, local.n8n_editor_base_url)
 
   appgw_frontend_ip_configuration_name = "appgw-frontend-ip"
   appgw_ingress_default_annotations = merge(
@@ -187,6 +220,82 @@ locals {
     },
   ]
 
+  # PostgreSQL connection/health-check runtime tuning (port-aws-040-enhancements
+  # section 3): four nullable inputs rendered as one shared list so main,
+  # worker, and webhook containers stay in sync and the offline chart-rendering
+  # check can assert on this local directly instead of re-deriving the
+  # null-filtering logic by hand. Null omits the entry and keeps n8n's pinned
+  # application default.
+  n8n_postgres_runtime_env = concat(
+    var.postgres_connection_timeout_ms == null ? [] : [
+      { name = "DB_POSTGRESDB_CONNECTION_TIMEOUT", value = tostring(var.postgres_connection_timeout_ms) },
+    ],
+    var.postgres_ping_timeout_ms == null ? [] : [
+      { name = "DB_PING_TIMEOUT_MS", value = tostring(var.postgres_ping_timeout_ms) },
+    ],
+    var.postgres_ping_interval_seconds == null ? [] : [
+      { name = "DB_PING_INTERVAL_SECONDS", value = tostring(var.postgres_ping_interval_seconds) },
+    ],
+    var.postgres_ping_max_failures_before_recovery == null ? [] : [
+      { name = "DB_PING_MAX_FAILURES_BEFORE_RECOVERY", value = tostring(var.postgres_ping_max_failures_before_recovery) },
+    ],
+  )
+
+  # Optional application heap ceiling (port-aws-040-enhancements section 6):
+  # one shared entry rendered on main, worker, and webhook application
+  # containers. Null omits the entry and leaves any caller NODE_OPTIONS in
+  # n8n_extra_env (validated as non-conflicting on the variable itself) in
+  # place.
+  n8n_node_heap_env = var.n8n_node_max_old_space_size_mb == null ? [] : [
+    { name = "NODE_OPTIONS", value = "--max-old-space-size=${var.n8n_node_max_old_space_size_mb}" },
+  ]
+
+  # Caller-managed task-runner launcher configuration (port-aws-040-enhancements
+  # section 7): mirrors the chart's taskRunners.customConfig shape so n8n.tf
+  # and plan-time tests share one source. Null keeps customConfig disabled,
+  # which leaves the runner image's own default launcher file in place.
+  n8n_task_runner_custom_config_values = {
+    enabled       = var.n8n_task_runner_custom_config != null
+    configMapName = try(var.n8n_task_runner_custom_config.config_map_name, "")
+    configMapKey  = try(var.n8n_task_runner_custom_config.config_map_key, "n8n-task-runners.json")
+  }
+
+  # Optional pod DNS configuration (port-aws-040-enhancements section 8):
+  # strips null attributes/option values before rendering and collapses a
+  # null or effectively empty input to {}. The chart applies dnsConfig via
+  # Helm's `with`, which treats an empty map as absent, so {} correctly
+  # omits the block on all three pod families without a separate ternary.
+  # Built as one flat object-for-comprehension (not merge()) over pre-computed
+  # per-key locals: combining merge() with this for-expression's dynamically
+  # shaped option elements produces a spurious "Inconsistent conditional
+  # result types" error from Terraform's type unification, even though every
+  # branch evaluates to a well-formed object at runtime.
+  n8n_dns_config_options = (
+    var.n8n_dns_config == null || var.n8n_dns_config.options == null ? null : [
+      for opt in var.n8n_dns_config.options : {
+        for k, v in { name = opt.name, value = opt.value } : k => v if v != null
+      }
+    ]
+  )
+
+  n8n_dns_config_values = {
+    for k, v in {
+      nameservers = try(var.n8n_dns_config.nameservers, null)
+      searches    = try(var.n8n_dns_config.searches, null)
+      options     = local.n8n_dns_config_options
+    } : k => v if v != null
+  }
+
+  # Bull worker timing (port-aws-040-enhancements section 4): one inner map
+  # with only non-null keys, merged into the chart's redis.worker block in
+  # n8n.tf. A shallow merge of three separate worker maps would lose values,
+  # so this local composes them together up front.
+  n8n_queue_worker_settings = merge(
+    var.n8n_queue_worker_lock_duration == null ? {} : { lockDuration = var.n8n_queue_worker_lock_duration },
+    var.n8n_queue_worker_lock_renew_time == null ? {} : { lockRenewTime = var.n8n_queue_worker_lock_renew_time },
+    var.n8n_queue_worker_stalled_interval == null ? {} : { stalledInterval = var.n8n_queue_worker_stalled_interval },
+  )
+
   # The chart appends config.extraEnv after its own environment variables, and
   # Kubernetes resolves duplicates last-wins. Reserve every current module and
   # chart-owned connection, identity, storage, license, runner, and topology
@@ -239,6 +348,13 @@ locals {
     "N8N_RUNNERS_",
     "QUEUE_",
   ]
+
+  # The two Bull list keys workers hold jobs in. KEDA's worker ScaledObject
+  # (n8n.tf) and the optional Redis exporter's REDIS_EXPORTER_CHECK_SINGLE_KEYS
+  # (observability.tf) both read this one list, so a future prefix or key
+  # change moves both call sites together and the exporter's observed queue
+  # keys stay identical to KEDA's by construction (design.md decision 6).
+  n8n_bull_queue_keys = ["bull:jobs:wait", "bull:jobs:active"]
 
   # Authentication remains optional for external Redis. Managed Redis always
   # has an access key. These booleans declassify only whether a credential is

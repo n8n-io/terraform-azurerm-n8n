@@ -118,7 +118,9 @@ creation depends on `time_sleep.aks_api_warmup`; KEDA installs before the
 CRD-aware TriggerAuthentication; the n8n release installs after both. Mocked
 plans and `terraform graph` verify those static edges, but they do not prove
 live Azure lifecycle behavior — track cold create, no-op apply, Helm-only
-update, AKS credential rotation, partial-apply recovery, AKS replacement,
+update, AKS credential rotation, partial-apply recovery, AKS replacement
+(known to fail at plan time because the caller's Kubernetes-side providers
+are configured from `aks_kube_config`; see `docs/troubleshooting.md`),
 normal destroy, and unavailable-API recovery per `openspec/changes/
 align-azure-with-aws-capabilities/tasks.md` section 17.4 before treating the
 one-apply contract as a release guarantee for a given release.
@@ -179,8 +181,13 @@ live capacity testing.
 private-only Application Gateway, subnet NSG, WAF policy, AGIC permissions,
 and Kubernetes Ingress. `create_ingress = false` must also remove the AKS
 AGIC addon while preserving the resource-derived service-discovery outputs.
-Keep all five entries in `local.n8n_webhook_path_prefixes` before `/` for
-every host. The subnet NSG must retain `GatewayManager` access on
+Keep the three `local.n8n_test_webhook_path_prefixes` entries (main
+Service) before all five `local.n8n_webhook_path_prefixes` entries (webhook
+processors) before `/` for every host: AGIC renders `Prefix` rules as
+string-prefix patterns and Application Gateway evaluates them in declared
+order, so `/webhook*` would otherwise capture `/webhook-test`. Do not add
+`ssl_certificate` back to the gateway's `ignore_changes`; that silently
+turns `app_gateway_tls_cert_secret_id` rotations into no-ops. The subnet NSG must retain `GatewayManager` access on
 65200-65535 and `AzureLoadBalancer` probe access before its deny rule. Source
 restrictions apply to the editor and webhook paths together.
 
@@ -250,6 +257,202 @@ local a test still asserts on. All four new provider-lock refreshes
 -platform=...` run — they were created with only the host platform's hashes
 tracked, unlike every pre-existing root/example/submodule lock file, which
 already carried all three platforms.
+
+## `port-aws-040-enhancements` in progress
+
+This change (`openspec/changes/port-aws-040-enhancements/`) ports the
+applicable parts of `terraform-aws-n8n` 0.4.0 (single-main queue mode,
+PostgreSQL/Bull/execution-save runtime tuning, a V8 heap ceiling,
+caller-managed task-runner launcher configuration, pod DNS, an optional
+Redis exporter, AKS OS-disk sizing, and the editor/webhook URL split) —
+see its `design.md` for the full per-item applicability table and the
+decisions each Azure adaptation is based on. Section 1 added
+`tests/scripts/check-n8n-chart.sh`, an offline Helm chart-rendering
+regression check with no Azure/Kubernetes-credential dependency, run
+locally via `terraform init -backend=false && tests/scripts/check-n8n-chart.sh`.
+`terraform console`, when fed a heredoc via a pipe (non-interactive stdin,
+as every shell script must), evaluates **one line per expression** —
+unlike the interactive REPL, it does not accept a multi-line HCL
+expression spanning several heredoc lines and instead reports
+"Missing expression" once the input ends mid-expression. Any script
+building a `jsonencode({...})` fixture through `terraform console` must
+keep that whole expression on a single line. Separately, `terraform
+console` (and `terraform plan`) does not require live provider
+credentials merely because the configuration declares a data source:
+an unconfigured provider's data-source read (e.g. `data.azurerm_resource_group.n8n`
+in `iam.tf`) is deferred and reported as `(known after apply)` rather than
+erroring the whole plan, as long as the console expression being
+evaluated doesn't itself depend on that unresolved value. This is what
+lets a chart-check script pull real `var.*`/`local.*` values from the
+root module via `terraform console` without any Azure auth, provided the
+expression only touches plan-time-known inputs (variables and literals,
+not managed-resource attributes like a Flexible Server FQDN). Section 4
+added the three nullable `n8n_queue_worker_*` Bull timing inputs, composed
+into one `local.n8n_queue_worker_settings` map merged into the chart's
+`redis.worker` block only when non-empty. The pinned chart's own
+`values.yaml` already ships non-zero `redis.worker.lockDuration` /
+`lockRenewTime` / `stalledInterval` defaults (60000/10000/30000 ms) and its
+`_configmap-env.tpl` guards each `QUEUE_WORKER_*` entry with a truthy check
+on that same value — so those three ConfigMap keys and pod env references
+render unconditionally with the chart's own defaults even when this module's
+inputs are null and contributes no override. "Omitted by default" for these
+three inputs means the module-owned local list is empty, not that the
+rendered manifest lacks the keys; `check-n8n-chart.sh`'s default-fixture
+assertion checks for the chart's literal default values, not key absence.
+The effective-renewal-below-duration cross-variable validation lives on
+`n8n_queue_worker_lock_renew_time` only, using `coalesce(var, pinned_default)`
+on both sides so an omitted duration or renewal still resolves against the
+chart's real default before comparing. Section 5 added the four
+non-nullable `n8n_executions_data_save_*` inputs (mapping to
+`executions.data.saveOnSuccess`/`saveOnError`/`saveOnProgress`/`saveManualExecutions`),
+replacing the literals previously hardcoded in `n8n.tf`. Terraform's
+null-falls-back-to-default substitution (assigning `null` to an input that
+has a `default` yields that default instead of an error) only fires when
+the variable is declared `nullable = false` **and** is being evaluated at
+the root module boundary the way `terraform test`'s `variables` block and
+`-var`/tfvars assign it. A plain nullable `string`/`bool` variable with a
+non-null default does **not** get this treatment at the root: assigning it
+an explicit `null` runs the variable's own `validation` block against `null`
+itself and fails, exactly as if no default existed. (The commonly cited
+null-substitution behavior applies unconditionally only to child *module
+call* arguments, not to a root module's own inputs.) A `terraform test` run
+block that intends to assert "explicit `null` falls back to the default"
+therefore requires `nullable = false` on the variable, not just a `default`.
+The existing broad `"EXECUTIONS_"` entry in `local.n8n_managed_env_prefixes`
+(added before this change) already reserves all four raw
+`EXECUTIONS_DATA_SAVE_*` names in `var.n8n_extra_env`, so section 5 needed
+no new guard, only a regression test proving the existing guard still
+rejects them. Section 8 added nullable `n8n_dns_config` (nameservers,
+searches, options), rendered unconditionally as the chart's top-level
+`dnsConfig` value — the pinned chart applies it via Helm's `{{- with
+.Values.dnsConfig }}`, which Go templates treat an empty map as falsy, so
+`local.n8n_dns_config_values = {}` already omits the block on all three pod
+families without a separate ternary in `n8n.tf`. Combining `merge()` with a
+`for` expression whose elements have a data-dependent attribute set (here,
+each DNS option optionally carrying `value`) produces a spurious
+"Inconsistent conditional result types" error from Terraform's static type
+unification — it fires only when that dynamically-shaped list is merged
+alongside other fixed-shape object keys (e.g. `nameservers`/`searches`),
+not when the list stands alone, and the reported error location is
+misleading (it blames an unrelated top-level ternary against `{}`). The fix
+omits `merge()` entirely: precompute the options list in its own local
+(ternary between `null` and the list, never between `{}` and an object —
+`null` unifies with any type), then build the effective object with one
+`{ for k, v in {...} : k => v if v != null }` comprehension over a plain map
+literal holding all three keys, using `try(var.x.field, null)` instead of a
+null-guarded ternary to avoid ever evaluating a `null`-vs-`{}` branch pair.
+Add a regression test that combines all three `n8n_dns_config` attributes in
+one fixture — a test exercising only pairs of attributes will not catch this
+class of type-unification failure.
+
+Section 9 added the new root `observability.tf` (non-nullable
+`redis_exporter_enabled = false` / `redis_exporter_image`, one
+`kubernetes_deployment_v1` plus `kubernetes_service_v1` pair, opt-in) and a
+shared `local.n8n_bull_queue_keys = ["bull:jobs:wait", "bull:jobs:active"]`
+in `locals.tf` that both the exporter's `REDIS_EXPORTER_CHECK_SINGLE_KEYS`
+(`db0=<key>` per entry, database 0 only) and the pre-existing KEDA worker
+`ScaledObject` triggers loop (`n8n.tf`) now read, so the two can never
+observe different queue names. The exporter reuses `local.redis_connection`
+(`redis.tf`), `local.redis_username_present`/`redis_password_present`
+(`locals.tf`), and `local.redis_password_secret_name`/`_key` exactly as n8n's
+own `redis.passwordSecret` chart value does — it creates no second password
+Secret and never reads a caller-managed Secret's payload. Checkov's
+Terraform framework registers its `CKV_K8S_*` checks against the unsuffixed
+`kubernetes_deployment`/`kubernetes_service` resource types only, not the
+`_v1` variants used throughout this root (matching `terraform-aws-n8n`'s
+observation for its own `redis_exporter` Deployment) — a clean `checkov`
+run says nothing about this file either way, so its pod hardening (dropped
+capabilities, non-root UID 59000, read-only root filesystem, no privilege
+escalation, memory limit, both probes) needs direct test assertions rather
+than a scanner catching a regression. `terraform test`'s mocked `kubernetes`
+provider represents at least `spec.replicas` and
+`security_context.run_as_user` as quoted strings in assertion failure
+output even though the provider schema types them numeric — compare with
+`tostring(...)` on both sides rather than a bare `== 1` / `== 59000`, or the
+assertion fails with a type mismatch that has nothing to do with the actual
+rendered value. A `local` built from a managed resource's own computed
+attribute (e.g. `local.redis_exporter_addr`, which reads
+`azurerm_managed_redis.n8n[0].hostname`/`.port` through
+`local.redis_connection`) is unknown under `command = plan` unless that
+resource has an `override_resource` supplying the value — unlike a
+config-supplied attribute (`sku_name`, `name`), which stays known from the
+variable itself. Existing `tests/defaults.tftest.hcl` coverage for the
+module-managed Redis path therefore only asserts presence/shape of
+`REDIS_ADDR`, not its exact value; the external-Redis runs (fully
+variable-driven host/port/TLS) assert the exact `redis://`/`rediss://`
+string instead. `terraform graph`'s default transitive reduction drops a
+`depends_on` edge that is already implied by another edge in the same DOT
+output (e.g. exporter → `kubernetes_namespace.n8n` disappears once exporter
+→ `kubernetes_secret.n8n_redis` → `kubernetes_namespace.n8n` exists) — a
+missing edge in `terraform graph` output is not proof the `depends_on` entry
+itself is missing from the resource block; check the `.tf` source, not just
+the rendered graph, and use the graph output only to confirm the absence of
+an unwanted reverse edge (e.g. no `n8n`/`KEDA` → exporter edge).
+
+Section 12 exposed `n8n_main_hpa_min_replicas` as a validated passthrough
+variable in all eight examples (three sizing tiers, `split-ingress`, and the
+four `customer-managed-*` examples), defaulting to each example's documented
+floor (2, except medium's 3 and large's 6). For `small`/`medium`/`large`,
+which already carry a `local.tier` map surfaced through a `tier_configuration`
+output, the cleanest wiring sets the map's `main_min_replicas` entry directly
+to `var.n8n_main_hpa_min_replicas` — the existing `main.tf` reference to
+`local.tier.main_min_replicas` needs no further change, and the effective
+value is already visible through the existing output. Examples without a tier
+map gained a dedicated `main_hpa_min_replicas` (or `output.main_hpa_min_replicas`)
+output exposing `var.n8n_main_hpa_min_replicas` directly, matching the existing
+`webhook_base_url` pattern in `split-ingress/outputs.tf`. A `terraform test`
+`assert` block cannot reference a resource nested inside a child module
+(`module.n8n.helm_release.n8n...`, `module.n8n.some_local`) — only that
+module's own declared outputs are visible from the calling root's test file;
+confirmed by probing with `override_resource`-style addressing against
+`module.n8n.helm_release.n8n`, which Terraform rejects as `Unsupported
+attribute`. This is why every example needed its own thin output rather than
+reaching into the root module's Helm values to prove the passthrough. Local
+`terraform.tfvars` files (gitignored, used for a contributor's own prior live
+tests) and gitignored `*_override.tf` scratch files (e.g. a leftover
+`examples/small/pr2_override.tf` declaring a stray `provider "acme"` block)
+are picked up automatically by `terraform init`/`terraform test` and can break
+an otherwise-correct example; move them aside before running tests locally
+and restore them afterward — they are intentionally untracked and must never
+be committed or deleted on someone else's behalf.
+
+Section 13.1 made `detect_topology()` and `check_deployment()` in
+`tests/scripts/smoke-test.sh` standalone functions (defined right after the
+script's `pass`/`fail`/`warn`/`skip`/`info` helpers, before `Preflight`)
+specifically so an `SMOKE_TEST_SELF_TEST=1` guard placed in that same spot
+can stub `kubectl` with synthetic fixtures and exercise both functions for
+single-main, healthy multi-main, and degraded multi-main (one ready pod of
+two desired) without `az login`, Terraform state, or a live cluster — the
+guard block runs and `exit`s before `Preflight`'s `require_cmd`/`az account
+show` checks, so it is unreachable during a real post-apply run. Topology
+detection reads the *rendered* `n8n-main` HorizontalPodAutoscaler
+(`minReplicas == maxReplicas == 1` selects single-main) rather than the
+current main pod count, which can transiently disagree with the configured
+floor mid-rollout; Deployment `strategy.type` and the main
+`PodDisruptionBudget`'s `minAvailable` are read only as consistency
+cross-checks against that same topology. The chart's `n8n.fullname` template
+resolves to the bare `n8n` release name (no suffix), so every rendered
+resource the smoke test inspects by name uses the `n8n-<component>`
+convention (`n8n-main` HPA/Deployment/PDB, `n8n-worker`,
+`n8n-webhook-processor`) — confirmed by pulling the pinned chart's raw
+templates rather than assuming naming from the module side.
+
+Section 13.2 added a `## Main topology: multi-main and single-main` section
+to the root `README.md` (linked from the table of contents, from
+`docs/post-deployment.md`'s license-activation step, and from
+`docs/data-storage.md`'s new database-only recipe) plus a dedicated
+`docs/troubleshooting.md` entry for the specific failure mode of raising
+`n8n_main_hpa_min_replicas` without the `feat:multipleMainInstances`
+entitlement: the additional main pod(s) fail their license check,
+`helm_release.n8n`'s existing `wait = true` blocks until `timeout`, and
+`atomic = true` / `cleanup_on_fail = true` (already present before this
+change, not new behavior) roll the release back automatically — this needed
+only documentation, not a new safeguard. A caller-managed Blob container
+(`create_blob_storage = false`) is independent of the
+`feat:binaryDataAz`/`feat:executionDataAz` entitlements gating the Azure
+storage modes, so `docs/customer-managed-infrastructure.md`'s Blob section
+cross-references the same database-only recipe rather than implying ownership
+of the container substitutes for the entitlement.
 
 ## What this repo is
 
@@ -338,7 +541,7 @@ concern, and one deliberate nested call to the directly composable
 | `examples/small/`, `examples/medium/`, `examples/large/` | End-to-end sizing examples with caller-owned Azure foundations, a Key Vault certificate helper, and one root `module "n8n"` call. |
 | `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |
 | `tests/scripts/smoke-test.sh`     | Post-`apply` smoke test for live deployments.               |
-| `docs/`                           | Long-form supplementary docs (troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets). |
+| `docs/`                           | Long-form supplementary docs (troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
 | `README.md`                       | Human entry point — architecture, prerequisites, usage, and the auto-generated Reference block. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |
 | `.copywrite.hcl`                  | Enforces the `# Copyright n8n GmbH 2025` / `# SPDX-License-Identifier: MIT` header on every `.tf`. |

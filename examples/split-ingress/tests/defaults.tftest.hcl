@@ -123,6 +123,16 @@ run "split_ingress_plan" {
     error_message = "The internal Ingress must route the webhook prefixes to the webhook processor."
   }
 
+  # Test-mode prefixes must precede the production prefixes and target main:
+  # Application Gateway evaluates string-prefix rules in declared order.
+  assert {
+    condition = (
+      slice([for p in kubernetes_ingress_v1.admin_internal.spec[0].rule[0].http[0].path : p.path], 0, 3) == ["/webhook-test", "/form-test", "/mcp-test"] &&
+      alltrue([for p in slice(kubernetes_ingress_v1.admin_internal.spec[0].rule[0].http[0].path, 0, 3) : p.backend[0].service[0].name == "n8n-main"])
+    )
+    error_message = "The Ingress must route the three editor test-mode prefixes to the main Service ahead of the production webhook prefixes."
+  }
+
   assert {
     condition = one([
       for p in kubernetes_ingress_v1.admin_internal.spec[0].rule[0].http[0].path :
@@ -146,6 +156,16 @@ run "split_ingress_plan" {
   assert {
     condition     = kubernetes_ingress_v1.admin_internal.spec[0].rule[0].host == "n8n.test.example.com"
     error_message = "The internal Ingress must answer on the admin hostname."
+  }
+
+  # n8n must advertise webhooks on the public hostname while the editor
+  # identity (OAuth2 credential callbacks) stays on the admin hostname.
+  assert {
+    condition = (
+      module.n8n.n8n_webhook_url == "https://hooks.n8n.test.example.com" &&
+      module.n8n.n8n_url == "https://n8n.test.example.com"
+    )
+    error_message = "n8n must advertise N8N_WEBHOOK_URL on the public webhook host while N8N_EDITOR_BASE_URL stays on the admin host."
   }
 
   assert {
@@ -241,6 +261,43 @@ run "webhook_subdomain_flows_through_to_every_consumer" {
   assert {
     condition     = output.webhook_base_url == "https://callbacks.n8n.test.example.com"
     error_message = "webhook_base_url must track webhook_subdomain."
+  }
+}
+
+run "split_ingress_single_main_override" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_admin.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplita-tls-test.vault.azure.net/secrets/n8nsplita-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_webhook.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplitw-tls-test.vault.azure.net/secrets/n8nsplitw-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.main_hpa_min_replicas == 1
+    error_message = "Setting main minimum to 1 must pass 1 through to the root module."
+  }
+
+  assert {
+    condition = (
+      module.n8n.n8n_webhook_url == "https://hooks.n8n.test.example.com" &&
+      module.n8n.n8n_url == "https://n8n.test.example.com"
+    )
+    error_message = "Selecting single-main must not change the split editor/webhook URLs."
   }
 }
 

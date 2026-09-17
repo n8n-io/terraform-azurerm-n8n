@@ -36,6 +36,29 @@ aks_availability_zones = ["1", "3"]
 
 Every example already exposes this variable for exactly this reason (see the `aks_availability_zones` input description). Re-running `terraform apply` after the fix picks up cleanly: resources created before the AKS failure (e.g. the Application Gateway) are left untouched and reused.
 
+## Changing `aks_node_os_disk_size_gb` on an existing cluster disrupts workloads
+
+**Symptom**
+
+After changing `aks_node_os_disk_size_gb` on a cluster that already exists, `terraform apply` succeeds but pods on the affected node pool restart unexpectedly, or the apply takes noticeably longer than a routine change.
+
+**Root cause**
+
+`aks_node_os_disk_size_gb` is null by default, which leaves OS-disk sizing to the provider/Azure default for the selected VM size — this module makes no 20 GiB/100 GiB assumption and adds no disk-type control. Setting or changing this value on an existing `default_node_pool` or `n8n_user` pool requires AzureRM to cycle that pool through its `temporary_name_for_rotation` (`systemtemp` for the system pool, `n8nusrtemp` for the user pool): nodes are recreated with the new disk size. This rotation is **not** a cordon-and-drain operation — AzureRM does not guarantee pods are gracefully evicted before their node is replaced, and neither the AKS node-pool `max_surge` upgrade setting nor the n8n PDBs promise an uninterrupted rotation.
+
+This control has no effect at all when `create_aks = false`; `check.aks_tuning_requires_module_managed_aks` warns (non-failing) if the input is left non-null in that mode, because the existing cluster's disk sizing is owned by whoever created it.
+
+**Resolution**
+
+Treat an OS-disk size change as its own maintenance operation, separate from any topology or application change in the same apply:
+
+1. Run `terraform plan` first and confirm which node pool(s) the change affects.
+2. Confirm subnet IP headroom, node quota, and available capacity for the temporary rotation node before applying — the rotation briefly needs room for an extra node per pool being resized.
+3. Apply during a maintenance window. Expect workloads scheduled on the affected pool to be interrupted; the multi-main topology, worker KEDA scaling, and webhook HPA reduce — but do not eliminate — the chance of simultaneous downtime across every main pod.
+4. Verify pod health and re-run the smoke test (`tests/scripts/smoke-test.sh`) after the rotation completes.
+
+A valid `aks_node_os_disk_size_gb` value is not a promise that every Azure VM/disk combination accepts that size — confirm against Azure's current documentation for the configured `aks_node_vm_size` before applying.
+
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
 **Symptom**
@@ -213,6 +236,90 @@ kubectl -n n8n rollout status deployment/n8n --timeout=5m
 ```
 
 If the UI still hangs after a manual restart, the migration is probably wedged in `pg_stat_activity`. Connect from a bootstrap pod (see the uuid-ossp section above), run `SELECT pid, state, query FROM pg_stat_activity WHERE state != 'idle';`, and `pg_cancel_backend(pid)` any session stuck on `CREATE INDEX`. Then `kubectl -n n8n rollout restart deployment/n8n`. If the race recurs on subsequent applies, raise `var.n8n_helm_post_install_settle_seconds` (e.g. to 120) so the Ingress wait window comfortably outlasts the chart's leader-election bootstrap.
+
+## Main topology changes report competing leaders or missing execution data
+
+A live single-main to multi-main transition can finish successfully while old
+single-main processes overlap with the destination topology. Observed symptoms
+include multiple instances claiming leadership, duplicate scheduled attempts,
+and a worker failing to find execution data. Successful execution counts can
+hide failed attempts because schedule deduplication suppresses some duplicates.
+
+Live changes between single-main and multi-main are unsupported in either
+direction. Follow the [maintenance-only transition checklist](./topology-maintenance.md):
+stop execution producers, prevent controllers from recreating the source
+workload, and verify that all old main processes have stopped before starting
+the destination. A maintenance window, `Recreate`, or a successful Helm rollback
+alone does not enforce this boundary. The current module does not enforce it
+either.
+
+If a live transition has already produced these symptoms, pause further topology
+changes, preserve logs from all affected pods, and reconcile queue jobs and
+execution outcomes. Do not treat healthy replacement pods as proof that the
+transition was safe.
+
+## Switching to multi-main fails because the license lacks `feat:multipleMainInstances`
+
+Check the destination license before the
+[maintenance-only transition](./topology-maintenance.md). Raising
+`n8n_main_hpa_min_replicas` above 1 without the multi-main entitlement active on
+`var.n8n_license_key` does not fail at plan time: Terraform cannot inspect the
+license's entitlements. Instead:
+
+1. `helm_release.n8n` renders `multiMain.enabled = true` and the additional main pod(s) start.
+2. Each additional main pod fails its license check for `feat:multipleMainInstances` and crash-loops (or the leader stops serving, depending on which pod loses the race).
+3. `helm_release.n8n` runs with `wait = true`, so Helm never observes `replicas == readyReplicas` and blocks until `timeout` (`var.n8n_helm_timeout`, default 600 s).
+4. `atomic = true` makes Helm attempt an automatic rollback to the previous revision; `cleanup_on_fail = true` permits cleanup of newly created upgrade resources. Terraform reports the failed upgrade. Inspect the resulting workload rather than assuming the prior topology is healthy or that no source and destination processes overlapped.
+
+Diagnose with:
+
+```bash
+kubectl -n n8n get pods -l app.kubernetes.io/component=main
+kubectl -n n8n exec -it <a-main-pod> -c n8n-main -- n8n license:info
+```
+
+`n8n license:info` reports the active plan and its entitlements. If
+`feat:multipleMainInstances` is absent, keep traffic and triggers disabled while
+you choose either a suitable license or recovery to single-main. Inspect Helm
+history, actual controllers, and surviving pods before planning recovery.
+
+Do not blindly toggle the input, run `helm rollback`, or reapply. Follow the
+[maintenance failure and rollback procedure](./topology-maintenance.md#failure-and-rollback),
+re-establish the stopped-workload boundary, and review a fresh recovery plan.
+Neither automatic nor manual Helm rollback provides a topology-transition
+safety guarantee.
+
+## `terraform plan -replace` on the AKS cluster fails with `connection refused`
+
+**Symptom:** planning a replacement of `azurerm_kubernetes_cluster.n8n[0]`
+(explicitly with `-replace`, or implicitly through a change that forces a new
+cluster, such as a new `friendly_name_prefix`, subnet, or SKU-level immutable
+attribute) exits 1 with
+`Get "http://localhost/api/v1/namespaces/n8n": dial tcp [::1]:80: connect: connection refused`
+for `kubernetes_namespace.n8n` and `module.controllers.kubernetes_namespace.keda`.
+
+**Cause:** the caller's `kubernetes`, `helm`, and `kubectl` providers are
+configured from `module.n8n.aks_kube_config` (or, with `create_aks = false`,
+from the caller's own cluster resource). When the cluster is planned for
+replacement those values are unknown during plan, and the providers fall back
+to an empty configuration that targets `localhost`. HashiCorp states that a
+provider "cannot refer to anything unknown before it's configured" and that
+this "cannot work if the provider needs to use that configuration during plan
+or refresh" ([hashicorp/terraform#24131](https://github.com/hashicorp/terraform/issues/24131)).
+The module's one-apply contract covers fresh installs and updates on an
+existing cluster, not in-place cluster replacement.
+
+**Resolution:** do not replace the cluster in place. Back up the encryption
+key (`terraform output -raw n8n_encryption_key`) and durable data, run
+`terraform destroy` while the AKS API is reachable, and re-apply. PostgreSQL,
+Redis, Blob storage, and the Key Vault certificate are separate resources and
+are not affected by the failed plan, but a full destroy removes the
+module-managed database and storage account; restore from backup or move to
+the `create_database = false` / `create_blob_storage = false` reference
+inputs first if the data must survive. Targeted destroys or `terraform state
+rm` of the Kubernetes-provider resources can make the replacement plan
+succeed, but that is manual state surgery outside the supported path and is
+not covered by the module's tests.
 
 ## `terraform destroy` hangs on namespace finalizers or App Gateway frontend IP release
 

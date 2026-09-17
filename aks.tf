@@ -50,6 +50,7 @@ resource "azurerm_kubernetes_cluster" "n8n" {
     vm_size                     = var.aks_node_vm_size
     vnet_subnet_id              = var.aks_subnet_id
     zones                       = var.aks_availability_zones
+    os_disk_size_gb             = var.aks_node_os_disk_size_gb
 
     node_count           = var.aks_node_count_min
     auto_scaling_enabled = true
@@ -123,11 +124,13 @@ resource "azurerm_kubernetes_cluster" "n8n" {
 resource "azurerm_kubernetes_cluster_node_pool" "n8n_user" {
   count = var.create_aks ? 1 : 0
 
-  name                  = "n8nuser"
-  kubernetes_cluster_id = azurerm_kubernetes_cluster.n8n[0].id
-  vm_size               = var.aks_node_vm_size
-  vnet_subnet_id        = var.aks_subnet_id
-  zones                 = var.aks_availability_zones
+  name                        = "n8nuser"
+  kubernetes_cluster_id       = azurerm_kubernetes_cluster.n8n[0].id
+  vm_size                     = var.aks_node_vm_size
+  vnet_subnet_id              = var.aks_subnet_id
+  zones                       = var.aks_availability_zones
+  os_disk_size_gb             = var.aks_node_os_disk_size_gb
+  temporary_name_for_rotation = "n8nusrtemp"
 
   node_count           = var.aks_node_count_min
   auto_scaling_enabled = true

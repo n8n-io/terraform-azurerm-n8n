@@ -142,6 +142,16 @@ run "customer_managed_cluster_plan" {
     error_message = "The Ingress must route every webhook prefix to the webhook processor Service."
   }
 
+  # Test-mode prefixes must precede the production prefixes and target main:
+  # Application Gateway evaluates string-prefix rules in declared order.
+  assert {
+    condition = (
+      slice([for p in kubernetes_ingress_v1.n8n.spec[0].rule[0].http[0].path : p.path], 0, 3) == ["/webhook-test", "/form-test", "/mcp-test"] &&
+      alltrue([for p in slice(kubernetes_ingress_v1.n8n.spec[0].rule[0].http[0].path, 0, 3) : p.backend[0].service[0].name == "n8n-main"])
+    )
+    error_message = "The Ingress must route the three editor test-mode prefixes to the main Service ahead of the production webhook prefixes."
+  }
+
   assert {
     condition = one([
       for p in kubernetes_ingress_v1.n8n.spec[0].rule[0].http[0].path :
@@ -153,4 +163,63 @@ run "customer_managed_cluster_plan" {
   # PostgreSQL, Redis, and Blob remain module-managed in this example — the
   # module call in main.tf sets no create_database, create_redis, or
   # create_blob_storage override, so all three keep their true defaults.
+}
+
+run "customer_managed_cluster_single_main_override" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncmc-tls-test.vault.azure.net/secrets/n8ncmc-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.Network/applicationGateways/n8ncmc-appgw"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_tls_cert
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncmc-appgw-tls"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.existing
+    override_during = plan
+    values = {
+      id              = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ContainerService/managedClusters/n8ncmc-shared-aks"
+      oidc_issuer_url = "https://oidc.prod-aks.azure.com/00000000-0000-0000-0000-000000000000/"
+      kube_config = [{
+        host                   = "https://n8ncmc-shared-aks.hcp.eastus.azmk8s.io:443"
+        client_certificate     = "ZmFrZS1jZXJ0"
+        client_key             = "ZmFrZS1rZXk="
+        cluster_ca_certificate = "ZmFrZS1jYQ=="
+        password               = "fake-password"
+        username               = "fake-username"
+      }]
+    }
+  }
+
+  assert {
+    condition     = output.main_hpa_min_replicas == 1
+    error_message = "Setting main minimum to 1 must pass 1 through to the root module."
+  }
+
+  assert {
+    condition     = module.n8n.aks_cluster_name == azurerm_kubernetes_cluster.existing.name
+    error_message = "Selecting single-main must not change the caller-owned AKS targeting."
+  }
 }

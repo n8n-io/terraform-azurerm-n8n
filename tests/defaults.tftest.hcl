@@ -346,6 +346,20 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].temporary_name_for_rotation == "n8nusrtemp"
+    error_message = "The user AKS pool must declare a temporary rotation name distinct from the system pool's 'systemtemp' so callers can update disk size or other rotation-required properties."
+  }
+
+  # os_disk_size_gb and os_disk_type are optional+computed on both node-pool
+  # resources: the mock azurerm provider assigns them a placeholder computed
+  # value even when var.aks_node_os_disk_size_gb is null and the attribute is
+  # absent from config, so their default-path value isn't plan-time
+  # assertable here. The explicit-override run below
+  # (renders_valid_aks_node_os_disk_size_gb) proves the value is config-driven
+  # (known at plan) whenever the variable is set, which is the behavior this
+  # port changes; os_disk_type is asserted unchanged there instead.
+
+  assert {
     condition     = azurerm_user_assigned_identity.n8n_workload.name == "${var.friendly_name_prefix}-n8n-workload"
     error_message = "n8n_workload UAMI name must embed friendly_name_prefix."
   }
@@ -425,6 +439,64 @@ run "rejects_malformed_aks_api_authorized_ip_ranges" {
 
   expect_failures = [
     var.aks_api_authorized_ip_ranges,
+  ]
+}
+
+run "renders_valid_aks_node_os_disk_size_gb" {
+  command = plan
+
+  variables {
+    aks_node_os_disk_size_gb = 256
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].os_disk_size_gb == 256
+    error_message = "default_node_pool.os_disk_size_gb must equal the supplied aks_node_os_disk_size_gb."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].os_disk_size_gb == 256
+    error_message = "n8n_user pool os_disk_size_gb must equal the supplied aks_node_os_disk_size_gb."
+  }
+
+  # os_disk_type is left unset in both node-pool resources by this port (no
+  # disk-type control was added), so config never assigns it regardless of
+  # var.aks_node_os_disk_size_gb.
+}
+
+run "rejects_zero_aks_node_os_disk_size_gb" {
+  command = plan
+
+  variables {
+    aks_node_os_disk_size_gb = 0
+  }
+
+  expect_failures = [
+    var.aks_node_os_disk_size_gb,
+  ]
+}
+
+run "rejects_negative_aks_node_os_disk_size_gb" {
+  command = plan
+
+  variables {
+    aks_node_os_disk_size_gb = -32
+  }
+
+  expect_failures = [
+    var.aks_node_os_disk_size_gb,
+  ]
+}
+
+run "rejects_fractional_aks_node_os_disk_size_gb" {
+  command = plan
+
+  variables {
+    aks_node_os_disk_size_gb = 128.5
+  }
+
+  expect_failures = [
+    var.aks_node_os_disk_size_gb,
   ]
 }
 
@@ -1357,6 +1429,11 @@ run "base_release_outputs_match_chart_service_contract" {
   }
 
   assert {
+    condition     = tolist(output.n8n_test_webhook_path_prefixes) == tolist(["/webhook-test", "/form-test", "/mcp-test"])
+    error_message = "The test-mode path output must list every editor test endpoint family served only by main pods."
+  }
+
+  assert {
     condition     = output.n8n_url == "https://${var.n8n_domain}"
     error_message = "n8n_url must expose the canonical HTTPS domain."
   }
@@ -1470,10 +1547,11 @@ run "runtime_controls_defaults_render_in_helm_values" {
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_LEVEL"]) == "info" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_OUTPUT"]) == "console" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://n8n.example.com" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://n8n.example.com" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_PROXY_HOPS"]) == "1" &&
       length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "WEBHOOK_URL"]) == 0
     )
-    error_message = "Timezone, logging, canonical webhook URL, and one trusted proxy hop must render into the shared chart configuration without the deprecated WEBHOOK_URL name."
+    error_message = "Timezone, logging, canonical webhook/editor URLs, and one trusted proxy hop must render into the shared chart configuration without the deprecated WEBHOOK_URL name."
   }
 
   assert {
@@ -1604,6 +1682,385 @@ run "runtime_controls_defaults_render_in_helm_values" {
     )
     error_message = "The floating-license safeguard must always render false while default-on or default-off feature variables remain omitted."
   }
+}
+
+# ── Independent editor/webhook base URLs (port-aws-040-enhancements section 11) ──
+
+run "omits_webhook_url_override_by_default" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = var.n8n_webhook_url == null
+    error_message = "n8n_webhook_url must default to null."
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://n8n.example.com" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://n8n.example.com"
+    )
+    error_message = "A null n8n_webhook_url must retain https://<n8n_domain> as both the webhook and editor base URLs."
+  }
+}
+
+run "accepts_split_editor_and_webhook_hosts" {
+  command = plan
+
+  variables {
+    n8n_domain                 = "admin.example.com"
+    n8n_webhook_url            = "https://hooks.example.com"
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://hooks.example.com" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://admin.example.com"
+    )
+    error_message = "A supplied n8n_webhook_url must advertise the public webhook host while the editor base URL stays on n8n_domain."
+  }
+}
+
+run "accepts_webhook_url_with_valid_port_and_base_path" {
+  command = plan
+
+  variables {
+    n8n_webhook_url            = "https://hooks.example.com:8443/n8n/"
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://hooks.example.com:8443/n8n/"
+    )
+    error_message = "A caller-supplied webhook URL with a valid port and base path must be preserved as-is."
+  }
+}
+
+run "rejects_webhook_url_missing_https_scheme" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "http://hooks.example.com"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_without_host" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_credentials" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://user:pass@hooks.example.com"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_whitespace" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://hooks.example.com/a b"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_query_string" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://hooks.example.com?foo=bar"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_fragment" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://hooks.example.com#frag"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_with_invalid_port" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = "https://hooks.example.com:99999"
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_webhook_url_blank" {
+  command = plan
+
+  variables {
+    n8n_webhook_url = ""
+  }
+
+  expect_failures = [var.n8n_webhook_url]
+}
+
+run "rejects_reserved_url_environment_names_in_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_WEBHOOK_URL", value = "https://override.example.com" },
+      { name = "N8N_EDITOR_BASE_URL", value = "https://override.example.com" },
+      { name = "N8N_HOST", value = "override.example.com" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+# ── Execution-save policy controls (port-aws-040-enhancements section 5) ────
+
+run "execution_save_policy_defaults" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      var.n8n_executions_data_save_on_success == "all" &&
+      var.n8n_executions_data_save_on_error == "all" &&
+      var.n8n_executions_data_save_on_progress == false &&
+      var.n8n_executions_data_save_manual_executions == true &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnSuccess == "all" &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnError == "all" &&
+      !yamldecode(helm_release.n8n.values[0]).executions.data.saveOnProgress &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveManualExecutions &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.enabled &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.maxAge == 336 &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.maxCount == 10000
+    )
+    error_message = "Execution-save policy inputs must default to all/all/false/true and leave pruning/storage settings unchanged."
+  }
+}
+
+run "execution_save_policy_null_falls_back_to_default" {
+  command = plan
+
+  variables {
+    create_database                            = false
+    postgres_external_host                     = "postgres.external.example.com"
+    postgres_external_username                 = "n8n_app"
+    postgres_external_password                 = "synthetic-external-postgres-password"
+    create_redis                               = false
+    redis_external_host                        = "redis.external.example.com"
+    n8n_executions_data_save_on_success        = null
+    n8n_executions_data_save_on_error          = null
+    n8n_executions_data_save_on_progress       = null
+    n8n_executions_data_save_manual_executions = null
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnSuccess == "all" &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnError == "all" &&
+      !yamldecode(helm_release.n8n.values[0]).executions.data.saveOnProgress &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveManualExecutions
+    )
+    error_message = "An explicit null for any execution-save policy input must fall back to its declared default."
+  }
+}
+
+run "independent_execution_save_success_and_error_policies" {
+  command = plan
+
+  variables {
+    create_database                     = false
+    postgres_external_host              = "postgres.external.example.com"
+    postgres_external_username          = "n8n_app"
+    postgres_external_password          = "synthetic-external-postgres-password"
+    create_redis                        = false
+    redis_external_host                 = "redis.external.example.com"
+    n8n_executions_data_save_on_success = "none"
+    n8n_executions_data_save_on_error   = "all"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnSuccess == "none" &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnError == "all"
+    )
+    error_message = "n8n_executions_data_save_on_success and n8n_executions_data_save_on_error must be settable independently of each other."
+  }
+}
+
+run "both_execution_save_policy_booleans_toggle" {
+  command = plan
+
+  variables {
+    create_database                            = false
+    postgres_external_host                     = "postgres.external.example.com"
+    postgres_external_username                 = "n8n_app"
+    postgres_external_password                 = "synthetic-external-postgres-password"
+    create_redis                               = false
+    redis_external_host                        = "redis.external.example.com"
+    n8n_executions_data_save_on_progress       = true
+    n8n_executions_data_save_manual_executions = false
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveOnProgress == true &&
+      yamldecode(helm_release.n8n.values[0]).executions.data.saveManualExecutions == false &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.enabled &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.maxAge == 336 &&
+      yamldecode(helm_release.n8n.values[0]).executions.pruning.maxCount == 10000
+    )
+    error_message = "Both execution-save policy booleans must be independently overridable without altering pruning defaults."
+  }
+}
+
+run "rejects_invalid_execution_save_on_success_policy" {
+  command = plan
+
+  variables {
+    n8n_executions_data_save_on_success = "sometimes"
+  }
+
+  expect_failures = [var.n8n_executions_data_save_on_success]
+}
+
+run "rejects_invalid_execution_save_on_error_policy" {
+  command = plan
+
+  variables {
+    n8n_executions_data_save_on_error = "sometimes"
+  }
+
+  expect_failures = [var.n8n_executions_data_save_on_error]
+}
+
+run "rejects_raw_execution_save_policy_environment_names" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "EXECUTIONS_DATA_SAVE_ON_SUCCESS", value = "all" },
+      { name = "EXECUTIONS_DATA_SAVE_ON_ERROR", value = "all" },
+      { name = "EXECUTIONS_DATA_SAVE_ON_PROGRESS", value = "false" },
+      { name = "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS", value = "true" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
 }
 
 run "runtime_control_overrides_render_in_helm_values" {
@@ -3098,6 +3555,234 @@ run "unknown_vm_sku_silences_advisory_capacity_check" {
   }
 }
 
+# ── Single-main topology and maintenance safeguards ─────────────────────────
+
+run "default_main_topology_is_multi_main" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).multiMain.enabled == true &&
+      yamldecode(helm_release.n8n.values[0]).multiMain.replicas == 2 &&
+      yamldecode(helm_release.n8n.values[0]).replicaCount == 2 &&
+      yamldecode(helm_release.n8n.values[0]).strategy == {} &&
+      yamldecode(helm_release.n8n.values[0]).pdb.minAvailable == 1 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.minReplicas == 2 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.maxReplicas == 6 &&
+      local.n8n_main_hpa_effective_max_replicas == 6
+    )
+    error_message = "Leaving main topology inputs unchanged must preserve multi-main, its floor/ceiling, chart rollout defaults, and a PDB protecting one replica."
+  }
+}
+
+run "single_main_with_higher_ceiling_clamps_effective_maximum" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas  = 1
+    n8n_main_hpa_max_replicas  = 20
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).multiMain.enabled == false &&
+      yamldecode(helm_release.n8n.values[0]).replicaCount == 1 &&
+      yamldecode(helm_release.n8n.values[0]).strategy.type == "Recreate" &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).strategy), "rollingUpdate") &&
+      yamldecode(helm_release.n8n.values[0]).pdb.minAvailable == 0 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.minReplicas == 1 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.maxReplicas == 1 &&
+      local.n8n_main_hpa_effective_max_replicas == 1
+    )
+    error_message = "A main minimum of 1 must select single-main, disable multi-main, clamp the HPA/effective ceiling to 1 regardless of the configured maximum, use Recreate without rollingUpdate, and allow voluntary eviction through a zero-minimum PDB."
+  }
+}
+
+run "restoring_multi_main_replicas_reverts_all_safeguards" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas  = 3
+    n8n_main_hpa_max_replicas  = 10
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).multiMain.enabled == true &&
+      yamldecode(helm_release.n8n.values[0]).multiMain.replicas == 3 &&
+      yamldecode(helm_release.n8n.values[0]).replicaCount == 3 &&
+      yamldecode(helm_release.n8n.values[0]).strategy == {} &&
+      yamldecode(helm_release.n8n.values[0]).pdb.minAvailable == 1 &&
+      yamldecode(helm_release.n8n.values[0]).hpa.main.maxReplicas == 10 &&
+      local.n8n_main_hpa_effective_max_replicas == 10
+    )
+    error_message = "Raising the main minimum back above 1 must restore multi-main, its configured ceiling, chart rollout behavior, and a PDB minimum of 1."
+  }
+}
+
+run "single_main_retains_default_floating_license_detach" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas  = 1
+    n8n_main_hpa_max_replicas  = 1
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = contains(
+      yamldecode(helm_release.n8n.values[0]).config.extraEnv,
+      { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = "false" },
+    )
+    error_message = "Single-main must retain the same N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false default as multi-main."
+  }
+}
+
+run "multi_main_retains_default_floating_license_detach" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = contains(
+      yamldecode(helm_release.n8n.values[0]).config.extraEnv,
+      { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = "false" },
+    )
+    error_message = "Multi-main (the default) must render N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false."
+  }
+}
+
+run "raising_unused_single_main_maximum_does_not_raise_capacity_demand" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+    n8n_main_hpa_max_replicas = 1
+  }
+
+  assert {
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    error_message = "Single-main capacity demand must use the clamped effective ceiling of 1 main replica, not the configured maximum."
+  }
+}
+
+run "single_main_high_maximum_matches_capacity_demand_at_maximum_one" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+    n8n_main_hpa_max_replicas = 20
+  }
+
+  assert {
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    error_message = "Raising the unused single-main maximum from 1 to 20 must not change modeled CPU demand — it must remain identical to the maximum-1 case."
+  }
+}
+
+run "rejects_single_main_minimum_below_one" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 0
+  }
+
+  expect_failures = [var.n8n_main_hpa_min_replicas]
+}
+
+run "rejects_main_maximum_below_one" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_max_replicas = 0
+  }
+
+  expect_failures = [var.n8n_main_hpa_max_replicas]
+}
+
 # ── Section 11: Default Application Gateway ingress ─────────────────────────
 
 run "public_application_gateway_ingress_renders_by_default" {
@@ -3338,15 +4023,25 @@ run "every_ingress_host_routes_all_webhook_prefixes_before_main" {
   assert {
     condition = alltrue([
       for rule in kubernetes_ingress_v1.n8n[0].spec[0].rule :
-      [for path in rule.http[0].path : path.path] == concat(local.n8n_webhook_path_prefixes, ["/"])
+      [for path in rule.http[0].path : path.path] == concat(local.n8n_test_webhook_path_prefixes, local.n8n_webhook_path_prefixes, ["/"])
     ])
-    error_message = "Every host must declare all five webhook prefixes before the main-service catch-all."
+    error_message = "Every host must declare the three test-mode prefixes, then all five webhook prefixes, then the main-service catch-all."
   }
 
   assert {
     condition = alltrue(flatten([
       for rule in kubernetes_ingress_v1.n8n[0].spec[0].rule : [
-        for path in slice(rule.http[0].path, 0, length(local.n8n_webhook_path_prefixes)) :
+        for path in slice(rule.http[0].path, 0, length(local.n8n_test_webhook_path_prefixes)) :
+        path.backend[0].service[0].name == "n8n-main" && path.backend[0].service[0].port[0].number == 5678
+      ]
+    ]))
+    error_message = "Every test-mode prefix on every host must target the main Service on port 5678 ahead of the production webhook prefixes."
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      for rule in kubernetes_ingress_v1.n8n[0].spec[0].rule : [
+        for path in slice(rule.http[0].path, length(local.n8n_test_webhook_path_prefixes), length(local.n8n_test_webhook_path_prefixes) + length(local.n8n_webhook_path_prefixes)) :
         path.backend[0].service[0].name == "n8n-webhook-processor" && path.backend[0].service[0].port[0].number == 5678
       ]
     ]))
@@ -3356,7 +4051,7 @@ run "every_ingress_host_routes_all_webhook_prefixes_before_main" {
   assert {
     condition = alltrue([
       for rule in kubernetes_ingress_v1.n8n[0].spec[0].rule :
-      rule.http[0].path[length(local.n8n_webhook_path_prefixes)].backend[0].service[0].name == "n8n-main"
+      rule.http[0].path[length(local.n8n_test_webhook_path_prefixes) + length(local.n8n_webhook_path_prefixes)].backend[0].service[0].name == "n8n-main"
     ])
     error_message = "The final catch-all path on every host must target the main Service."
   }
@@ -3909,6 +4604,43 @@ run "warns_when_aks_tuning_is_inert_on_existing_cluster" {
   }
 
   expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "warns_when_aks_node_os_disk_size_gb_is_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_node_os_disk_size_gb                     = 256
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "aks_tuning_check_stays_silent_on_default_external_path" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n) == 0
+    error_message = "No managed AKS cluster resource must be created when create_aks = false."
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster_node_pool.n8n_user) == 0
+    error_message = "No managed AKS user node pool resource must be created when create_aks = false."
+  }
 }
 
 # ── Customer-managed Blob contract ──────────────────────────────────────────
@@ -4508,6 +5240,815 @@ run "accepts_postgres_external_secret_ref_alone" {
   }
 }
 
+# ── PostgreSQL connection/health-check runtime tuning (section 3) ────────────
+
+run "omits_postgres_runtime_timing_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(local.n8n_postgres_runtime_env) == 0
+    error_message = "local.n8n_postgres_runtime_env must be empty when all four timing inputs are null."
+  }
+}
+
+run "accepts_postgres_runtime_timing_on_managed_database" {
+  command = plan
+
+  variables {
+    postgres_connection_timeout_ms             = 45000
+    postgres_ping_timeout_ms                   = 15000
+    postgres_ping_interval_seconds             = 5
+    postgres_ping_max_failures_before_recovery = 6
+  }
+
+  assert {
+    condition = (
+      one([for env in local.n8n_postgres_runtime_env : env.value if env.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"]) == "45000" &&
+      one([for env in local.n8n_postgres_runtime_env : env.value if env.name == "DB_PING_TIMEOUT_MS"]) == "15000" &&
+      one([for env in local.n8n_postgres_runtime_env : env.value if env.name == "DB_PING_INTERVAL_SECONDS"]) == "5" &&
+      one([for env in local.n8n_postgres_runtime_env : env.value if env.name == "DB_PING_MAX_FAILURES_BEFORE_RECOVERY"]) == "6"
+    )
+    error_message = "All four PostgreSQL timing overrides must render onto the shared application environment local on the managed database path."
+  }
+}
+
+run "accepts_postgres_runtime_timing_on_external_database" {
+  command = plan
+
+  variables {
+    create_database                            = false
+    postgres_external_host                     = "external-pg.example.com"
+    postgres_external_username                 = "n8n"
+    postgres_external_password                 = "external-password-value"
+    create_redis                               = false
+    redis_external_host                        = "redis.external.example.com"
+    postgres_connection_timeout_ms             = 45000
+    postgres_ping_timeout_ms                   = 15000
+    postgres_ping_interval_seconds             = 5
+    postgres_ping_max_failures_before_recovery = 6
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"]) == "45000" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_TIMEOUT_MS"]) == "15000" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_INTERVAL_SECONDS"]) == "5" &&
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_MAX_FAILURES_BEFORE_RECOVERY"]) == "6" &&
+      length(azurerm_postgresql_flexible_server.n8n) == 0
+    )
+    error_message = "All four PostgreSQL timing overrides must render on the external database path without creating a managed Flexible Server."
+  }
+}
+
+run "accepts_postgres_connection_timeout_zero" {
+  command = plan
+
+  variables {
+    create_database                = false
+    postgres_external_host         = "external-pg.example.com"
+    postgres_external_username     = "n8n"
+    postgres_external_password     = "external-password-value"
+    create_redis                   = false
+    redis_external_host            = "redis.external.example.com"
+    postgres_connection_timeout_ms = 0
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"]) == "0" &&
+      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_PING_TIMEOUT_MS"]) == 0
+    )
+    error_message = "An explicit zero connection timeout must render as DB_POSTGRESDB_CONNECTION_TIMEOUT=0 without implying the independently configured ping timeout."
+  }
+}
+
+run "rejects_invalid_postgres_runtime_timing_boundaries" {
+  command = plan
+
+  variables {
+    postgres_connection_timeout_ms             = -1
+    postgres_ping_timeout_ms                   = 0
+    postgres_ping_interval_seconds             = -2
+    postgres_ping_max_failures_before_recovery = 0
+  }
+
+  expect_failures = [
+    var.postgres_connection_timeout_ms,
+    var.postgres_ping_timeout_ms,
+    var.postgres_ping_interval_seconds,
+    var.postgres_ping_max_failures_before_recovery,
+  ]
+}
+
+run "rejects_fractional_postgres_acquisition_and_recovery_values" {
+  command = plan
+
+  variables {
+    postgres_connection_timeout_ms             = 100.5
+    postgres_ping_max_failures_before_recovery = 2.5
+  }
+
+  expect_failures = [
+    var.postgres_connection_timeout_ms,
+    var.postgres_ping_max_failures_before_recovery,
+  ]
+}
+
+run "rejects_postgres_connection_timeout_above_max" {
+  command = plan
+
+  variables {
+    postgres_connection_timeout_ms = 2147483648
+  }
+
+  expect_failures = [var.postgres_connection_timeout_ms]
+}
+
+# ── Bull worker timing controls (section 4) ──────────────────────────────────
+
+run "omits_queue_worker_settings_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(local.n8n_queue_worker_settings) == 0
+    error_message = "local.n8n_queue_worker_settings must be empty when all three worker timing inputs are null."
+  }
+}
+
+run "accepts_all_queue_worker_timing_overrides" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration    = 90000
+    n8n_queue_worker_lock_renew_time  = 15000
+    n8n_queue_worker_stalled_interval = 45000
+  }
+
+  assert {
+    condition = (
+      local.n8n_queue_worker_settings.lockDuration == 90000 &&
+      local.n8n_queue_worker_settings.lockRenewTime == 15000 &&
+      local.n8n_queue_worker_settings.stalledInterval == 45000
+    )
+    error_message = "local.n8n_queue_worker_settings must retain all three overrides when set together."
+  }
+}
+
+run "renders_queue_worker_settings_on_redis_worker_block" {
+  command = plan
+
+  variables {
+    create_database                   = false
+    postgres_external_host            = "external-pg.example.com"
+    postgres_external_username        = "n8n"
+    postgres_external_password        = "external-password-value"
+    create_redis                      = false
+    redis_external_host               = "redis.external.example.com"
+    n8n_queue_worker_lock_duration    = 90000
+    n8n_queue_worker_lock_renew_time  = 15000
+    n8n_queue_worker_stalled_interval = 45000
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).redis.worker.lockDuration == 90000 &&
+      yamldecode(helm_release.n8n.values[0]).redis.worker.lockRenewTime == 15000 &&
+      yamldecode(helm_release.n8n.values[0]).redis.worker.stalledInterval == 45000 &&
+      length([
+        for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env
+        if startswith(env.name, "QUEUE_WORKER_")
+      ]) == 0
+    )
+    error_message = "All three worker timing overrides must render on the chart-native redis.worker block, and no QUEUE_WORKER_* name may be duplicated in config.extraEnv."
+  }
+}
+
+run "omits_redis_worker_block_when_unset" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = "external-password-value"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).redis), "worker")
+    error_message = "redis.worker must be omitted entirely when every worker timing input is null, so the chart's own defaults apply."
+  }
+}
+
+run "rejects_short_lock_duration_with_default_renewal" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 10000
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_renew_time]
+}
+
+run "rejects_renewal_equal_to_duration" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration   = 20000
+    n8n_queue_worker_lock_renew_time = 20000
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_renew_time]
+}
+
+run "rejects_renewal_above_duration" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration   = 20000
+    n8n_queue_worker_lock_renew_time = 30000
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_renew_time]
+}
+
+run "rejects_fractional_queue_worker_timing" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 60000.5
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_duration]
+}
+
+run "rejects_queue_worker_timing_below_minimum" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 500
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_duration]
+}
+
+run "rejects_queue_worker_stalled_interval_zero" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_stalled_interval = 0
+  }
+
+  expect_failures = [var.n8n_queue_worker_stalled_interval]
+}
+
+# ── Optional application heap ceiling (section 6) ───────────────────────────
+
+run "omits_node_heap_ceiling_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(local.n8n_node_heap_env) == 0
+    error_message = "local.n8n_node_heap_env must be empty when n8n_node_max_old_space_size_mb is null."
+  }
+}
+
+run "accepts_node_heap_ceiling" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 768
+  }
+
+  assert {
+    condition     = one([for env in local.n8n_node_heap_env : env.value if env.name == "NODE_OPTIONS"]) == "--max-old-space-size=768"
+    error_message = "local.n8n_node_heap_env must render NODE_OPTIONS=--max-old-space-size=<value> when n8n_node_max_old_space_size_mb is set."
+  }
+}
+
+run "renders_node_heap_ceiling_on_helm_values" {
+  command = plan
+
+  variables {
+    create_database                = false
+    postgres_external_host         = "external-pg.example.com"
+    postgres_external_username     = "n8n"
+    postgres_external_password     = "external-password-value"
+    create_redis                   = false
+    redis_external_host            = "redis.external.example.com"
+    n8n_node_max_old_space_size_mb = 768
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "NODE_OPTIONS"]) == "--max-old-space-size=768"
+    error_message = "config.extraEnv must render NODE_OPTIONS=--max-old-space-size=768 when n8n_node_max_old_space_size_mb is set."
+  }
+}
+
+run "preserves_unrelated_caller_node_options_when_heap_ceiling_is_null" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "NODE_OPTIONS", value = "--enable-source-maps" },
+    ]
+  }
+
+  assert {
+    condition     = one([for env in var.n8n_extra_env : env.value if env.name == "NODE_OPTIONS"]) == "--enable-source-maps"
+    error_message = "n8n_extra_env must retain a caller NODE_OPTIONS entry when n8n_node_max_old_space_size_mb is null."
+  }
+}
+
+run "rejects_fractional_node_heap_ceiling" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 512.5
+  }
+
+  expect_failures = [var.n8n_node_max_old_space_size_mb]
+}
+
+run "rejects_node_heap_ceiling_below_minimum" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 128
+  }
+
+  expect_failures = [var.n8n_node_max_old_space_size_mb]
+}
+
+run "rejects_node_heap_ceiling_with_conflicting_extra_env" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 768
+    n8n_extra_env = [
+      { name = "NODE_OPTIONS", value = "--enable-source-maps" },
+    ]
+  }
+
+  expect_failures = [var.n8n_node_max_old_space_size_mb]
+}
+
+# ── Caller-managed task-runner launcher configuration (section 7) ──────────
+
+run "omits_task_runner_custom_config_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.n8n_task_runner_custom_config_values.enabled == false
+    error_message = "local.n8n_task_runner_custom_config_values.enabled must be false when n8n_task_runner_custom_config is null."
+  }
+}
+
+run "accepts_task_runner_custom_config_default_key" {
+  command = plan
+
+  variables {
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+    }
+  }
+
+  assert {
+    condition     = var.n8n_task_runner_custom_config.config_map_key == "n8n-task-runners.json"
+    error_message = "n8n_task_runner_custom_config.config_map_key must default to n8n-task-runners.json when omitted."
+  }
+
+  assert {
+    condition = (
+      local.n8n_task_runner_custom_config_values.enabled == true &&
+      local.n8n_task_runner_custom_config_values.configMapName == "n8n-task-runner-launcher" &&
+      local.n8n_task_runner_custom_config_values.configMapKey == "n8n-task-runners.json"
+    )
+    error_message = "local.n8n_task_runner_custom_config_values must render the caller's ConfigMap name with the default key."
+  }
+}
+
+run "accepts_task_runner_custom_config_custom_key" {
+  command = plan
+
+  variables {
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+      config_map_key  = "allowlist.json"
+    }
+  }
+
+  assert {
+    condition     = local.n8n_task_runner_custom_config_values.configMapKey == "allowlist.json"
+    error_message = "local.n8n_task_runner_custom_config_values.configMapKey must use the caller-supplied key."
+  }
+}
+
+run "renders_task_runner_custom_config_on_helm_values" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = "external-password-value"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).taskRunners.customConfig.enabled == true &&
+      yamldecode(helm_release.n8n.values[0]).taskRunners.customConfig.configMapName == "n8n-task-runner-launcher" &&
+      yamldecode(helm_release.n8n.values[0]).taskRunners.customConfig.configMapKey == "n8n-task-runners.json"
+    )
+    error_message = "taskRunners.customConfig must render the caller's ConfigMap reference on the chart values."
+  }
+}
+
+run "rejects_task_runner_custom_config_invalid_configmap_name" {
+  command = plan
+
+  variables {
+    n8n_task_runner_custom_config = {
+      config_map_name = "Invalid_Name!"
+    }
+  }
+
+  expect_failures = [var.n8n_task_runner_custom_config]
+}
+
+run "rejects_task_runner_custom_config_path_traversal_key" {
+  command = plan
+
+  variables {
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+      config_map_key  = "../secrets.json"
+    }
+  }
+
+  expect_failures = [var.n8n_task_runner_custom_config]
+}
+
+run "rejects_task_runner_custom_config_when_task_runners_disabled" {
+  command = plan
+
+  variables {
+    n8n_task_runners_enabled = false
+    n8n_task_runner_custom_config = {
+      config_map_name = "n8n-task-runner-launcher"
+    }
+  }
+
+  expect_failures = [var.n8n_task_runner_custom_config]
+}
+
+run "rejects_extra_volume_reserved_task_runner_config_name" {
+  command = plan
+
+  variables {
+    n8n_extra_volumes = [
+      { name = "task-runner-config", config_map = { name = "custom-nodes" } },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_volumes]
+}
+
+# ── Optional pod DNS configuration (section 8) ──────────────────────────────
+
+run "omits_dns_config_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.n8n_dns_config_values == {}
+    error_message = "local.n8n_dns_config_values must be an empty map when n8n_dns_config is null."
+  }
+}
+
+run "omits_dns_config_when_effectively_empty" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = null
+      searches    = null
+      options     = null
+    }
+  }
+
+  assert {
+    condition     = local.n8n_dns_config_values == {}
+    error_message = "local.n8n_dns_config_values must be an empty map when every n8n_dns_config attribute is null."
+  }
+}
+
+run "renders_dns_config_nameservers_and_searches" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.10", "2001:db8::1"]
+      searches    = ["svc.cluster.local", "n8n.svc.cluster.local"]
+    }
+  }
+
+  assert {
+    condition = (
+      jsonencode(local.n8n_dns_config_values.nameservers) == jsonencode(["10.0.0.10", "2001:db8::1"]) &&
+      jsonencode(local.n8n_dns_config_values.searches) == jsonencode(["svc.cluster.local", "n8n.svc.cluster.local"]) &&
+      !contains(keys(local.n8n_dns_config_values), "options")
+    )
+    error_message = "local.n8n_dns_config_values must render supplied nameservers/searches and omit an unset options key."
+  }
+}
+
+run "renders_dns_config_options_only_with_stripped_null_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [
+        { name = "ndots", value = "1" },
+        { name = "edns0" },
+      ]
+    }
+  }
+
+  assert {
+    condition = (
+      !contains(keys(local.n8n_dns_config_values), "nameservers") &&
+      !contains(keys(local.n8n_dns_config_values), "searches") &&
+      jsonencode(local.n8n_dns_config_values.options) == jsonencode([
+        { name = "ndots", value = "1" },
+        { name = "edns0" },
+      ])
+    )
+    error_message = "local.n8n_dns_config_values.options must contain no null value key for an option with no supplied value."
+  }
+}
+
+run "renders_dns_config_on_helm_values" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = "external-password-value"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "1" }]
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).dnsConfig.options == [{ name = "ndots", value = "1" }]
+    error_message = "dnsConfig.options must render the caller's ndots option on the chart values shared by all three pod families."
+  }
+}
+
+run "renders_dns_config_with_all_three_attributes_combined" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.10"]
+      searches    = ["svc.cluster.local"]
+      options     = [{ name = "ndots", value = "1" }, { name = "edns0" }]
+    }
+  }
+
+  assert {
+    condition = jsonencode(local.n8n_dns_config_values) == jsonencode({
+      nameservers = ["10.0.0.10"]
+      searches    = ["svc.cluster.local"]
+      options     = [{ name = "ndots", value = "1" }, { name = "edns0" }]
+    })
+    error_message = "local.n8n_dns_config_values must render all three attributes together without a type-unification error."
+  }
+}
+
+run "rejects_dns_config_too_many_nameservers" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_nameserver_with_cidr_prefix" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.0/24"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_nameserver_hostname" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["resolver.example.com"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_too_many_searches" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      searches = [for i in range(33) : "svc${i}.example.com"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_searches_over_length_budget" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      searches = [for i in range(32) : "${join("", [for j in range(60) : "a"])}.example${i}.com"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_invalid_search_name" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      searches = ["-invalid-.example.com"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_blank_option_name" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "  ", value = "1" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_missing_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_fractional_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "1.5" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_nonnumeric_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "many" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_negative_value" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "-1" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "rejects_dns_config_ndots_above_fifteen" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "16" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
 run "rejects_redis_password_secret_ref_with_managed_redis" {
   command = plan
 
@@ -4704,5 +6245,345 @@ run "redis_password_secret_ref_with_username_still_creates_secret_for_username" 
   assert {
     condition     = strcontains(local.keda_trigger_authentication_yaml, "platform-n8n-redis-password")
     error_message = "The KEDA TriggerAuthentication manifest's password entry must still reference the caller-managed Redis Secret even when a module-managed Secret exists for the username."
+  }
+}
+
+# ── Optional Redis queue metrics exporter (port-aws-040-enhancements section 9) ──
+
+run "redis_exporter_disabled_by_default_creates_no_resources" {
+  command = plan
+
+  assert {
+    condition     = length(kubernetes_deployment_v1.redis_exporter) == 0 && length(kubernetes_service_v1.redis_exporter) == 0
+    error_message = "No exporter Deployment or Service must exist when redis_exporter_enabled is left at its false default."
+  }
+}
+
+run "redis_exporter_explicit_null_creates_no_resources" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = null
+  }
+
+  assert {
+    condition     = length(kubernetes_deployment_v1.redis_exporter) == 0 && length(kubernetes_service_v1.redis_exporter) == 0
+    error_message = "redis_exporter_enabled is nullable = false, so an explicit null must fall back to its false default and create no exporter resources."
+  }
+}
+
+run "redis_exporter_independent_of_n8n_metrics_enabled" {
+  command = plan
+
+  variables {
+    n8n_metrics_enabled = true
+  }
+
+  assert {
+    condition     = length(kubernetes_deployment_v1.redis_exporter) == 0
+    error_message = "Setting n8n_metrics_enabled = true alone must not create a Redis exporter."
+  }
+}
+
+run "redis_exporter_rejects_blank_image" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = true
+    redis_exporter_image   = "   "
+  }
+
+  expect_failures = [var.redis_exporter_image]
+}
+
+run "redis_exporter_rejects_whitespace_in_image" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = true
+    redis_exporter_image   = "oliver006/redis_exporter: v1.90.0"
+  }
+
+  expect_failures = [var.redis_exporter_image]
+}
+
+run "redis_exporter_observes_managed_azure_redis" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = true
+  }
+
+  assert {
+    condition     = length(kubernetes_deployment_v1.redis_exporter) == 1 && length(kubernetes_service_v1.redis_exporter) == 1
+    error_message = "Exactly one exporter Deployment and Service must be created when redis_exporter_enabled = true."
+  }
+
+  assert {
+    condition = (
+      tostring(kubernetes_deployment_v1.redis_exporter[0].spec[0].replicas) == "1" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].strategy[0].type == "Recreate"
+    )
+    error_message = "The exporter Deployment must run exactly one Recreate-strategy replica."
+  }
+
+  assert {
+    condition = (
+      kubernetes_service_v1.redis_exporter[0].spec[0].port[0].port == 9121 &&
+      kubernetes_service_v1.redis_exporter[0].spec[0].port[0].target_port == "9121"
+    )
+    error_message = "The exporter Service must expose internal port 9121 (ClusterIP is the provider default when spec.type is unset)."
+  }
+
+  assert {
+    condition = (
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].metadata[0].annotations["prometheus.io/scrape"] == "true" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].metadata[0].annotations["prometheus.io/port"] == "9121" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].metadata[0].annotations["prometheus.io/path"] == "/metrics"
+    )
+    error_message = "The exporter pod template must carry the /metrics scrape annotations."
+  }
+
+  assert {
+    condition = (
+      length([
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_ADDR"
+      ]) == 1
+    )
+    error_message = "REDIS_ADDR must be rendered. Its exact value is unknown at plan time for the module-managed Redis path (host/port come from the Managed Redis resource), so the scheme/host/port contract is covered by the external-Redis runs below, which use known values."
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env.value if env.name == "REDIS_EXPORTER_CHECK_SINGLE_KEYS"
+      ][0] == "db0=bull:jobs:wait,db0=bull:jobs:active"
+    )
+    error_message = "The exporter's observed queue keys must equal KEDA's waiting and active list names."
+  }
+
+  assert {
+    condition = (
+      length([
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_USER"
+      ]) == 0
+    )
+    error_message = "REDIS_USER must be omitted on the module-managed Azure Managed Redis path, which has no username concept."
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ][0].value_from[0].secret_key_ref[0].name == local.redis_password_secret_name &&
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ][0].value_from[0].secret_key_ref[0].key == local.redis_password_secret_key
+    )
+    error_message = "REDIS_PASSWORD must reference the same Secret name/key n8n's redis.passwordSecret chart value uses."
+  }
+
+  assert {
+    condition = (
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].allow_privilege_escalation == false &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].read_only_root_filesystem == true &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].run_as_non_root == true &&
+      tostring(kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].run_as_user) == "59000" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].security_context[0].capabilities[0].drop == tolist(["ALL"])
+    )
+    error_message = "The exporter container must run non-root UID 59000 with a read-only root filesystem, no privilege escalation, and all capabilities dropped."
+  }
+
+  assert {
+    condition = (
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].resources[0].requests["cpu"] == "10m" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].resources[0].requests["memory"] == "32Mi" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].resources[0].limits["memory"] == "64Mi"
+    )
+    error_message = "The exporter must request 10m CPU / 32Mi memory and cap memory at 64Mi."
+  }
+
+  assert {
+    condition = (
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].liveness_probe[0].http_get[0].path == "/health" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].liveness_probe[0].http_get[0].port == "9121" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].readiness_probe[0].http_get[0].path == "/health" &&
+      kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].readiness_probe[0].http_get[0].port == "9121"
+    )
+    error_message = "Both probes must use Redis-independent /health on port 9121 so a hanging Redis connection cannot make the exporter unready or restart it."
+  }
+
+  assert {
+    condition = one([
+      for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+      env.value if env.name == "REDIS_EXPORTER_CONNECTION_TIMEOUT"
+    ]) == "3s"
+    error_message = "Redis I/O must time out after 3s instead of the exporter's 15s default, leaving room within the default 10s Prometheus scrape timeout."
+  }
+
+  assert {
+    condition     = length(helm_release.n8n) > 0
+    error_message = "Enabling the exporter must not remove or block the n8n Helm release."
+  }
+}
+
+run "redis_exporter_observes_external_authenticated_redis_with_acl_and_caller_secret" {
+  command = plan
+
+  variables {
+    create_redis               = false
+    redis_external_host        = "external-redis.example.com"
+    redis_external_tls_enabled = true
+    redis_external_username    = "n8n_app"
+    redis_password_secret_ref  = { name = "platform-n8n-redis-password", key = "redispass" }
+    redis_exporter_enabled     = true
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env.value if env.name == "REDIS_ADDR"
+      ][0] == "rediss://external-redis.example.com:6380"
+    )
+    error_message = "REDIS_ADDR must use the external host/port with the rediss scheme when TLS is enabled."
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env.value if env.name == "REDIS_USER"
+      ][0] == "n8n_app"
+    )
+    error_message = "REDIS_USER must carry the external ACL username."
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ][0].value_from[0].secret_key_ref[0].name == "platform-n8n-redis-password" &&
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ][0].value_from[0].secret_key_ref[0].key == "redispass"
+    )
+    error_message = "REDIS_PASSWORD must reference the caller-managed Secret name/key exactly, without reading its value."
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_redis) == 1 && length(kubernetes_secret.n8n_redis[0].data) == 1
+    error_message = "No duplicate password Secret may be created for the exporter; only the username-only module-managed Secret exists."
+  }
+}
+
+run "redis_exporter_observes_unauthenticated_external_redis" {
+  command = plan
+
+  variables {
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    redis_external_port        = 6379
+    redis_external_tls_enabled = false
+    redis_exporter_enabled     = true
+  }
+
+  assert {
+    condition = (
+      [
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env.value if env.name == "REDIS_ADDR"
+      ][0] == "redis://redis.external.example.com:6379"
+    )
+    error_message = "REDIS_ADDR must use the plain redis scheme when TLS is disabled."
+  }
+
+  assert {
+    condition = (
+      length([
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_USER"
+      ]) == 0 &&
+      length([
+        for env in kubernetes_deployment_v1.redis_exporter[0].spec[0].template[0].spec[0].container[0].env :
+        env if env.name == "REDIS_PASSWORD"
+      ]) == 0
+    )
+    error_message = "An unauthenticated external Redis endpoint must omit both REDIS_USER and REDIS_PASSWORD."
+  }
+}
+
+run "redis_exporter_targets_caller_managed_namespace_and_aks_without_duplicating_infrastructure" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled                       = true
+    create_namespace                             = false
+    n8n_namespace                                = "platform-n8n"
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "platform-aks"
+    existing_aks_resource_group_name             = "platform-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+  }
+
+  assert {
+    condition     = length(kubernetes_namespace.n8n) == 0
+    error_message = "The exporter must not cause the module to create a namespace when create_namespace = false."
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n) == 0
+    error_message = "The exporter must not cause the module to create an AKS cluster when create_aks = false."
+  }
+
+  assert {
+    condition     = kubernetes_deployment_v1.redis_exporter[0].metadata[0].namespace == "platform-n8n"
+    error_message = "The exporter must target the effective (caller-managed) namespace."
+  }
+}
+
+run "redis_exporter_cpu_demand_counted_only_when_enabled" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = false
+  }
+
+  assert {
+    condition     = local.n8n_cpu_request_millis.redis_exporter == 0
+    error_message = "A disabled exporter must contribute zero modeled CPU demand."
+  }
+}
+
+run "redis_exporter_cpu_demand_increases_by_exactly_its_request" {
+  command = plan
+
+  variables {
+    redis_exporter_enabled = true
+  }
+
+  assert {
+    condition     = local.n8n_cpu_request_millis.redis_exporter == 10
+    error_message = "Enabling the exporter must add exactly its 10m CPU request to modeled demand."
+  }
+
+  assert {
+    condition = (
+      local.n8n_peak_cpu_request_millis == (
+        local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) +
+        var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
+        var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook +
+        10
+      )
+    )
+    error_message = "Modeled peak CPU demand must equal the existing formula plus the exporter's flat 10m request."
   }
 }

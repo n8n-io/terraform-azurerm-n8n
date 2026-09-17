@@ -22,7 +22,7 @@ locals {
     private_blob_enabled         = true
     binary_data_storage_mode     = "azure"
     execution_data_storage_mode  = "azure"
-    main_min_replicas            = 6
+    main_min_replicas            = var.n8n_main_hpa_min_replicas
     main_max_replicas            = 60
     webhook_min_replicas         = 20
     webhook_max_replicas         = 80

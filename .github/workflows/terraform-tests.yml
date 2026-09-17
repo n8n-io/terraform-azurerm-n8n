@@ -178,6 +178,80 @@ jobs:
         working-directory: ${{ matrix.target }}
         run: terraform test -verbose
 
+  chart-check:
+    name: n8n chart rendering check
+    runs-on: ubuntu-latest
+    needs: validate
+    # The script normally finishes in a few minutes; without a job timeout a
+    # hang runs into GitHub's 6 hour default and hides the failure.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          # check-n8n-chart.sh feeds `terraform console` through stdin. The
+          # action's Node wrapper does not forward piped stdin, so console
+          # blocks forever; call the real binary instead.
+          terraform_wrapper: false
+
+      # jq ships preinstalled on the ubuntu-latest runner image; only helm
+      # needs an explicit setup step.
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.4"
+
+      - name: cache terraform plugins
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            .terraform
+          key: tf-${{ runner.os }}-${{ env.TF_VERSION }}-.-${{ hashFiles('versions.tf', '.terraform.lock.hcl') }}
+          restore-keys: |
+            tf-${{ runner.os }}-${{ env.TF_VERSION }}-.-
+
+      - name: terraform init (no backend, providers only)
+        run: terraform init -backend=false
+
+      # Renders the pinned n8n Helm chart against this root module's actual
+      # Helm values (from mocked Terraform plans) and asserts on the
+      # manifests Helm produces. Offline: no cluster, no Azure credentials,
+      # no apply. See tests/scripts/README.md#chart-rendering-check.
+      - name: tests/scripts/check-n8n-chart.sh
+        run: tests/scripts/check-n8n-chart.sh
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Redis exporter outage regression
+        run: |
+          export GOBIN="$(mktemp -d)"
+          trap 'rm -rf "$GOBIN"' EXIT
+          go install github.com/oliver006/redis_exporter@v1.90.0
+          python3 tests/scripts/check-redis-exporter.py "$GOBIN/redis_exporter"
+
+  smoke-test-self-check:
+    name: smoke-test.sh offline self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n smoke-test.sh
+        run: bash -n tests/scripts/smoke-test.sh
+
+      # Exercises detect_topology() and check_deployment() against synthetic
+      # kubectl fixtures (single-main, healthy multi-main, degraded
+      # multi-main). Exits before the script's Preflight/az-login section, so
+      # it needs no live cluster or Azure credentials. This is not the live
+      # `smoke-test.sh` run against a real deployment — that stays manual,
+      # per tests/scripts/README.md#smoke-test.
+      - name: SMOKE_TEST_SELF_TEST=1 smoke-test.sh
+        run: SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
+
   tflint:
     name: tflint (${{ matrix.target }})
     runs-on: ubuntu-latest

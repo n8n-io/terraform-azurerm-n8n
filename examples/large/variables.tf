@@ -68,6 +68,18 @@ variable "n8n_license_key" {
   }
 }
 
+variable "n8n_main_hpa_min_replicas" {
+  description = "Minimum main replicas passed through to the root module's n8n_main_hpa_min_replicas, the sole topology selector. The default of 6 keeps this example on multi-main. Set to 1 to select single-main queue mode for a license without feat:multipleMainInstances (including Business licenses); other selected features, such as Azure Blob binary/execution-data entitlements, still require their own license grants and are not affected by this setting."
+  type        = number
+  default     = 6
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_main_hpa_min_replicas >= 1 && var.n8n_main_hpa_min_replicas == floor(var.n8n_main_hpa_min_replicas)
+    error_message = "n8n_main_hpa_min_replicas must be a whole number of at least 1."
+  }
+}
+
 # no validation: Azure validates tag limits at apply time.
 variable "common_tags" {
   description = "Additional Azure tags applied to example and module resources."

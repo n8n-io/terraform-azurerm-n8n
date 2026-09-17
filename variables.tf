@@ -181,6 +181,17 @@ variable "aks_api_warmup_seconds" {
   }
 }
 
+variable "aks_node_os_disk_size_gb" {
+  description = "OS-disk size (GiB) for both module-managed AKS node pools (system and user). Null (the default) leaves sizing to the provider/Azure default for the selected VM size. Changing this on an existing pool cycles its nodes via AzureRM's rotation mechanism, which does not cordon or drain workloads automatically \u2014 plan a maintenance window and confirm node/subnet/quota headroom before changing an existing cluster's value. Has no effect when create_aks = false; the existing cluster's disk sizing is unmanaged by this module."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.aks_node_os_disk_size_gb == null ? true : (var.aks_node_os_disk_size_gb == floor(var.aks_node_os_disk_size_gb) && var.aks_node_os_disk_size_gb > 0)
+    error_message = "aks_node_os_disk_size_gb must be null or a positive whole number of GiB."
+  }
+}
+
 # Consumed by database.tf (section 3).
 variable "postgres_subnet_id" {
   description = "Resource ID of the subnet the PostgreSQL Flexible Server is injected into. Must be delegated to `Microsoft.DBforPostgreSQL/flexibleServers` and contain no other workloads (Flexible Server consumes the entire subnet). Format: /subscriptions/<sub>/.../subnets/<name>."
@@ -406,13 +417,57 @@ variable "postgres_external_ssl_mode" {
 }
 
 variable "postgres_pool_size" {
-  description = "Number of TypeORM connection pool slots per n8n pod (writes `DB_POSTGRESDB_POOL_SIZE`). Applies to both the managed and external database paths. Rule of thumb: pool_size >= worker_concurrency / 4."
+  description = "Number of TypeORM connection pool slots per n8n pod (writes `DB_POSTGRESDB_POOL_SIZE`). Applies to both the managed and external database paths. Each main, worker, and webhook-processor pod lazily opens up to this many connections against the same shared process pool used by application traffic and the health-check ping (see `postgres_ping_timeout_ms`) — it is not one permanently open connection per workflow. Budget the aggregate ceiling (pool_size * effective main + worker + webhook replica counts) against the database's or PgBouncer's own maximum-connection limit, not a fixed per-workflow ratio."
   type        = number
   default     = 10
 
   validation {
     condition     = var.postgres_pool_size >= 1
     error_message = "postgres_pool_size must be at least 1."
+  }
+}
+
+variable "postgres_connection_timeout_ms" {
+  description = "Milliseconds n8n waits to acquire a connection from the pool before failing (writes `DB_POSTGRESDB_CONNECTION_TIMEOUT`). Applies to both the managed and external database paths. Null (default) omits the environment variable and retains n8n's own pinned default (20000 ms). Zero disables the acquisition timeout entirely. This bounds pool-acquisition time alongside `postgres_ping_timeout_ms` — whichever active timeout expires first determines how long acquisition can take; raising this value does not resolve pool saturation, it only delays detection of it."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.postgres_connection_timeout_ms == null ? true : (var.postgres_connection_timeout_ms == floor(var.postgres_connection_timeout_ms) && var.postgres_connection_timeout_ms >= 0 && var.postgres_connection_timeout_ms <= 2147483647)
+    error_message = "postgres_connection_timeout_ms must be null or a whole number from 0 through 2147483647."
+  }
+}
+
+variable "postgres_ping_timeout_ms" {
+  description = "Milliseconds n8n waits for a database health-check ping to respond before marking the connection down (writes `DB_PING_TIMEOUT_MS`). Applies to both the managed and external database paths. Null (default) omits the environment variable and retains n8n's own pinned default (5000 ms). The ping acquires a connection from the same pool as application traffic, so this timeout and `postgres_connection_timeout_ms` both bound acquisition; whichever is active and shorter determines how long a stalled ping can take before failing."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.postgres_ping_timeout_ms == null ? true : var.postgres_ping_timeout_ms > 0
+    error_message = "postgres_ping_timeout_ms must be null or a positive number."
+  }
+}
+
+variable "postgres_ping_interval_seconds" {
+  description = "Seconds between database health-check pings (writes `DB_PING_INTERVAL_SECONDS`). Applies to both the managed and external database paths. Null (default) omits the environment variable and retains n8n's own pinned default (2 seconds)."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.postgres_ping_interval_seconds == null ? true : var.postgres_ping_interval_seconds > 0
+    error_message = "postgres_ping_interval_seconds must be null or a positive number."
+  }
+}
+
+variable "postgres_ping_max_failures_before_recovery" {
+  description = "Number of consecutive failed health-check pings before n8n begins pool-recovery handling (writes `DB_PING_MAX_FAILURES_BEFORE_RECOVERY`). Applies to both the managed and external database paths. Null (default) omits the environment variable and retains n8n's own pinned default (3). Raising this threshold does not stop the first failed ping from marking the connection down; it only changes when pool recovery starts."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.postgres_ping_max_failures_before_recovery == null ? true : (var.postgres_ping_max_failures_before_recovery == floor(var.postgres_ping_max_failures_before_recovery) && var.postgres_ping_max_failures_before_recovery >= 1)
+    error_message = "postgres_ping_max_failures_before_recovery must be null or a whole number of at least 1."
   }
 }
 
@@ -1413,20 +1468,48 @@ variable "n8n_webhook_memory_limit" {
   }
 }
 
+# ── Optional Redis queue metrics exporter (observability.tf) ─────────────
+# Bull queue depth is the signal KEDA scales workers on. n8n's built-in
+# /metrics gauge for it is not reliable in the multi-main topology every
+# example ships (only the leader main reports), so this opt-in exporter
+# reads the same effective Redis connection n8n and KEDA already use and
+# exposes it, along with standard Redis metrics, for a caller-owned
+# Prometheus to scrape. Independent of n8n_metrics_enabled. The module
+# installs no Prometheus, ServiceMonitor, or other monitoring backend.
+
+variable "redis_exporter_enabled" {
+  description = "When true, create a single-replica Redis queue metrics exporter Deployment and an internal ClusterIP Service on port 9121 in the effective n8n namespace. Independent of n8n_metrics_enabled. The module installs no Prometheus, ServiceMonitor, or other monitoring backend — scraping and discovery remain caller-owned. Disabled by default, in which case neither resource is created."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "redis_exporter_image" {
+  description = "Container image for the optional Redis queue metrics exporter (oliver006/redis_exporter). Override to use a caller mirror or a pinned digest. A replacement image must retain the upstream CA bundle for TLS certificate verification and work under UID 59000, which the container always runs as. Any private-registry pull access is the caller's responsibility — the module does not grant the exporter the n8n Azure workload identity. Ignored when redis_exporter_enabled = false."
+  type        = string
+  default     = "oliver006/redis_exporter:v1.90.0"
+  nullable    = false
+
+  validation {
+    condition     = trimspace(var.redis_exporter_image) != "" && !can(regex("\\s", var.redis_exporter_image))
+    error_message = "redis_exporter_image must be a non-blank image reference containing no whitespace."
+  }
+}
+
 # ── Workload autoscaling ─────────────────────────────────────────────────
 # Main and webhook pods scale on CPU. Workers scale on Redis queue depth.
 # Each minimum also becomes the matching Helm deployment replica count so an
 # upgrade at the autoscaler floor does not briefly scale the workload down.
 
 variable "n8n_main_hpa_min_replicas" {
-  description = "Minimum main replicas for the CPU HPA and the Helm deployment floor. Multi-main requires at least two replicas."
+  description = "Minimum main replicas for the CPU HPA and the Helm deployment floor. A minimum of 1 selects single-main queue mode (no feat:multipleMainInstances requirement); a minimum of 2 or more selects multi-main, the default."
   type        = number
   default     = 2
   nullable    = false
 
   validation {
-    condition     = var.n8n_main_hpa_min_replicas >= 2 && var.n8n_main_hpa_min_replicas == floor(var.n8n_main_hpa_min_replicas)
-    error_message = "n8n_main_hpa_min_replicas must be a whole number of at least 2 for multi-main."
+    condition     = var.n8n_main_hpa_min_replicas >= 1 && var.n8n_main_hpa_min_replicas == floor(var.n8n_main_hpa_min_replicas)
+    error_message = "n8n_main_hpa_min_replicas must be a whole number of at least 1."
   }
 
   # Terraform 1.9 cross-variable validation uses a conditional expression so
@@ -1438,14 +1521,14 @@ variable "n8n_main_hpa_min_replicas" {
 }
 
 variable "n8n_main_hpa_max_replicas" {
-  description = "Maximum main replicas for the CPU HPA. The default of 6 participates in the AKS capacity diagnostic with the main and task-runner CPU requests."
+  description = "Maximum main replicas for the CPU HPA. The default of 6 participates in the AKS capacity diagnostic with the main and task-runner CPU requests. A higher value remains valid in single-main mode (n8n_main_hpa_min_replicas = 1) but has no effect there — the effective ceiling clamps to 1."
   type        = number
   default     = 6
   nullable    = false
 
   validation {
-    condition     = var.n8n_main_hpa_max_replicas >= 2 && var.n8n_main_hpa_max_replicas == floor(var.n8n_main_hpa_max_replicas)
-    error_message = "n8n_main_hpa_max_replicas must be a whole number of at least 2."
+    condition     = var.n8n_main_hpa_max_replicas >= 1 && var.n8n_main_hpa_max_replicas == floor(var.n8n_main_hpa_max_replicas)
+    error_message = "n8n_main_hpa_max_replicas must be a whole number of at least 1."
   }
 }
 
@@ -1570,6 +1653,52 @@ variable "n8n_worker_concurrency" {
   }
 }
 
+# Bull worker timing controls (port-aws-040-enhancements section 4). Each
+# input maps to one chart-native redis.worker.* field (values.schema.json),
+# which the pinned chart renders as QUEUE_WORKER_LOCK_DURATION,
+# QUEUE_WORKER_LOCK_RENEW_TIME, and QUEUE_WORKER_STALLED_INTERVAL. Null
+# preserves the chart's own pinned defaults (60000, 10000, 30000 ms). The
+# chart schema rejects a value below 1000 or a stalled interval of zero, and
+# n8n v2 no longer honors QUEUE_WORKER_MAX_STALLED_COUNT as a runtime control,
+# so neither is exposed here.
+variable "n8n_queue_worker_lock_duration" {
+  description = "Milliseconds a worker holds a job lease before Bull considers it stalled (writes chart value redis.worker.lockDuration, rendered as QUEUE_WORKER_LOCK_DURATION). Null (default) omits the value and retains the chart's pinned default (60000 ms). Must be a whole number of at least 1000 when set. The effective lock-renewal time (n8n_queue_worker_lock_renew_time) must remain strictly below the effective value of this input."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_lock_duration == null ? true : (var.n8n_queue_worker_lock_duration == floor(var.n8n_queue_worker_lock_duration) && var.n8n_queue_worker_lock_duration >= 1000)
+    error_message = "n8n_queue_worker_lock_duration must be null or a whole number of at least 1000 milliseconds."
+  }
+}
+
+variable "n8n_queue_worker_lock_renew_time" {
+  description = "Milliseconds between a worker's lock-renewal heartbeats for a job it is processing (writes chart value redis.worker.lockRenewTime, rendered as QUEUE_WORKER_LOCK_RENEW_TIME). Null (default) omits the value and retains the chart's pinned default (10000 ms). Must be a whole number of at least 1000 when set, and strictly below the effective lock duration (n8n_queue_worker_lock_duration, pinned default 60000 ms when both are null) — a renewal interval at or above the lock duration lets the lease expire before it is renewed."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_lock_renew_time == null ? true : (var.n8n_queue_worker_lock_renew_time == floor(var.n8n_queue_worker_lock_renew_time) && var.n8n_queue_worker_lock_renew_time >= 1000)
+    error_message = "n8n_queue_worker_lock_renew_time must be null or a whole number of at least 1000 milliseconds."
+  }
+
+  validation {
+    condition     = coalesce(var.n8n_queue_worker_lock_renew_time, 10000) < coalesce(var.n8n_queue_worker_lock_duration, 60000)
+    error_message = "The effective n8n_queue_worker_lock_renew_time must be strictly below the effective n8n_queue_worker_lock_duration (pinned defaults 10000 and 60000 ms apply when either is null)."
+  }
+}
+
+variable "n8n_queue_worker_stalled_interval" {
+  description = "Milliseconds between Bull's checks for stalled jobs (writes chart value redis.worker.stalledInterval, rendered as QUEUE_WORKER_STALLED_INTERVAL). Null (default) omits the value and retains the chart's pinned default (30000 ms). Must be a whole number of at least 1000 when set; the pinned chart schema rejects zero, so stall checking cannot be disabled through this input."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_stalled_interval == null ? true : (var.n8n_queue_worker_stalled_interval == floor(var.n8n_queue_worker_stalled_interval) && var.n8n_queue_worker_stalled_interval >= 1000)
+    error_message = "n8n_queue_worker_stalled_interval must be null or a whole number of at least 1000 milliseconds."
+  }
+}
+
 variable "n8n_execution_timeout" {
   description = "Default execution timeout in seconds. Set to -1 to disable the timeout."
   type        = number
@@ -1603,6 +1732,52 @@ variable "n8n_execution_concurrency_limit" {
   }
 }
 
+# Execution-save policy controls (port-aws-040-enhancements section 5). Each
+# input maps to one chart-native executions.data.* field, which the pinned
+# chart renders as EXECUTIONS_DATA_SAVE_ON_SUCCESS, EXECUTIONS_DATA_SAVE_ON_ERROR,
+# EXECUTIONS_DATA_SAVE_ON_PROGRESS, and EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS
+# on main and worker application containers. Workflow-level save-policy
+# overrides continue to take precedence over these deployment-wide defaults.
+# The existing broad "EXECUTIONS_" managed-prefix guard already reserves
+# these four raw environment variable names in var.n8n_extra_env.
+variable "n8n_executions_data_save_on_success" {
+  description = "Whether to save execution data for successful workflow executions (writes chart value executions.data.saveOnSuccess, rendered as EXECUTIONS_DATA_SAVE_ON_SUCCESS). Must be \"all\" or \"none\". Workflow-level settings can override this default per workflow. An explicit null falls back to the default."
+  type        = string
+  default     = "all"
+  nullable    = false
+
+  validation {
+    condition     = contains(["all", "none"], var.n8n_executions_data_save_on_success)
+    error_message = "n8n_executions_data_save_on_success must be \"all\" or \"none\"."
+  }
+}
+
+variable "n8n_executions_data_save_on_error" {
+  description = "Whether to save execution data for failed workflow executions (writes chart value executions.data.saveOnError, rendered as EXECUTIONS_DATA_SAVE_ON_ERROR). Must be \"all\" or \"none\". Workflow-level settings can override this default per workflow. An explicit null falls back to the default."
+  type        = string
+  default     = "all"
+  nullable    = false
+
+  validation {
+    condition     = contains(["all", "none"], var.n8n_executions_data_save_on_error)
+    error_message = "n8n_executions_data_save_on_error must be \"all\" or \"none\"."
+  }
+}
+
+variable "n8n_executions_data_save_on_progress" {
+  description = "Whether to save incremental execution progress as a workflow runs (writes chart value executions.data.saveOnProgress, rendered as EXECUTIONS_DATA_SAVE_ON_PROGRESS). Enabling this increases database writes per execution. Workflow-level settings can override this default per workflow. An explicit null falls back to the default."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "n8n_executions_data_save_manual_executions" {
+  description = "Whether to save execution data for manually triggered workflow executions (writes chart value executions.data.saveManualExecutions, rendered as EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS). An explicit null falls back to the default."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "n8n_pruning_max_age" {
   description = "Maximum age of execution records to retain in hours."
   type        = number
@@ -1622,6 +1797,30 @@ variable "n8n_pruning_max_count" {
   validation {
     condition     = var.n8n_pruning_max_count >= 0 && var.n8n_pruning_max_count == floor(var.n8n_pruning_max_count)
     error_message = "n8n_pruning_max_count must be a non-negative whole number."
+  }
+}
+
+# Optional application heap ceiling (port-aws-040-enhancements section 6).
+# Null leaves n8n/Node's own default in place and keeps any caller-supplied
+# NODE_OPTIONS in n8n_extra_env valid. When set, it is the only source of a
+# heap-related NODE_OPTIONS entry, so a caller NODE_OPTIONS entry becomes a
+# conflict rather than something Kubernetes could silently override via
+# last-wins env ordering.
+variable "n8n_node_max_old_space_size_mb" {
+  description = "Optional V8 old-space heap ceiling in mebibytes for the main, worker, and webhook-processor application containers, rendered as NODE_OPTIONS=--max-old-space-size=<value>. Null (default) emits no heap-related NODE_OPTIONS and leaves any caller-supplied NODE_OPTIONS in n8n_extra_env in place. Must be a whole number of at least 256 when set. Size against the smallest application container's memory limit, leaving headroom beyond the heap for non-heap process memory; do not treat a larger value as a fix for a memory leak. Task-runner sidecars are not covered by this input."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_node_max_old_space_size_mb == null ? true : (var.n8n_node_max_old_space_size_mb == floor(var.n8n_node_max_old_space_size_mb) && var.n8n_node_max_old_space_size_mb >= 256)
+    error_message = "n8n_node_max_old_space_size_mb must be null or a whole number of at least 256 mebibytes."
+  }
+
+  validation {
+    condition = var.n8n_node_max_old_space_size_mb == null ? true : alltrue([
+      for env in var.n8n_extra_env : env.name != "NODE_OPTIONS"
+    ])
+    error_message = "n8n_node_max_old_space_size_mb conflicts with a NODE_OPTIONS entry in n8n_extra_env. Remove the escape-hatch entry and let this dedicated input set the heap flag, or leave this input null to keep using n8n_extra_env for NODE_OPTIONS."
   }
 }
 
@@ -1748,6 +1947,155 @@ variable "n8n_templates_enabled" {
   default     = true
 
   # no validation: a plain bool needs no additional constraint.
+}
+
+variable "n8n_task_runner_custom_config" {
+  description = <<-EOT
+    Existing Kubernetes ConfigMap containing a custom task-runner launcher
+    configuration file (allow-lists additional packages beyond the runner
+    image's default n8n-task-runners.json). config_map_name is the
+    ConfigMap's name in the effective n8n namespace; config_map_key defaults
+    to "n8n-task-runners.json". The selected key replaces
+    /etc/n8n-task-runners.json in the main and worker task-runner sidecars
+    using a file subPath. Webhook processors have no task-runner sidecar and
+    are unaffected. The module neither creates nor reads the ConfigMap, so
+    its contents never enter this module's Helm values or state, and Helm
+    does not roll pods when only the ConfigMap's payload changes: derive the
+    complete file from the matching n8nio/runners image tag and manually
+    restart n8n-main and n8n-worker after every rotation. Requires
+    n8n_task_runners_enabled = true. Null keeps the runner image's own
+    default configuration file.
+  EOT
+
+  type = object({
+    config_map_name = string
+    config_map_key  = optional(string, "n8n-task-runners.json")
+  })
+  default = null
+
+  validation {
+    condition = (
+      var.n8n_task_runner_custom_config == null ? true :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", var.n8n_task_runner_custom_config.config_map_name))
+      && length(var.n8n_task_runner_custom_config.config_map_name) <= 253
+    )
+    error_message = "n8n_task_runner_custom_config.config_map_name must be a DNS-1123 subdomain of 253 characters or fewer, which is what Kubernetes requires of a ConfigMap name: lowercase alphanumerics, hyphens and dots, starting and ending with an alphanumeric, with no empty label (e.g. \"n8n-task-runner-config\")."
+  }
+
+  validation {
+    condition = (
+      var.n8n_task_runner_custom_config == null ? true :
+      can(regex("^[-._a-zA-Z0-9]+$", var.n8n_task_runner_custom_config.config_map_key))
+      && length(var.n8n_task_runner_custom_config.config_map_key) <= 253
+      && !contains([".", ".."], var.n8n_task_runner_custom_config.config_map_key)
+      && !startswith(var.n8n_task_runner_custom_config.config_map_key, "..")
+    )
+    error_message = "n8n_task_runner_custom_config.config_map_key must be a valid ConfigMap key of 253 characters or fewer: alphanumerics, '-', '_' and '.' only, and not \".\", \"..\" or a name starting with \"..\"."
+  }
+
+  validation {
+    condition     = var.n8n_task_runner_custom_config == null ? true : var.n8n_task_runners_enabled
+    error_message = "n8n_task_runner_custom_config requires n8n_task_runners_enabled = true. Enable task runners or clear this input."
+  }
+}
+
+variable "n8n_dns_config" {
+  description = <<-EOT
+    Optional pod DNS configuration (Kubernetes PodDNSConfig) applied to main,
+    worker, and webhook-processor pods. Null attributes are stripped before
+    rendering; a null input or an effectively empty object (all three
+    attributes null or empty) omits the chart's dnsConfig block entirely.
+    dnsPolicy and cluster DNS resources are unaffected. nameservers accepts
+    at most 3 plain IPv4/IPv6 addresses (no hostnames, ports, or CIDR
+    prefixes). searches accepts at most 32 domain names totaling at most
+    2048 characters once joined with single spaces. options entries need a
+    nonblank name and an optional string value (e.g. { name = "ndots",
+    value = "1" } or { name = "edns0" }); an "ndots" option's value must be
+    a whole number from 0 through 15. Lowering ndots changes when relative
+    names use the search suffixes, so verify AKS private DNS and in-cluster
+    name resolution still work with the chosen setting before relying on it.
+    This module's limits (32 search domains, 2048 joined characters) match
+    current Kubernetes' own PodDNSConfig validation; older caller-managed
+    clusters, or resolvers built against glibc's traditional resolv.conf
+    limits (6 search domains, 256 characters), may enforce tighter effective
+    limits than this module validates against, so verify pod DNS resolution
+    on the target cluster after setting a large searches list.
+  EOT
+
+  type = object({
+    nameservers = optional(list(string))
+    searches    = optional(list(string))
+    options = optional(list(object({
+      name  = string
+      value = optional(string)
+    })))
+  })
+  default = null
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.nameservers == null ? true : (
+        length(var.n8n_dns_config.nameservers) <= 3 &&
+        alltrue([
+          for ns in var.n8n_dns_config.nameservers :
+          !strcontains(ns, "/") && (can(cidrhost("${ns}/32", 0)) || can(cidrhost("${ns}/128", 0)))
+        ])
+      )
+    )
+    error_message = "n8n_dns_config.nameservers must contain at most 3 plain IPv4 or IPv6 addresses, with no hostnames, ports, or CIDR prefixes."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.searches == null ? true :
+      length(var.n8n_dns_config.searches) <= 32
+    )
+    error_message = "n8n_dns_config.searches must contain at most 32 search domains."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.searches == null ? true :
+      length(join(" ", var.n8n_dns_config.searches)) <= 2048
+    )
+    error_message = "n8n_dns_config.searches must total at most 2048 characters once joined with single spaces."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.searches == null ? true :
+      alltrue([
+        for s in var.n8n_dns_config.searches :
+        can(regex("^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\\.?$", s))
+      ])
+    )
+    error_message = "n8n_dns_config.searches entries must be valid DNS search names (alphanumerics, hyphens, and dots, with no empty label)."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.options == null ? true :
+      alltrue([for opt in var.n8n_dns_config.options : trimspace(opt.name) != ""])
+    )
+    error_message = "n8n_dns_config.options entries must have a nonblank name."
+  }
+
+  validation {
+    condition = (
+      var.n8n_dns_config == null || var.n8n_dns_config.options == null ? true :
+      alltrue([
+        for opt in var.n8n_dns_config.options :
+        opt.name != "ndots" ? true : (
+          opt.value != null &&
+          can(tonumber(opt.value)) &&
+          tonumber(opt.value) == floor(tonumber(opt.value)) &&
+          tonumber(opt.value) >= 0 &&
+          tonumber(opt.value) <= 15
+        )
+      ])
+    )
+    error_message = "n8n_dns_config.options' ndots value must be a whole number from 0 through 15, supplied as a string."
+  }
 }
 
 variable "n8n_personalization_enabled" {
@@ -2031,7 +2379,7 @@ variable "n8n_credentials_overwrite_secret_ref" {
 # added in section 12; n8n runtime controls are added in section 7 onward.
 
 variable "n8n_domain" {
-  description = "Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `N8N_WEBHOOK_URL` / `N8N_HOST` from this value."
+  description = "Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `N8N_HOST` from this value. n8n_domain is also always the canonical editor identity: it renders as `N8N_EDITOR_BASE_URL` and, unless n8n_webhook_url overrides it, as `N8N_WEBHOOK_URL` too."
   type        = string
 
   validation {
@@ -2040,8 +2388,22 @@ variable "n8n_domain" {
   }
 }
 
+variable "n8n_webhook_url" {
+  description = "Optional override for the base URL n8n advertises as N8N_WEBHOOK_URL (port-aws-040-enhancements section 11 / design.md decision 8). Null retains https://<n8n_domain>, the same value used for N8N_EDITOR_BASE_URL. Set this only when webhook traffic is advertised on a different host, port, or base path than the editor UI — for example examples/split-ingress, where a public gateway terminates webhook traffic on a separate hostname from the private admin gateway. Must be an absolute HTTPS base URL with a host, no embedded credentials, whitespace, query string, or fragment, and a valid optional port (1-65535); a supplied path or trailing slash is preserved as-is. Editor identity (N8N_EDITOR_BASE_URL), N8N_HOST, and the internal service protocol/port are independent of this value. This input only changes what n8n advertises: it does not create a DNS record, certificate, listener, or additional route by itself — the caller remains responsible for routing the advertised host."
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.n8n_webhook_url == null ? true : can(regex(
+      "^https://[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(/[^\\s?#@]*)?$",
+      var.n8n_webhook_url
+    ))
+    error_message = "n8n_webhook_url must be null or an absolute HTTPS base URL with a valid host, no embedded credentials, whitespace, query string, or fragment, and a valid optional port between 1 and 65535."
+  }
+}
+
 variable "n8n_additional_domains" {
-  description = "Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n_domain. n8n_domain remains canonical for N8N_HOST, N8N_WEBHOOK_URL, and the editor URL. The supplied Key Vault certificate must cover every name."
+  description = "Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n_domain. n8n_domain remains canonical for N8N_HOST and the editor URL, and supplies the default N8N_WEBHOOK_URL unless n8n_webhook_url overrides it. The supplied Key Vault certificate must cover every name."
   type        = list(string)
   default     = []
   nullable    = false

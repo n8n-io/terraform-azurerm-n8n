@@ -75,8 +75,12 @@ audit](#data-sources-are-not-a-security-audit) below).
 `create_aks = false` **requires `create_ingress = false`.** This module
 cannot manage the AGIC addon, or the identities and role assignments AGIC
 needs, on a cluster it does not own. Route the exported `n8n_service_name` /
-`n8n_webhook_service_name` / `n8n_webhook_path_prefixes` outputs through a
-caller-owned ingress instead — see
+`n8n_webhook_service_name` / `n8n_webhook_path_prefixes` /
+`n8n_test_webhook_path_prefixes` outputs through a caller-owned ingress
+instead. Declare the test-mode prefixes (main Service) before the production
+webhook prefixes (webhook processors): Application Gateway matches string
+prefixes in declared order, so `/webhook*` would otherwise capture
+`/webhook-test`. See
 [`examples/customer-managed-cluster`](../examples/customer-managed-cluster/)
 for a caller-installed AGIC on the same cluster used as the AKS stand-in.
 
@@ -112,6 +116,14 @@ the applying identity needs role-assignment permission at that scope.
 The module never inspects a customer-managed storage account or container
 through a data source. See [Data sources are not a security
 audit](#data-sources-are-not-a-security-audit).
+
+A caller-managed Blob container is independent of Enterprise storage
+entitlements: `feat:binaryDataAz` / `feat:executionDataAz` still gate the
+Azure binary/execution-data modes regardless of who owns the container. A
+Business license without those entitlements should keep
+`n8n_binary_data_storage_mode` / `n8n_execution_data_storage_mode` on
+`database` even when `create_blob_storage = false` — see
+[`docs/data-storage.md`](./data-storage.md#new-deployment-without-azure-storage-entitlements-business-license).
 
 ### The n8n workload identity stays module-owned
 

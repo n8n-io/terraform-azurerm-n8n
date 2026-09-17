@@ -169,7 +169,9 @@ resource "azurerm_application_gateway" "webhook" {
       redirect_configuration,
       request_routing_rule,
       rewrite_rule_set,
-      ssl_certificate,
+      # ssl_certificate is deliberately not ignored: AGIC references the
+      # gateway certificate by name only, and ignoring it would silently drop
+      # every rotation of the Key Vault secret URI on an existing gateway.
       url_path_map,
       tags["ingress-for-aks-cluster-id"],
       tags["managed-by-k8s-ingress"],
@@ -291,7 +293,9 @@ resource "azurerm_application_gateway" "admin" {
       redirect_configuration,
       request_routing_rule,
       rewrite_rule_set,
-      ssl_certificate,
+      # ssl_certificate is deliberately not ignored: AGIC references the
+      # gateway certificate by name only, and ignoring it would silently drop
+      # every rotation of the Key Vault secret URI on an existing gateway.
       url_path_map,
       tags["ingress-for-aks-cluster-id"],
       tags["managed-by-k8s-ingress"],
@@ -639,6 +643,27 @@ resource "kubernetes_ingress_v1" "admin_internal" {
       host = var.n8n_domain
 
       http {
+        # Editor test-mode prefixes first (served by mains only): Application Gateway matches string
+        # prefixes in declared order, so /webhook* would otherwise capture
+        # /webhook-test and send it to webhook processors that return 404.
+        dynamic "path" {
+          for_each = module.n8n.n8n_test_webhook_path_prefixes
+
+          content {
+            path      = path.value
+            path_type = "Prefix"
+
+            backend {
+              service {
+                name = module.n8n.n8n_service_name
+                port {
+                  number = module.n8n.n8n_service_port
+                }
+              }
+            }
+          }
+        }
+
         # Same prefixes as the public gateway, same reason: mains serve none
         # of them. Declared before the catch-all so the specific paths win.
         dynamic "path" {

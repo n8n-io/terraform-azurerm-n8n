@@ -99,3 +99,34 @@ run "large_tier_plan" {
     error_message = "The large example must preserve its documented root-module sizing and availability decisions."
   }
 }
+
+run "large_tier_single_main_override" {
+  command = plan
+
+  variables {
+    n8n_main_hpa_min_replicas = 1
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nlarge-tls-test.vault.azure.net/secrets/n8nlarge-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.tier_configuration.main_min_replicas == 1
+    error_message = "Setting main minimum to 1 must pass 1 through to the root module."
+  }
+
+  assert {
+    condition     = kubernetes_deployment.pgbouncer.spec[0].replicas == "2"
+    error_message = "Selecting single-main must not change PgBouncer's two replicas."
+  }
+
+  assert {
+    condition     = module.n8n.postgres_fqdn == "pgbouncer.pgbouncer.svc.cluster.local"
+    error_message = "Selecting single-main must not change the external PostgreSQL/PgBouncer contract, including its unchanged pool-size argument."
+  }
+}
