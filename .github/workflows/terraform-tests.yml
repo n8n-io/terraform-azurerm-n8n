@@ -182,12 +182,19 @@ jobs:
     name: n8n chart rendering check
     runs-on: ubuntu-latest
     needs: validate
+    # The script normally finishes in a few minutes; without a job timeout a
+    # hang runs into GitHub's 6 hour default and hides the failure.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+          # check-n8n-chart.sh feeds `terraform console` through stdin. The
+          # action's Node wrapper does not forward piped stdin, so console
+          # blocks forever; call the real binary instead.
+          terraform_wrapper: false
 
       # jq ships preinstalled on the ubuntu-latest runner image; only helm
       # needs an explicit setup step.
