@@ -1,4 +1,4 @@
-# Qualification run: pr4, Germany West Central, 2026-09-15 to 2026-09-16
+# Qualification run: pr4 and pr4cm, Germany West Central, 2026-09-15 to 2026-09-16
 
 Filled-in copy of [`manual-azure-qualification.md`](../manual-azure-qualification.md)
 for the live validation of PR #4 (`port-aws-040-enhancements`). It records
@@ -7,10 +7,12 @@ guarantee, and no result below transfers to other regions, SKUs, or n8n
 versions.
 
 ```text
-Environment:     n8n Solution Architects Production subscription,
-                 resource groups pr4-n8n-rg / pr4-network-rg, germanywestcentral,
-                 zones 2 and 3, examples/small root with test-only overrides
-Module version:  jrx/port-aws-040-enhancements, 6192d7d through 1c78166
+Environment:     n8n Solution Architects Production subscription, germanywestcentral.
+                 pr4: examples/small root, zones 2 and 3, test-only overrides.
+                 pr4cm: examples/customer-managed-everything root (second, shorter
+                 deployment on 2026-09-16 for the customer-managed path, with the
+                 Redis stand-in deviation described under case 11)
+Module version:  jrx/port-aws-040-enhancements, 6192d7d through 03dfb09 (pr4cm ran 03dfb09)
                  (fixes found during this run were committed on the same branch)
 AKS version:     1.35.7 (desired 1.35), Ubuntu 24.04
 n8n image tag:   2.35.0 (runners 2.35.0)
@@ -166,21 +168,50 @@ would have replaced the public path every other case depended on.
 
 ### 11. Redis metrics, TLS, and ACL access
 
-**Result:** Partially qualified. Module-managed path: the exporter scraped
-Azure Managed Redis over TLS, reported `redis_up 1`, and queue-length
-metrics tracked a queued execution 0 to 1 to 0; a checksum-verified local
-Prometheus 3.14.0 ingested it. Disabling and re-enabling the exporter did
-not affect KEDA. The external-Redis path with a scoped ACL user was not
-qualified.
+**Result:** PASS on both paths, with a deviation on the external path.
+Module-managed (`pr4`): the exporter scraped Azure Managed Redis over TLS,
+reported `redis_up 1`, and queue-length metrics tracked a queued execution
+0 to 1 to 0; a checksum-verified local Prometheus 3.14.0 ingested it.
+Disabling and re-enabling the exporter did not affect KEDA.
+
+External (`pr4cm`, `create_redis = false`): Azure Managed Redis returned
+`InsufficientCapacity` in the region for `Balanced_B0`, `Balanced_B1`, and
+`MemoryOptimized_M10`, with and without zone-redundant high availability, over
+about 90 minutes, so the caller-owned endpoint was an in-cluster `redis:7.4`
+stand-in with TLS-only port 6379 and an ACL file (`default` disabled, `n8n`
+user with `~* &* +@all` minus destructive and admin commands). It carried a
+publicly trusted Let's Encrypt certificate for `pr4cm-redis.n8ns.net`
+because the module exposes no private-CA input (see "Additional
+observations"). Observed: certificate verification against the system CA
+bundle succeeds without an insecure flag, the plaintext port is closed,
+`default` and wrong-password logins are rejected, `CONFIG GET` and `LLEN`
+are allowed and `FLUSHALL` / `ACL LIST` denied for `n8n`, all 49 client
+connections (mains, worker, webhooks, KEDA, exporter) authenticate as `n8n`,
+the exporter reports `redis_up 1` with both Bull queue keys, the KEDA
+`ScaledObject` is `READY`, and a queued webhook execution ran on the
+worker. Azure Managed Redis has no password ACL users, so a scoped user
+against the managed service itself remains untested.
 
 ### 12. Recovery when the API is unavailable
 
-**Result:** Partially qualified. A process-local CONNECT proxy denied the AKS
-API host during a saved-plan apply: Terraform exited 1 after 13.8 seconds
-with `Kubernetes cluster unreachable: ... Service Unavailable`, made no
-changes, and a fresh unproxied plan and apply reconciled cleanly. This
-covers the pre-write failure only; an interruption between resource writes
-was not tested.
+**Result:** PASS for pre-write failure and for an unplanned partial apply;
+mid-write interruption not induced. On `pr4`, a process-local CONNECT proxy
+denied the AKS API host during a saved-plan apply: Terraform exited 1 after
+13.8 seconds with `Kubernetes cluster unreachable: ... Service Unavailable`,
+made no changes, and a fresh unproxied plan and apply reconciled cleanly.
+
+On `pr4cm`, the fresh install stopped at 47 of 63 resources because of two
+Azure-side failures in the same apply: Managed Redis `InsufficientCapacity`
+and an ARM `HTTP response was nil; connection may have been reset` on a
+role assignment whose PUT had actually succeeded. The reconciling plan
+correctly proposed only the missing 16 resources, but two of them collided
+with orphans Azure had kept (the `CreateFailed` Redis instance and the
+orphaned role assignment). Recovery consisted of deleting the orphans in
+Azure (`az redisenterprise delete`, `az role assignment delete`), no
+`terraform import` or `state rm`, and re-applying; three further Redis
+attempts each left one more `CreateFailed` orphan to delete before the
+stand-in replaced it. Total: 1 partial apply, 3 failed retries, 1 recovery
+apply, 5 orphan deletions, final plan `No changes`.
 
 ### 13. AKS credential rotation
 
@@ -206,14 +237,32 @@ recreate.
 
 ### 15. Normal destroy and caller-owned resource preservation
 
-**Result:** PASS (module-managed half). `Resources: 0 added, 0 changed, 71
-destroyed` in 888.5 seconds with the AKS API reachable. All Helm releases,
-Kubernetes objects, and the KEDA TriggerAuthentication were destroyed before
-the cluster. No forced finalizer removal or manual cleanup. Afterwards no
-`pr4` resource groups, resources, or soft-deleted Key Vaults remained (the
-example vault has purge protection disabled and was purged). The
-caller-owned preservation half needs a `customer-managed-*` deployment and
-was not run.
+**Result:** PASS for `pr4` (module-managed half): `Resources: 0 added, 0
+changed, 71 destroyed` in 888.5 seconds with the AKS API reachable. All Helm
+releases, Kubernetes objects, and the KEDA TriggerAuthentication were
+destroyed before the cluster. No forced finalizer removal or manual
+cleanup. Afterwards no `pr4` resource groups, resources, or soft-deleted
+Key Vaults remained (the example vault has purge protection disabled and
+was purged).
+
+`pr4cm` destroy: PASS after two Azure-side interruptions, three applies
+(67 + 0 + 5 of 75 resources). First stop: the test-owned A record in the
+shared `n8ns.net` zone could not be deleted (`409 ScopeLocked`) because the
+zone carries a `CanNotDelete` lock from the Azure domain purchase, and zone
+locks also block record-set deletion; the record and lego's leftover
+`_acme-challenge` TXT set were removed with the zone lock temporarily
+lifted and then restored (both locks verified identical afterwards).
+Second stop: the AKS delete failed with `ResourceGroupDeletionBlocked`
+because an Azure platform-initiated "VM Agent Rolling Upgrade" on the node
+VMSS (started 18:46 UTC, after the last apply) refused the VMSS delete; the
+AzureRM provider kept polling the failed operation past its 90 minute
+delete timeout and was stopped with a single `SIGINT` at 95 minutes. A
+fresh destroy plan after the upgrade completed removed the remaining five
+resources in 206 seconds. No `pr4cm` resources, DNS records, or soft-deleted
+vaults remain.
+
+The caller-owned preservation half (remove only the `module "n8n"` call and
+keep caller-owned resources) was not run on either deployment.
 
 ## Additional observations outside the checklist
 
@@ -222,6 +271,25 @@ was not run.
   success/error save policy was ignored for webhook-triggered executions.
   The module now renders the four settings into
   `webhookProcessor.extraEnv`; verified live with an A/B before and after.
+- **TLS rotation through Terraform (verified after the fix, `pr4cm`).**
+  Replacing the self-signed Key Vault certificate produced one plan with the
+  certificate replacement and exactly one in-place `ssl_certificate` update
+  on the Application Gateway; after a 73 second apply the served
+  certificate fingerprint changed, state and Azure both reference the new
+  version, and the follow-up plan is a no-op. The same `ssl_certificate`
+  ignore was also present in the four caller-owned gateways of
+  `split-ingress`, `customer-managed-cluster`, and
+  `customer-managed-everything`; removed in the same follow-up commit.
+- **No private-CA input for external Redis TLS.** KEDA's redis scaler
+  accepts `ca` in `TriggerAuthentication`, the exporter accepts a CA file,
+  and n8n honors `NODE_EXTRA_CA_CERTS`, but the module renders all three
+  itself and exposes none of them. External Redis with a private CA is
+  therefore unsupported; a publicly trusted chain is required.
+- **Fresh-install license race (`pr4cm`).** Worker and webhook-processor pods
+  each exited once with `Could not activate license ... Azure Blob binary
+  data storage requires a valid license` before the main had activated the
+  license, then restarted and stayed healthy. One restart per pod, chart
+  start ordering, no action needed beyond awareness.
 - **Startup warnings observed repeatedly and unchanged across the run:**
   Confluence node `Unknown credential name "confluenceCloudOAuth2Api"`,
   PostgreSQL 16 compatibility-support deprecation, `MultiMainSetup`
@@ -246,11 +314,17 @@ was not run.
   `N8N_BLOCK_ENV_ACCESS_IN_NODE` and returned 500; rerun without it.
 - Ingress fix: the `/form-test` assertion expected JSON; n8n answers with an
   HTML page from main.
+- `pr4cm` TLS rotation: a regex against `terraform state show` failed on the
+  sensitive `secret_id`; verification continued from the pulled state JSON.
+- `pr4cm` destroy: the AzureRM AKS delete did not honor its timeout after
+  Azure had marked the operation failed; stopped with one `SIGINT`.
 
 ## Not covered in this run
 
-Cases 10 and 11 (external Redis) and the caller-owned preservation half of
-case 15, all needing a second deployment; mid-write apply interruption
-(case 12); main-runner task execution; custom n8n images; failure behavior
-when the license lacks an entitlement; backup restoration (seven-day
-PostgreSQL retention was confirmed as metadata only); load and performance.
+Case 10 (private DNS with an internal gateway); a scoped ACL user against
+Azure Managed Redis itself (no password ACL users exist there); the
+caller-owned preservation half of case 15; an induced mid-write apply
+interruption (case 12); main-runner task execution; custom n8n images;
+failure behavior when the license lacks an entitlement; backup restoration
+(seven-day PostgreSQL retention was confirmed as metadata only); load and
+performance.

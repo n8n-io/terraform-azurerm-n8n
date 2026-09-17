@@ -169,7 +169,9 @@ resource "azurerm_application_gateway" "webhook" {
       redirect_configuration,
       request_routing_rule,
       rewrite_rule_set,
-      ssl_certificate,
+      # ssl_certificate is deliberately not ignored: AGIC references the
+      # gateway certificate by name only, and ignoring it would silently drop
+      # every rotation of the Key Vault secret URI on an existing gateway.
       url_path_map,
       tags["ingress-for-aks-cluster-id"],
       tags["managed-by-k8s-ingress"],
@@ -291,7 +293,9 @@ resource "azurerm_application_gateway" "admin" {
       redirect_configuration,
       request_routing_rule,
       rewrite_rule_set,
-      ssl_certificate,
+      # ssl_certificate is deliberately not ignored: AGIC references the
+      # gateway certificate by name only, and ignoring it would silently drop
+      # every rotation of the Key Vault secret URI on an existing gateway.
       url_path_map,
       tags["ingress-for-aks-cluster-id"],
       tags["managed-by-k8s-ingress"],

@@ -39,10 +39,13 @@ automatically.
   the old pinned version. The block is no longer ignored (AGIC references the
   gateway certificate by name and never rewrites it), and
   `docs/tls-rotation.md` now describes the versioned-URI behavior and the
-  Key Vault `Self` issuer the self-signed helper actually uses. Callers who
-  rotated out-of-band with `az network application-gateway ssl-cert update`
-  should expect one plan that repoints the listener at the Terraform-declared
-  URI.
+  Key Vault `Self` issuer the self-signed helper actually uses. The
+  caller-owned gateways in `examples/split-ingress`,
+  `examples/customer-managed-cluster`, and
+  `examples/customer-managed-everything` carried the same ignore and were
+  corrected too. Callers who rotated out-of-band with
+  `az network application-gateway ssl-cert update` should expect one plan
+  that repoints the listener at the Terraform-declared URI.
 
 ### Added
 
