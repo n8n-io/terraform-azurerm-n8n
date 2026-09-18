@@ -1,18 +1,89 @@
-# Post-deployment and chart-rendering scripts
+# Pre-apply, post-deployment, and chart-rendering scripts
 
-Four scripts. `check-n8n-chart.sh` is offline and runs in CI on every
+Five scripts. `check-n8n-chart.sh` is offline and runs in CI on every
 pull request. `smoke-test.sh`'s topology-detection self-test
 (`SMOKE_TEST_SELF_TEST=1`) also runs offline in CI; the rest of
-`smoke-test.sh` and all of `verify-custom-image.sh` are manual verification
-scripts that need a live cluster, which a pull request check cannot
-provide.
+`smoke-test.sh`, all of `verify-custom-image.sh`, and
+`preflight-region-check.sh` are manual verification scripts that need live
+Azure credentials, which a pull request check cannot provide (CI only
+syntax-checks and shellchecks the preflight script).
 
 | Script | Use it when |
 |---|---|
+| [`preflight-region-check.sh`](#region-preflight) | Before the first `terraform apply` in a new region or subscription. Checks AKS zone support, PostgreSQL Flexible Server version/SKU availability, and (opt-in) Managed Redis capacity against your own plan. |
 | [`check-n8n-chart.sh`](#chart-rendering-check) | Any change to `n8n.tf`, chart-affecting variables, or the pinned `n8n_chart_version`. Runs offline in CI. |
 | [`check-redis-exporter.py`](#redis-exporter-outage-check) | Changes to exporter probes, timeouts, or the pinned image. Runs against a local hanging TCP peer in CI. |
 | [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. Its offline self-test runs in CI on every pull request. |
 | [`verify-custom-image.sh`](#custom-image-verification) | The deployment sets `n8n_image_repository` and `n8n_custom_extensions_path` to bake community packages into the image. |
+
+## Region preflight
+
+`preflight-region-check.sh` answers one question before a 15-30 minute
+apply: can this subscription actually get the managed services the module
+asks for in this region? Three failures observed in live runs only surface
+after the VNet, Key Vault, and Application Gateway already exist, and are
+region or subscription gaps rather than module bugs:
+
+| Failure | Check |
+|---|---|
+| AKS `AvailabilityZoneNotSupported` | `az vm list-skus` for the planned `aks_node_vm_size`: SKU offered, no location-level subscription restriction, every planned zone in the SKU's zone list (zone-level restrictions are subtracted first) |
+| PostgreSQL Flexible Server `ParameterOutOfRange: 'Version' should be in: []` | `az postgres flexible-server list-skus`: at least one version offered, the planned `pg_version` among them, the planned `pg_sku_name` under its edition |
+| Azure Managed Redis `InsufficientCapacity` | Opt-in `--probe-redis` only: creates a throwaway cluster of the planned `redis_sku_name` in a tagged `n8n-preflight-*` resource group and deletes it. Azure has no capacity API, so the answer is valid only for the moment it runs |
+
+It also confirms the seven resource providers the module needs are
+registered, validates the region name, and reports `az` errors (expired
+login, throttling) as such rather than as "not offered".
+
+### Prerequisites
+
+- `az` `>= 2.75` (the script checks and refuses older releases: they
+  return a differently nested `az postgres flexible-server list-skus`
+  payload that would report every version and SKU as missing, and the
+  `redisenterprise` extension declares the same floor), logged in with the
+  target subscription selected. `--probe-redis` installs the
+  `redisenterprise` extension when missing
+- `jq`
+- `terraform` with `terraform init` already run in the root you are about
+  to apply (not needed when `--region` is passed)
+
+### Running it
+
+Run it from the root you will apply, with the same `terraform.tfvars`:
+
+```bash
+az login
+cd examples/small
+terraform init
+../../tests/scripts/preflight-region-check.sh                # plan + checks
+../../tests/scripts/preflight-region-check.sh --probe-redis  # also probe Redis capacity
+```
+
+With no flags it runs `terraform plan -refresh=false` in the current
+directory and reads the location, VM size, zones, PostgreSQL version/SKU,
+and Redis SKU from the planned resources, so the check matches what apply
+would request rather than the module defaults. A resource the
+configuration does not create (`create_aks`, `create_database`,
+`create_redis` = `false`) is absent from the plan and its check is skipped.
+
+Every value can be overridden (`--dir`, `--region`, `--vm-size`, `--zones`,
+`--pg-version`, `--pg-sku`, `--redis-sku`). `--region` alone skips the plan
+and checks the root module's defaults plus your flags, not the current
+root's `terraform.tfvars`; the script prints a note when it takes that
+path. `--help` lists the options.
+
+Pass `--zones ''` to check a zone-less region explicitly; an omitted flag
+falls back to the plan (or the root default `1,2,3` with `--region`). If the
+plan contains managed resources in more than one region the script stops and
+asks for `--region`; data sources such as `data.azurerm_kubernetes_cluster.existing`
+are ignored when detecting the region.
+
+Exit code `0` when every check passes or is skipped, `1` on any failure,
+`2` on a usage error. After the probe, deletion of the `n8n-preflight-*`
+resource group is *submitted* (`--no-wait`) and Azure completes it in the
+background; the script prints the submission result and fails with the
+manual `az group delete` command if the submission itself is rejected, so a
+billable probe cluster is never left behind silently. An abort mid-probe
+(Ctrl-C) triggers the same deletion from an EXIT trap.
 
 ## Chart-rendering check
 

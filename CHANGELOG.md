@@ -49,6 +49,22 @@ automatically.
 
 ### Added
 
+- **`tests/scripts/preflight-region-check.sh`**: a pre-`apply` check for the
+  three region/subscription gaps that otherwise surface 10-20 minutes into a
+  live apply: AKS `AvailabilityZoneNotSupported` (VM SKU not offered or
+  zone-less in the region), PostgreSQL Flexible Server `ParameterOutOfRange
+  'Version' ... in: []` (no versions offered), and Azure Managed Redis
+  `InsufficientCapacity`. With no flags it plans the caller's own root
+  (`-refresh=false`) and reads the region, VM size, zones, PostgreSQL
+  version/SKU, and Redis SKU the plan would request; every value can be
+  overridden, and `--probe-redis` creates and deletes a throwaway Managed
+  Redis cluster because Azure exposes no capacity API. `docs/troubleshooting.md`
+  gained entries for the PostgreSQL and Redis failures, the zone entry now
+  covers the zone-less (`''`) variant, and its `az aks list-vm-skus` reference
+  (which needs the `aks-preview` CLI extension) is replaced with the core-CLI
+  `az vm list-skus`. `tests/scripts/README.md` documents the script; CI runs
+  `bash -n`, `shellcheck`, and `--help` against it, and `openspec/init.sh`
+  does the same (`shellcheck` when available).
 - **Optional single-main queue mode** (`n8n_main_hpa_min_replicas = 1`): a
   Business-compatible topology for licenses without
   `feat:multipleMainInstances`. Clamps the main HPA to 1/1 regardless of
