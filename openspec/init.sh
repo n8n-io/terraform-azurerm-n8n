@@ -83,4 +83,15 @@ bash -n tests/scripts/smoke-test.sh
 SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
 
 echo
+echo "== preflight-region-check.sh syntax check =="
+# Every real check in this script needs live Azure credentials, so only its
+# syntax, shellcheck (when installed), and --help path run here. See
+# tests/scripts/README.md#region-preflight.
+bash -n tests/scripts/preflight-region-check.sh
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck -S warning tests/scripts/preflight-region-check.sh
+fi
+tests/scripts/preflight-region-check.sh --help >/dev/null
+
+echo
 echo "== Smoke check passed =="

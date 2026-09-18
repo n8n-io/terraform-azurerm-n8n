@@ -26,7 +26,7 @@ Error: creating Kubernetes Cluster ...: unexpected status 400 (400 Bad Request) 
 
 **Root cause**
 
-`var.aks_availability_zones` defaults to `["1", "2", "3"]`, but not every region/VM-SKU/subscription combination supports all three zones for AKS node pools. Observed: `germanywestcentral` with `Standard_D2s_v5` offered only `'1,3'` in one subscription, and `eastus` reported `The supported zones for location 'eastus' are ''` (no zones at all) in another, where `az vm list-skus -l eastus --size Standard_D2s_v5` did not list the SKU for that subscription. This is a subscription- or SKU-level constraint as often as a fixed regional one, so don't take any zone list as gospel for every account. Confirm current zone support with `az vm list-skus --location <region> --size <vm size> --resource-type virtualMachines --query "[0].locationInfo[0].zones"` (slow, ~1 minute) or run the preflight script.
+`var.aks_availability_zones` defaults to `["1", "2", "3"]`, but not every region/VM-SKU/subscription combination supports all three zones for AKS node pools. Observed: `germanywestcentral` with `Standard_D2s_v5` offered only `'1,3'` in one subscription, and `eastus` reported `The supported zones for location 'eastus' are ''` (no zones at all) in another, where `az vm list-skus -l eastus --size Standard_D2s_v5` did not list the SKU for that subscription. This is a subscription- or SKU-level constraint as often as a fixed regional one, so don't take any zone list as gospel for every account. Confirm current zone support with `az vm list-skus --location <region> --size <vm size> --resource-type virtualMachines --query "[0].locationInfo[0].zones"` (core CLI, slow, ~1 minute), with `az aks list-vm-skus --location <region> --size <vm size>` if you have the `aks-preview` extension installed, or run the preflight script.
 
 **Resolution**
 
@@ -77,9 +77,9 @@ Azure Managed Redis is capacity-constrained per region and the constraint is poi
 
 **Resolution**
 
-1. Delete the failed orphan before re-applying (Terraform never recorded it): `az redisenterprise delete --name <prefix>-redis --resource-group <prefix>-n8n-rg --yes`.
+1. Delete the failed orphan before re-applying (Terraform never recorded it): `az redisenterprise delete --name <friendly_name_prefix>-redis --resource-group <resource_group_name> --yes`, where `<resource_group_name>` is the value you passed to the module (the sizing examples use `<friendly_name_prefix>-n8n-rg`).
 2. Change region, change `redis_sku_name`, or set `create_redis = false` with an external Redis endpoint, then run a fresh `terraform plan`; a partial apply safely retains everything created before the Redis failure.
-3. Before the next attempt, run the preflight script with `--probe-redis`: it creates a throwaway cluster of your configured SKU in your configured region (a rejection surfaces in under a minute, success in about five) and deletes it, so you learn about capacity before the 15-minute AKS/Postgres/App Gateway build instead of after it.
+3. Before the next attempt, run the preflight script with `--probe-redis`: it creates a throwaway cluster of your configured SKU in your configured region (a rejection surfaces in under a minute, success in five to ten) and deletes it, so you learn about capacity before the 15-minute AKS/Postgres/App Gateway build instead of after it.
 
 ## Changing `aks_node_os_disk_size_gb` on an existing cluster disrupts workloads
 

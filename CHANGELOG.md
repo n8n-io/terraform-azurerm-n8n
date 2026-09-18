@@ -61,7 +61,10 @@ automatically.
   Redis cluster because Azure exposes no capacity API. `docs/troubleshooting.md`
   gained entries for the PostgreSQL and Redis failures, the zone entry now
   covers the zone-less (`''`) variant, and its `az aks list-vm-skus` reference
-  (a command that does not exist) is replaced with `az vm list-skus`.
+  (which needs the `aks-preview` CLI extension) is replaced with the core-CLI
+  `az vm list-skus`. `tests/scripts/README.md` documents the script; CI runs
+  `bash -n`, `shellcheck`, and `--help` against it, and `openspec/init.sh`
+  does the same (`shellcheck` when available).
 - **Optional single-main queue mode** (`n8n_main_hpa_min_replicas = 1`): a
   Business-compatible topology for licenses without
   `feat:multipleMainInstances`. Clamps the main HPA to 1/1 regardless of

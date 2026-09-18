@@ -252,6 +252,15 @@ jobs:
       - name: SMOKE_TEST_SELF_TEST=1 smoke-test.sh
         run: SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
 
+      # preflight-region-check.sh needs live Azure credentials for every real
+      # check, so CI only proves it parses and passes shellcheck. See
+      # tests/scripts/README.md#region-preflight.
+      - name: bash -n + shellcheck preflight-region-check.sh
+        run: |
+          bash -n tests/scripts/preflight-region-check.sh
+          shellcheck -S warning tests/scripts/preflight-region-check.sh
+          tests/scripts/preflight-region-check.sh --help >/dev/null
+
   tflint:
     name: tflint (${{ matrix.target }})
     runs-on: ubuntu-latest

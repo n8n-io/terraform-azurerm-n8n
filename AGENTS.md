@@ -850,8 +850,17 @@ terraform init                                          # populated terraform.tf
 Every value can be overridden (`--region`, `--vm-size`, `--zones`,
 `--pg-version`, `--pg-sku`, `--redis-sku`); `--region` alone skips the plan.
 Azure has no capacity API for Managed Redis, so only the probe answers that
-question, and only for the moment it runs. Like the smoke test it needs
-live credentials and is not wired into CI.
+question, and only for the moment it runs. It needs `jq` and Azure CLI
+`>= 2.75` (enforced by the script: older releases nest the PostgreSQL
+capability payload differently, and the on-demand `redisenterprise` extension
+declares the same floor). Like the smoke test it needs live credentials for
+every real check; CI runs `bash -n`, `shellcheck`, and `--help` against it,
+and `openspec/init.sh` does the same (`shellcheck` only when installed).
+The plan reader filters `.mode == "managed"` so
+`data.azurerm_kubernetes_cluster.existing` cannot hijack region detection,
+and refuses a plan spanning several regions. Note that `az aks list-vm-skus` does exist (in the `aks-preview`
+extension); the script uses the core-CLI `az vm list-skus` so it works
+without extensions, not because the AKS command is missing.
 
 ### Running `tests/scripts/smoke-test.sh` against a live deployment
 
