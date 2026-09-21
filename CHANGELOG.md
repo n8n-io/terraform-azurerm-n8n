@@ -20,6 +20,28 @@ against Managed Redis's always-on TLS). Every input below defaults to
 preserve existing behavior; none of this release's tuning is applied
 automatically.
 
+Also ports the applicable parts of `terraform-aws-n8n` 0.5.0 onto this
+module (see `openspec/changes/port-aws-050-enhancements/` for the full
+applicability assessment and source evidence), including its alpha
+`n8n_worker_pools` feature (see the **Early Alpha** entry below). Excluded:
+the `metrics_server_chart_version` bump (this module installs no
+metrics-server; AKS ships one as a managed addon), the RDS
+`db_engine_version` bump (PostgreSQL Flexible Server version currency is
+tracked separately), and `docs/istio-ingress.md` (`examples/split-ingress`
+already documents the `create_ingress = false` contract).
+
+**What moves on apply** for a caller who changes nothing but the module
+source pin: `helm_release.n8n` plans an in-place `version` change
+(`1.10.0` → `1.11.0`); the chart's only two functional changes at that
+bump (a KEDA `listName` default and an ingress-webhook `/mcp/` route) are
+both inert here (this module sets `listName` explicitly, and
+`ingress.enabled` defaults `false` and is never set by this module). The
+`kubernetes` provider bump (`~> 2.0` → `~> 3.0`) plans no resource changes,
+only the existing cosmetic "Deprecated Resource" warnings on unversioned
+resource types already noted in `AGENTS.md`. Enabling
+`redis_exporter_enabled` for the first time now pulls a digest-pinned
+image instead of a floating tag.
+
 ### Fixed
 
 - **Editor test-mode routing through the managed Ingress.** AGIC renders
@@ -46,6 +68,25 @@ automatically.
   corrected too. Callers who rotated out-of-band with
   `az network application-gateway ssl-cert update` should expect one plan
   that repoints the listener at the Terraform-declared URI.
+- **`n8n_image_pull_secrets` accepted Secret names Kubernetes would reject.**
+  Each entry was bounded to 253 characters total but not to 63 characters
+  per dot-separated label, the actual Kubernetes DNS-1123 subdomain rule.
+  Values that were always going to fail at apply now fail at plan.
+  `examples/split-ingress`'s `webhook_subdomain` gets the same 63-character
+  bound folded into its existing single-label validation.
+- **`pg_backup_retention_days` failed on an explicit `null`** instead of
+  falling back to its default of 7 (missing `nullable = false`).
+- **checkov never evaluated the disabled-by-default Redis exporter.**
+  checkov answers every check on a `count = 0` resource with UNKNOWN and
+  drops it from the report, and `redis_exporter_enabled` is `false` in
+  every default and example, so `kubernetes_deployment_v1.redis_exporter`
+  and its Service drew zero findings under any prior CI run.
+  `tests/scripts/check-checkov.sh` now runs a second pass with
+  `tests/checkov/opt-in.tfvars` and fails if that pass does not reach both
+  resources, closing the same class of gap `terraform-aws-n8n` found and
+  fixed in its own 0.5.0. `AGENTS.md`'s prior diagnosis (that checkov
+  ignores `_v1`/`_v2` Kubernetes resource types) was incorrect and is
+  corrected.
 
 ### Added
 
@@ -159,6 +200,128 @@ automatically.
   not roll pods because the module deliberately does not read or hash the
   payload. Restart the `n8n-main`, `n8n-worker`, and
   `n8n-webhook-processor` deployments manually after rotation.
+- `n8n_worker_extra_env`: worker-only environment variables (chart
+  `queueMode.workerExtraEnv`), reaching the chart's own default worker
+  deployment and, since the **Early Alpha** `n8n_worker_pools` entry below,
+  every labelled pool as well. Reuses `n8n_extra_env`'s reserved-name guard,
+  and `n8n_credentials_overwrite_secret_ref`'s conflict check now also
+  covers this input.
+- `blob_delete_retention_days`: optional soft-delete retention window
+  (1-365 days) for the module-managed Blob storage account
+  (`blob_properties.delete_retention_policy` and
+  `container_delete_retention_policy`). The nearest Azure analog to AWS's
+  `s3_force_destroy`; see
+  [`docs/deletion-safety.md`](./docs/deletion-safety.md) for why AWS's
+  four RDS deletion-time controls have no PostgreSQL Flexible Server
+  equivalent at all and are not ported.
+- `tests/scripts/chart-values-diff.sh` and `tests/scripts/lib/tf-defaults.sh`:
+  diffs the pinned n8n chart's `values.yaml` against a candidate version
+  via `helm show values`, sharing a `read_default` helper with the new
+  version-drift script below.
+- `tests/scripts/check-version-drift.sh`, wired into a weekly
+  `version-drift` CI job (report-only): currency for every Terraform
+  provider, the CI toolchain, and the pinned n8n chart against public
+  release feeds, and `aks_kubernetes_version` against Azure's published
+  AKS supported-versions page (not `endoflife.date`, which has no
+  AKS-specific entry). See [`docs/versioning.md`](./docs/versioning.md)
+  for the full pin inventory.
+- `scripts/check-example-parity.sh`, wired into a new `example-parity` CI
+  job: fails when an example declares a variable name absent from
+  `examples/small` and from that example's allowlist.
+- markdownlint CI job (`.markdownlint.yml`) over `README.md`, `AGENTS.md`,
+  `docs/**/*.md`, and every example/submodule README.
+- **`n8n_worker_pools` (EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE)**:
+  labelled n8n worker pools, one per entry, each rendered by the chart's
+  `queueMode.workerGroups` as a worker Deployment carrying
+  `N8N_WORKER_POOL_NAME=<name>` plus a KEDA `ScaledObject` watching that
+  pool's own `jobs-<name>` queue. Per-pool replica bounds, concurrency,
+  resources, and extra env each fall back to the module-wide worker
+  setting when null. Declaring any pool also emits
+  `N8N_WORKER_POOLS_ENABLED=true` on every pod. Default `[]`, which omits
+  `queueMode.workerGroups` from the Helm values entirely rather than
+  sending an empty list, so a deployment that declares no pool sees no
+  `helm_release` diff at all. Pool names are validated at plan to the
+  pattern n8n itself only warns about, capped at 43 characters because the
+  ScaledObject name `n8n-worker-<name>` must fit KEDA's 54, and `"default"`
+  is refused since `jobs-default` is not the default queue. The node
+  capacity check in `scaling.tf` now counts every pool at its ceiling.
+
+  **Upstream dependency, alpha on both sides.** n8n's own worker pools
+  feature is alpha, and the chart support for it
+  (`queueMode.workerGroups`, n8n-io/n8n-hosting#189) is merged to the
+  chart's `preview/worker-pools` branch but not released to a numbered
+  chart version, so a chart that predates it accepts the key and silently
+  renders nothing. A `lifecycle.precondition` on `helm_release.n8n` fails
+  the plan when the pinned `n8n_chart_version` is a numbered release,
+  since no numbered release carries the feature yet (a prerelease version
+  is taken at the caller's word, which is how a preview build installs;
+  the new `n8n_worker_pools_chart_verified` input lets a caller attest a
+  numbered release instead, for a private mirror already verified to carry
+  the feature), and the `worker_pools_require_n8n_2_39` `check` warns when
+  a pinned `n8n_image_tag` is below `2.39.0`, the first n8n release that
+  reads the pool variables. The `feat:workerPools` licence entitlement is
+  required as well, and its absence is not silent: a worker started with
+  `N8N_WORKER_POOL_NAME` it is not licensed for exits 1, so the pool pods
+  crash-loop and the Helm release rolls back, failing the apply. Terraform
+  cannot see entitlements at plan. `tests/scripts/verify-worker-pools.sh`
+  counts the rendered pools after a live apply, which is the only place
+  the silent case (a chart too old to render pools) is visible. A pool
+  started at `min_replicas = 0` cannot be assigned to a project until it
+  has been raised to 1 once, since n8n only offers a pool for assignment
+  while one of its workers is registered; the stored assignment then
+  survives a later scale-down. Documented on the input and in the example.
+
+- `examples/worker-pools/` (EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE):
+  topology variant of `small` running three pools beside the default
+  worker deployment, sized so `aks_node_count_max` clears their combined
+  ceiling. `n8n_chart_version` is a required input there, since the module
+  default renders no pools, and its README documents the official
+  preview-build path and the private-mirror fallback plus an end-to-end
+  routing test. Covered by `scripts/check-example-parity.sh`, whose
+  allowlist explains the chart inputs it declares beyond `small`'s. Draft
+  until the chart and n8n releases both ship.
+
+- `tests/scripts/verify-worker-pools.sh`: post-apply check for
+  `n8n_worker_pools`. Reads the pool names and namespace from the
+  example's outputs and asserts, per pool, the Deployment and ScaledObject
+  exist and are labelled, the ScaledObject is `READY=True`, its triggers
+  watch `jobs-<pool>` with the default worker's Redis TLS and auth
+  metadata, pods carry `N8N_WORKER_POOL_NAME`, and the mains carry
+  `N8N_WORKER_POOLS_ENABLED`.
+
+### Changed
+
+- **`kubernetes` provider requirement bumped to `~> 3.0`** (was `~> 2.0`),
+  across all 12 `versions.tf` files (root, `modules/controllers`, all
+  eight examples). Verified live-plan-shape-safe against `examples/small`
+  under mocked providers: only the two known cosmetic "Deprecated
+  Resource" warnings on unversioned resource types, no resource
+  replacement.
+- **`time` provider requirement bumped to `~> 0.14`** (was `~> 0.12`).
+  Additive; no plan diff.
+- **Default `n8n_chart_version` bumped to `1.11.0`** (was `1.10.0`); see
+  "What moves on apply" above.
+- CI toolchain currency: `TF_VERSION` `1.16.2` (was `1.15.1`),
+  `TFLINT_VERSION` `v0.64.0` (was `v0.53.0`), pinned `CHECKOV_VERSION`
+  `3.3.17` (was unpinned via `bridgecrewio/checkov-action@v12`'s own
+  floating tag), `azure/setup-helm` pinned to `v4.3.0`.
+- `n8n_extra_env` and `n8n_worker_extra_env` now reject
+  `N8N_WORKER_POOLS_ENABLED` and `N8N_WORKER_POOL_NAME`, which
+  `n8n_worker_pools` owns. A caller who was setting either through the
+  escape hatch fails at plan on upgrade rather than silently: set through
+  `n8n_extra_env` the pool name would put every main, worker, and webhook
+  pod into one pool, and the flag alone would switch routing on with no
+  pool to route to. Declare the pool with `n8n_worker_pools` instead.
+
+### Security
+
+- `redis_exporter_image`'s default is now pinned by digest as well as tag
+  (`oliver006/redis_exporter:v1.90.0@sha256:a129504e...`, the multi-arch
+  index). The tag alone was mutable, so the default `IfNotPresent` pull
+  policy could keep running a superseded image on a node that already had
+  it cached; the digest makes the reference immutable. Deployments with
+  `redis_exporter_enabled = true` roll the exporter pod once on the next
+  apply; nothing changes for the default `false`.
 
 ## [0.1.0] — First release
 

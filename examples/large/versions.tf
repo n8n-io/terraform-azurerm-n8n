@@ -11,7 +11,7 @@ terraform {
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
+      version = "~> 3.0"
     }
     helm = {
       source  = "hashicorp/helm"
@@ -27,7 +27,7 @@ terraform {
     }
     time = {
       source  = "hashicorp/time"
-      version = "~> 0.12"
+      version = "~> 0.14"
     }
   }
 }

@@ -71,6 +71,11 @@ run "customer_managed_storage_plan" {
     condition     = module.n8n.azure_blob_container_name == azurerm_storage_container.existing.name
     error_message = "The module's effective Blob container must resolve to the caller-owned container, not a module-created one."
   }
+
+  assert {
+    condition     = output.pg_backup_retention_days == 7
+    error_message = "The default pg_backup_retention_days (7) must pass through to the module unchanged."
+  }
 }
 
 run "customer_managed_storage_single_main_override" {
@@ -121,5 +126,51 @@ run "customer_managed_storage_single_main_override" {
   assert {
     condition     = module.n8n.storage_account_name == azurerm_storage_account.existing.name
     error_message = "Selecting single-main must not change the caller-owned storage targeting."
+  }
+}
+
+run "customer_managed_storage_pg_backup_retention_override" {
+  command = plan
+
+  variables {
+    pg_backup_retention_days = 30
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncms-tls-test.vault.azure.net/secrets/n8ncms-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = random_string.storage_suffix
+    override_during = plan
+    values = {
+      result = "abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_container.existing
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncms-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmsstabcdef/blobServices/default/containers/n8n-data"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_account.existing
+    override_during = plan
+    values = {
+      id                    = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncms-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmsstabcdef"
+      primary_blob_endpoint = "https://n8ncmsstabcdef.blob.core.windows.net/"
+    }
+  }
+
+  assert {
+    condition     = output.pg_backup_retention_days == 30
+    error_message = "An explicit pg_backup_retention_days override (30) must pass through to the module unchanged."
   }
 }

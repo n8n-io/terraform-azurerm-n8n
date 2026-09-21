@@ -30,6 +30,13 @@ trap 'rm -rf "$tmp"' EXIT
 # resource identifiers or credentials. Additional -var flags (e.g. a
 # topology override) can be passed as extra arguments — they are appended
 # after these fixed values, so they take precedence.
+#
+# hashicorp/kubernetes ~> 3.0 (port-aws-050-enhancements) prints a
+# "Deprecated value used" warning on stdout for every console invocation
+# that evaluates the root's kubernetes_namespace.n8n-backed output, even
+# when -no-color is set and stderr is discarded. `tail -n 1` below keeps
+# only the actual expression result (always the last output line) so a
+# stray warning line never breaks `jq -er .`.
 console() {
   terraform console -no-color -state="$tmp/terraform.tfstate" \
     -var='location=eastus' \
@@ -44,7 +51,7 @@ console() {
     -var='n8n_domain=n8n.test.example.com' \
     -var='app_gateway_tls_cert_secret_id=https://n8ntest-shared-kv.vault.azure.net/secrets/n8n-tls-cert/abc123' \
     -var='n8n_license_key=test-license-key-not-real' \
-    "$@" | jq -er .
+    "$@" | tail -n 1 | jq -er .
 }
 
 chart_version=$(console <<< 'var.n8n_chart_version')

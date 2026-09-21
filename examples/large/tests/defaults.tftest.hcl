@@ -98,6 +98,32 @@ run "large_tier_plan" {
     }
     error_message = "The large example must preserve its documented root-module sizing and availability decisions."
   }
+
+  assert {
+    condition     = output.blob_delete_retention_days == null
+    error_message = "The default blob_delete_retention_days (null) must reach the root module's blob_delete_retention_days input unchanged."
+  }
+}
+
+run "large_tier_blob_delete_retention_override" {
+  command = plan
+
+  variables {
+    blob_delete_retention_days = 14
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nlarge-tls-test.vault.azure.net/secrets/n8nlarge-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.blob_delete_retention_days == 14
+    error_message = "Setting blob_delete_retention_days must reach the root module's blob_delete_retention_days input unchanged."
+  }
 }
 
 run "large_tier_single_main_override" {

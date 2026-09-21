@@ -33,7 +33,10 @@ def main():
                       if r["address"] == "kubernetes_deployment_v1.redis_exporter[0]")
     container = deployment["spec"][0]["template"][0]["spec"][0]["container"][0]
     binary = str(Path(sys.argv[1]).resolve())
-    version = container["image"].rsplit(":", 1)[1]
+    # image may carry a digest suffix (@sha256:...) after the tag; strip it
+    # before extracting the tag, or rsplit(":", 1) would split inside the
+    # digest instead of at the tag separator.
+    version = container["image"].split("@", 1)[0].rsplit(":", 1)[1]
     build = subprocess.check_output(["go", "version", "-m", binary], text=True)
     assert f"github.com/oliver006/redis_exporter\t{version}" in build, build
 

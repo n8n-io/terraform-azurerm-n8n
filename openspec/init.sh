@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== Tool check =="
-for tool in terraform tflint checkov terraform-docs helm jq; do
+for tool in terraform tflint checkov terraform-docs helm jq markdownlint; do
   if command -v "$tool" >/dev/null 2>&1; then
     echo "  ok: $tool ($("$tool" --version 2>/dev/null | head -1))"
   else
@@ -26,12 +26,13 @@ terraform fmt -check -recursive
 # section 15.5 deleted modules/infra and modules/workload. modules/controllers
 # is the directly callable KEDA submodule added by
 # add-customer-managed-modularity section 3. The split-ingress topology
-# example and the four customer-managed-* examples (added by
-# add-customer-managed-modularity section 7) match the CI matrices in
-# .github/workflows/terraform-tests.yml. The cloudflare and godaddy
-# DNS-provider examples were removed in slim-first-release-surface section 1;
-# see modules/tls-letsencrypt/README.md for the DNS-01 provider snippets they
-# used to demonstrate.
+# example, the worker-pools topology example (early alpha, added by
+# port-aws-050-enhancements), and the four customer-managed-*
+# examples (added by add-customer-managed-modularity section 7) match the
+# CI matrices in .github/workflows/terraform-tests.yml. The cloudflare and
+# godaddy DNS-provider examples were removed in slim-first-release-surface
+# section 1; see modules/tls-letsencrypt/README.md for the DNS-01 provider
+# snippets they used to demonstrate.
 DIRS=(
   .
   modules/controllers
@@ -41,6 +42,7 @@ DIRS=(
   examples/medium
   examples/large
   examples/split-ingress
+  examples/worker-pools
   examples/customer-managed-cluster
   examples/customer-managed-redis
   examples/customer-managed-storage
@@ -92,6 +94,18 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S warning tests/scripts/preflight-region-check.sh
 fi
 tests/scripts/preflight-region-check.sh --help >/dev/null
+
+echo
+echo "== markdownlint =="
+markdownlint --config .markdownlint.yml README.md AGENTS.md 'docs/**/*.md' 'examples/**/README.md' 'modules/**/README.md'
+
+echo
+echo "== scripts/check-example-parity.sh =="
+scripts/check-example-parity.sh
+
+echo
+echo "== tests/scripts/check-version-drift.sh (report only) =="
+tests/scripts/check-version-drift.sh
 
 echo
 echo "== Smoke check passed =="

@@ -35,6 +35,11 @@ variable "domain_name" {
   }
 
   validation {
+    condition     = length(var.domain_name) <= 64
+    error_message = "domain_name must be 64 characters or fewer: it becomes the certificate's Common Name, and RFC 5280 caps a certificate Common Name at 64 octets (tighter than the 253-octet DNS limit above). Add extra names to subject_alternative_names instead, which is not bound by this limit."
+  }
+
+  validation {
     condition = (
       lower(var.domain_name) == lower(var.dns_zone_name) ||
       endswith(lower(var.domain_name), ".${lower(var.dns_zone_name)}")

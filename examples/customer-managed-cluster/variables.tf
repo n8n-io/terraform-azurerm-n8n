@@ -78,6 +78,29 @@ variable "n8n_main_hpa_min_replicas" {
   }
 }
 
+variable "pg_backup_retention_days" {
+  description = "Number of days to retain automated PostgreSQL Flexible Server backups. Azure enforces a range of 7–35 days for Flexible Server. Passed through to the root module's pg_backup_retention_days."
+  type        = number
+  default     = 7
+  nullable    = false
+
+  validation {
+    condition     = var.pg_backup_retention_days >= 7 && var.pg_backup_retention_days <= 35
+    error_message = "pg_backup_retention_days must be between 7 and 35 (inclusive): Azure Flexible Server does not support disabling backups."
+  }
+}
+
+variable "blob_delete_retention_days" {
+  description = "Optional soft-delete retention window, in days, for the module-managed Blob storage account. Null (the default) leaves soft delete disabled. Passed through to the root module's blob_delete_retention_days."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.blob_delete_retention_days == null || (var.blob_delete_retention_days >= 1 && var.blob_delete_retention_days <= 365 && var.blob_delete_retention_days == floor(var.blob_delete_retention_days))
+    error_message = "blob_delete_retention_days must be a whole number from 1 through 365 (the Azure Blob soft-delete retention bounds), or null to leave soft delete disabled."
+  }
+}
+
 # no validation: Azure validates tag limits at apply time.
 variable "common_tags" {
   description = "Additional Azure tags applied to example and module resources."

@@ -6,6 +6,11 @@ Every workaround below is grounded in a real failure mode the prototype hit whil
 
 The destroy order below assumes every layer is module-managed (the defaults). On a customer-managed AKS cluster, namespace, or KEDA installation, `terraform destroy` removes only the resources this module created — it does not, and must not, delete a caller-owned namespace or the caller's own AKS cluster. See [`docs/customer-managed-infrastructure.md`](./customer-managed-infrastructure.md) for exactly which resources move outside the module's ownership on each customer-managed path, and note the KEDA `ScaledObject` finalizer hazard documented in [`modules/controllers/README.md`](../modules/controllers/README.md#the-ownership-change-finalizer-hazard) before changing `install_keda` on an already-applied stack.
 
+What `terraform destroy` cannot undo, and which module inputs (if any)
+make PostgreSQL or Blob storage deletion recoverable, is covered
+separately in [`docs/deletion-safety.md`](./deletion-safety.md); read it
+before relying on this module for production destroy protection.
+
 ## Before you destroy
 
 Back up everything you cannot regenerate. The encryption key in particular is unrecoverable once state is gone.
@@ -113,7 +118,7 @@ Then re-run `terraform destroy`.
 
 **Symptom:** `terraform destroy` stalls on `azurerm_application_gateway.n8n` for 10–20 minutes, sometimes failing with:
 
-```
+```text
 Error: deleting Application Gateway: ... PublicIPAddressCannotBeDeleted: Public IP address ... is associated with frontend IP configuration
 ```
 

@@ -11,6 +11,11 @@ output "main_hpa_min_replicas" {
   value       = var.n8n_main_hpa_min_replicas
 }
 
+output "pg_backup_retention_days" {
+  description = "Effective PostgreSQL backup retention (days) passed to the root module's pg_backup_retention_days."
+  value       = var.pg_backup_retention_days
+}
+
 output "appgw_public_ip" {
   description = "Public IPv4 address of the module-managed Application Gateway."
   value       = module.n8n.appgw_public_ip_address

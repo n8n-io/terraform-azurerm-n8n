@@ -86,3 +86,14 @@ variable "common_tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "blob_delete_retention_days" {
+  description = "Optional soft-delete retention window, in days, passed through to the root module's blob_delete_retention_days. Null (the default) leaves soft delete disabled on this tier's module-managed Blob storage account."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.blob_delete_retention_days == null || (var.blob_delete_retention_days >= 1 && var.blob_delete_retention_days <= 365 && var.blob_delete_retention_days == floor(var.blob_delete_retention_days))
+    error_message = "blob_delete_retention_days must be a whole number from 1 through 365 (the Azure Blob soft-delete retention bounds), or null to leave soft delete disabled."
+  }
+}

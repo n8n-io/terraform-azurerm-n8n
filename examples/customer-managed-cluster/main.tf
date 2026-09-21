@@ -241,6 +241,9 @@ module "n8n" {
 
   n8n_main_hpa_min_replicas = var.n8n_main_hpa_min_replicas
 
+  pg_backup_retention_days   = var.pg_backup_retention_days
+  blob_delete_retention_days = var.blob_delete_retention_days
+
   n8n_domain      = var.n8n_domain
   n8n_license_key = var.n8n_license_key
 

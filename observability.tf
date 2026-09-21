@@ -145,6 +145,8 @@ resource "kubernetes_deployment_v1" "redis_exporter" {
           # these are deliberately small. Memory is capped but CPU is not: a
           # throttled exporter reports late during exactly the incident it
           # exists for, and one pod without a CPU limit cannot starve a node.
+          # checkov:skip=CKV_K8S_11:deliberate trade, see the comment above
+          # (port-aws-050-enhancements section 3).
           resources {
             requests = {
               cpu    = "10m"

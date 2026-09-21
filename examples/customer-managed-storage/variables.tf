@@ -89,6 +89,18 @@ variable "n8n_main_hpa_min_replicas" {
   }
 }
 
+variable "pg_backup_retention_days" {
+  description = "Number of days to retain automated PostgreSQL Flexible Server backups, passed through to the root module's pg_backup_retention_days. Azure enforces a range of 7–35 days for Flexible Server."
+  type        = number
+  default     = 7
+  nullable    = false
+
+  validation {
+    condition     = var.pg_backup_retention_days >= 7 && var.pg_backup_retention_days <= 35
+    error_message = "pg_backup_retention_days must be between 7 and 35 (inclusive); Azure Flexible Server does not support disabling backups."
+  }
+}
+
 # no validation: Azure validates tag limits at apply time.
 variable "common_tags" {
   description = "Additional Azure tags applied to example and module resources."

@@ -33,6 +33,18 @@ resource "azurerm_storage_account" "n8n" {
     var.azure_blob_account_key != null
   )
 
+  dynamic "blob_properties" {
+    for_each = var.blob_delete_retention_days != null ? [1] : []
+    content {
+      delete_retention_policy {
+        days = var.blob_delete_retention_days
+      }
+      container_delete_retention_policy {
+        days = var.blob_delete_retention_days
+      }
+    }
+  }
+
   tags = merge(local.common_tags, { Name = local.storage_account_name })
 }
 
@@ -164,13 +176,14 @@ check "blob_tuning_requires_module_managed_blob_storage" {
   assert {
     condition = var.create_blob_storage ? true : (
       var.storage_account_replication_type == "LRS" &&
-      var.azure_blob_binary_retention_days == null
+      var.azure_blob_binary_retention_days == null &&
+      var.blob_delete_retention_days == null
     )
     error_message = join("", [
-      "A storage_account_replication_type or azure_blob_binary_retention_days override is set while ",
-      "create_blob_storage = false. The module creates no storage account, container, or lifecycle ",
-      "policy in that mode, so neither applies — replication, retention, networking, and encryption are ",
-      "properties of the existing Blob storage account and container you supplied.",
+      "A storage_account_replication_type, azure_blob_binary_retention_days, or blob_delete_retention_days ",
+      "override is set while create_blob_storage = false. The module creates no storage account, container, ",
+      "or lifecycle policy in that mode, so none of them apply, replication, retention, networking, and ",
+      "encryption are properties of the existing Blob storage account and container you supplied.",
     ])
   }
 }

@@ -250,18 +250,26 @@ resource "helm_release" "n8n" {
       type = "Recreate"
     }
 
-    queueMode = {
-      enabled            = true
-      workerReplicaCount = var.n8n_worker_keda_min_replicas
-      workerConcurrency  = var.n8n_worker_concurrency
-    }
+    queueMode = merge(
+      {
+        enabled            = true
+        workerReplicaCount = var.n8n_worker_keda_min_replicas
+        workerConcurrency  = var.n8n_worker_concurrency
+      },
+      length(var.n8n_worker_extra_env) > 0 ? { workerExtraEnv = var.n8n_worker_extra_env } : {},
+      # One additional worker Deployment and ScaledObject per pool. Omitted
+      # entirely on the default path. See worker-pools.tf.
+      length(local.n8n_worker_groups) > 0 ? { workerGroups = local.n8n_worker_groups } : {},
+    )
 
     webhookProcessor = {
       enabled                                = true
       replicaCount                           = var.n8n_webhook_hpa_min_replicas
       disableProductionWebhooksOnMainProcess = true
 
-      # Chart 1.10.0 renders executions.data only on main and worker pods.
+      # The pinned chart renders executions.data only on main and worker pods
+      # (confirmed unchanged from 1.10.0 through 1.11.0 by diffing chart
+      # templates directly; port-aws-050-enhancements section 1).
       # The webhook process also decides retention when a queued run finishes,
       # so it must receive the same defaults. Keep these role-specific to avoid
       # duplicating the chart-owned entries on main and worker containers.
@@ -485,6 +493,16 @@ resource "helm_release" "n8n" {
         # rejects both names in n8n_extra_env while this entry is active for
         # exactly that reason.
         local.n8n_credentials_overwrite_env,
+        # Worker pools (n8n alpha). The feature is inert unless this is set on
+        # the mains, which resolve a project's pool and enqueue to it, as well
+        # as the workers, which read N8N_WORKER_POOL_NAME. Webhook pods ignore
+        # it but are harmless to set, and config.extraEnv reaches all three.
+        # Emitted only when pools are declared, so an untouched deployment sees
+        # no diff. The name is reserved in n8n_managed_env_names, so declaring a
+        # pool is the only way to switch the feature on. See worker-pools.tf.
+        length(var.n8n_worker_pools) > 0 ? [
+          { name = "N8N_WORKER_POOLS_ENABLED", value = "true" },
+        ] : [],
         # Caller-supplied escape hatch, appended last. Kubernetes resolves
         # duplicate env names last-wins, so this would override anything above
         # it; var.n8n_extra_env is validated against local.n8n_managed_env_names
@@ -602,6 +620,22 @@ resource "helm_release" "n8n" {
       }
     }
   }))]
+
+  lifecycle {
+    # A hard stop rather than a check: a chart that predates
+    # queueMode.workerGroups accepts the key and renders nothing, so with
+    # pools declared this release would apply clean, switch
+    # N8N_WORKER_POOLS_ENABLED on across every pod, and leave no pool
+    # Deployment or ScaledObject behind it. A prerelease version is exempt
+    # automatically (local.n8n_chart_renders_worker_pools takes it at the
+    # caller's word), so a preview build still installs; a numbered version
+    # is exempt only if the caller attests it via
+    # n8n_worker_pools_chart_verified. See worker-pools.tf.
+    precondition {
+      condition     = length(var.n8n_worker_pools) > 0 ? local.n8n_chart_renders_worker_pools : true
+      error_message = local.n8n_worker_pools_chart_error
+    }
+  }
 
   depends_on = [
     kubernetes_namespace.n8n,

@@ -1,0 +1,55 @@
+# Permissive markdownlint config (port-aws-050-enhancements). Long
+# generated tables and long prose lines are normal in this repo's
+# README/AGENTS.md/docs; line-length and a few structural rules that would
+# otherwise fire constantly on generated terraform-docs output, or on
+# pre-existing repo-wide conventions unrelated to this port, are disabled.
+# Rules not listed here run at their default severity.
+default: true
+
+# terraform-docs output and long descriptive prose routinely exceed any
+# reasonable line-length limit.
+MD013: false
+
+# Generated tables and code fences intentionally sit at the top level with
+# no surrounding blank-line padding in a few places; don't fight the
+# generator's own formatting.
+MD012: false
+
+# Duplicate headings are legitimate across the many per-section "##
+# Requirement"-style headings the generated Reference block produces.
+MD024:
+  siblings_only: true
+
+# Bare URLs appear in a few "See https://..." inline references; requiring
+# every one to become a markdown link adds churn for no reader benefit.
+MD034: false
+
+# terraform-docs' generated Reference block uses HTML (<pre>, <a name>)
+# for multi-line default values, and many hand-written variable
+# descriptions elsewhere use angle-bracket placeholder syntax (e.g.
+# "/subscriptions/<sub>/resourceGroups/<rg>/..."), which markdownlint's
+# HTML detector cannot distinguish from real inline HTML. Rewriting
+# either convention is out of scope for this port.
+MD033: false
+
+# The whole pre-existing docs tree uses ad-hoc table pipe spacing/alignment
+# that predates this port; enforcing markdownlint's pedantic table style
+# here would touch hundreds of unrelated lines across every doc file.
+# Fixing that formatting wholesale is out of scope for this port, same as
+# the pre-existing checkov backlog documented in AGENTS.md.
+MD060: false
+
+# One pre-existing list in AGENTS.md uses "+" bullets; not worth a
+# repo-wide bullet-style rewrite for this port.
+MD004: false
+
+# docs/troubleshooting.md's Symptom/Root cause/Resolution entries use bold
+# text by deliberate compact style, not real document headings; rewriting
+# ~20 pre-existing entries into headings is out of scope for this port.
+MD036: false
+
+# The generated Reference table renders an unrelated pre-existing
+# variable description containing a literal "GP_* or MO_*" pattern, which
+# markdownlint misreads as emphasis markers with a space. Fixing the
+# source variable's wording is out of scope for this port.
+MD037: false

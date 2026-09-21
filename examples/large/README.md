@@ -26,6 +26,14 @@ The example owns PostgreSQL rather than asking the root module to create it. Thi
 
 This tier sets binary and execution-data writes to Azure Blob. These features require separate n8n Enterprise entitlements: `feat:binaryDataAz` and `feat:executionDataAz`. The module does not backfill data when modes change. The shared container has no lifecycle expiry because n8n owns execution-data pruning.
 
+## Production considerations
+
+| Module input | Default | Purpose |
+| --- | --- | --- |
+| `blob_delete_retention_days` | `null` | Soft-delete retention window, in days, for the module-managed Blob storage account's `delete_retention_policy` and `container_delete_retention_policy`. `null` leaves soft delete disabled, so a deleted blob or container is immediately unrecoverable. |
+
+`pg_backup_retention_days` does not apply to this example: it sets `create_database = false` and owns PostgreSQL itself (see [PostgreSQL and PgBouncer](#postgresql-and-pgbouncer)), so PostgreSQL backup retention is a property of the Flexible Server resource this example manages directly, not of the root module.
+
 ## Apply
 
 Copy `terraform.tfvars.example` to `terraform.tfvars`, replace the placeholders, verify regional SKU and zone availability, then run `terraform init` and `terraform apply`. Delegate `terraform output -json public_dns_zone_name_servers` at your registrar.
@@ -49,18 +57,18 @@ See [the tier comparison](../README.md).
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
 | <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | ~> 4.0 |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
 | <a name="provider_random"></a> [random](#provider\_random) | ~> 3.0 |
-| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.12 |
+| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.14 |
 
 ## Modules
 
@@ -106,6 +114,7 @@ See [the tier comparison](../README.md).
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_aks_api_authorized_ip_ranges"></a> [aks\_api\_authorized\_ip\_ranges](#input\_aks\_api\_authorized\_ip\_ranges) | Operator and CI IPv4 CIDRs allowed to reach the public AKS API. Empty leaves it unrestricted and is not recommended for production. | `list(string)` | `[]` | no |
+| <a name="input_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#input\_blob\_delete\_retention\_days) | Optional soft-delete retention window, in days, passed through to the root module's blob\_delete\_retention\_days. Null (the default) leaves soft delete disabled on this tier's module-managed Blob storage account. | `number` | `null` | no |
 | <a name="input_common_tags"></a> [common\_tags](#input\_common\_tags) | Additional Azure tags applied to example and module resources. | `map(string)` | `{}` | no |
 | <a name="input_friendly_name_prefix"></a> [friendly\_name\_prefix](#input\_friendly\_name\_prefix) | Lowercase alphanumeric prefix used for Azure resource names. Change it to avoid globally unique name collisions. | `string` | `"n8nlarge"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region for the example. Confirm that the selected AKS, PostgreSQL, Redis, zone, and storage SKUs are available there. | `string` | `"eastus"` | no |
@@ -122,6 +131,7 @@ See [the tier comparison](../README.md).
 | <a name="output_aks_resource_group"></a> [aks\_resource\_group](#output\_aks\_resource\_group) | Resource group containing AKS and the n8n managed services. |
 | <a name="output_appgw_public_ip"></a> [appgw\_public\_ip](#output\_appgw\_public\_ip) | Public IPv4 address of the module-managed Application Gateway. |
 | <a name="output_azure_blob_container_name"></a> [azure\_blob\_container\_name](#output\_azure\_blob\_container\_name) | Name of the private Azure Blob container used for n8n binary and execution data. Consumed by tests/scripts/smoke-test.sh. |
+| <a name="output_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#output\_blob\_delete\_retention\_days) | Soft-delete retention window, in days, passed through to the root module's blob\_delete\_retention\_days input. Null (the default) leaves Blob soft delete disabled. |
 | <a name="output_kubectl_config_command"></a> [kubectl\_config\_command](#output\_kubectl\_config\_command) | Command that writes the AKS context into the local kubeconfig. |
 | <a name="output_n8n_encryption_key"></a> [n8n\_encryption\_key](#output\_n8n\_encryption\_key) | Generated n8n encryption key. Back it up to a password manager immediately after the first apply. |
 | <a name="output_n8n_url"></a> [n8n\_url](#output\_n8n\_url) | Canonical HTTPS URL for n8n. The self-signed example certificate causes browser warnings. |

@@ -195,6 +195,9 @@ module "n8n" {
   appgw_subnet_id            = azurerm_subnet.appgw.id
   private_endpoint_subnet_id = azurerm_subnet.private_endpoints.id
 
+  pg_backup_retention_days   = var.pg_backup_retention_days
+  blob_delete_retention_days = var.blob_delete_retention_days
+
   aks_api_authorized_ip_ranges = var.aks_api_authorized_ip_ranges
 
   create_ingress                               = false

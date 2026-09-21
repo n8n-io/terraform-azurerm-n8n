@@ -160,6 +160,16 @@ run "customer_managed_cluster_plan" {
     error_message = "The Ingress catch-all must route to the main Service."
   }
 
+  assert {
+    condition     = output.pg_backup_retention_days == 7
+    error_message = "The default pg_backup_retention_days (7) must pass through to the root module unchanged."
+  }
+
+  assert {
+    condition     = output.blob_delete_retention_days == null
+    error_message = "The default blob_delete_retention_days (null) must pass through to the root module unchanged."
+  }
+
   # PostgreSQL, Redis, and Blob remain module-managed in this example — the
   # module call in main.tf sets no create_database, create_redis, or
   # create_blob_storage override, so all three keep their true defaults.
@@ -221,5 +231,65 @@ run "customer_managed_cluster_single_main_override" {
   assert {
     condition     = module.n8n.aks_cluster_name == azurerm_kubernetes_cluster.existing.name
     error_message = "Selecting single-main must not change the caller-owned AKS targeting."
+  }
+}
+
+run "customer_managed_cluster_retention_overrides" {
+  command = plan
+
+  variables {
+    pg_backup_retention_days   = 14
+    blob_delete_retention_days = 30
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncmc-tls-test.vault.azure.net/secrets/n8ncmc-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.Network/applicationGateways/n8ncmc-appgw"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_tls_cert
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncmc-appgw-tls"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.existing
+    override_during = plan
+    values = {
+      id              = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ContainerService/managedClusters/n8ncmc-shared-aks"
+      oidc_issuer_url = "https://oidc.prod-aks.azure.com/00000000-0000-0000-0000-000000000000/"
+      kube_config = [{
+        host                   = "https://n8ncmc-shared-aks.hcp.eastus.azmk8s.io:443"
+        client_certificate     = "ZmFrZS1jZXJ0"
+        client_key             = "ZmFrZS1rZXk="
+        cluster_ca_certificate = "ZmFrZS1jYQ=="
+        password               = "fake-password"
+        username               = "fake-username"
+      }]
+    }
+  }
+
+  assert {
+    condition     = output.pg_backup_retention_days == 14
+    error_message = "An explicit pg_backup_retention_days override must pass through to the root module unchanged."
+  }
+
+  assert {
+    condition     = output.blob_delete_retention_days == 30
+    error_message = "An explicit blob_delete_retention_days override must pass through to the root module unchanged."
   }
 }
