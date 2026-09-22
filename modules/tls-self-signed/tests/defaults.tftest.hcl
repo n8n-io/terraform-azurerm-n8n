@@ -133,6 +133,26 @@ run "rejects_malformed_domain_name" {
   ]
 }
 
+run "accepts_domain_name_at_64_character_cn_boundary" {
+  command = plan
+
+  variables {
+    domain_name = "${join("", [for i in range(52) : "a"])}.example.com"
+  }
+}
+
+run "rejects_domain_name_over_64_character_cn_boundary" {
+  command = plan
+
+  variables {
+    domain_name = "${join("", [for i in range(53) : "a"])}.example.com"
+  }
+
+  expect_failures = [
+    var.domain_name,
+  ]
+}
+
 run "rejects_malformed_key_vault_id" {
   command = plan
 

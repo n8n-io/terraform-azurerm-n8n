@@ -83,3 +83,8 @@ output "n8n_webhook_path_prefixes" {
   description = "Complete path-prefix set the Ingress routes to the webhook-processor service. Consumed by tests/scripts/smoke-test.sh to verify webhook route ownership."
   value       = module.n8n.n8n_webhook_path_prefixes
 }
+
+output "blob_delete_retention_days" {
+  description = "Soft-delete retention window, in days, passed through to the root module's blob_delete_retention_days input. Null (the default) leaves Blob soft delete disabled."
+  value       = var.blob_delete_retention_days
+}

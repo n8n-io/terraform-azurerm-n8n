@@ -46,3 +46,13 @@ output "postgres_password" {
   value       = module.n8n.postgres_admin_password
   sensitive   = true
 }
+
+output "pg_backup_retention_days" {
+  description = "Effective PostgreSQL Flexible Server backup retention window, in days, passed to the root module's pg_backup_retention_days."
+  value       = var.pg_backup_retention_days
+}
+
+output "blob_delete_retention_days" {
+  description = "Effective Blob soft-delete retention window, in days, passed to the root module's blob_delete_retention_days. Null leaves soft delete disabled."
+  value       = var.blob_delete_retention_days
+}

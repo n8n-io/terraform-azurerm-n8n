@@ -11,6 +11,16 @@ output "main_hpa_min_replicas" {
   value       = var.n8n_main_hpa_min_replicas
 }
 
+output "pg_backup_retention_days" {
+  description = "Effective PostgreSQL backup retention window, in days, passed through to the root module's pg_backup_retention_days."
+  value       = var.pg_backup_retention_days
+}
+
+output "blob_delete_retention_days" {
+  description = "Effective Blob soft-delete retention window, in days (or null), passed through to the root module's blob_delete_retention_days."
+  value       = var.blob_delete_retention_days
+}
+
 output "appgw_public_ip" {
   description = "Public IPv4 address of the caller-owned Application Gateway (ingress.tf)."
   value       = azurerm_public_ip.n8n.ip_address

@@ -1,0 +1,6 @@
+framework:
+  - terraform
+skip-path:
+  - tests
+  - openspec
+  - .agents

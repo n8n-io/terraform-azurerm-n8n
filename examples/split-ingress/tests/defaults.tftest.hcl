@@ -321,6 +321,16 @@ run "webhook_subdomain_validation_rejects_non_dns_label" {
   expect_failures = [var.webhook_subdomain]
 }
 
+run "webhook_subdomain_validation_rejects_over_63_characters" {
+  command = plan
+
+  variables {
+    webhook_subdomain = join("", [for i in range(64) : "a"])
+  }
+
+  expect_failures = [var.webhook_subdomain]
+}
+
 run "n8n_license_key_rejects_the_example_placeholder" {
   command = plan
 
@@ -329,4 +339,69 @@ run "n8n_license_key_rejects_the_example_placeholder" {
   }
 
   expect_failures = [var.n8n_license_key]
+}
+
+run "retention_days_defaults_flow_through_unchanged" {
+  command = plan
+
+  override_resource {
+    target          = module.tls_self_signed_admin.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplita-tls-test.vault.azure.net/secrets/n8nsplita-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_webhook.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplitw-tls-test.vault.azure.net/secrets/n8nsplitw-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.pg_backup_retention_days == 7
+    error_message = "The default pg_backup_retention_days (7) must flow through unchanged to the root module."
+  }
+
+  assert {
+    condition     = output.blob_delete_retention_days == null
+    error_message = "The default blob_delete_retention_days (null) must flow through unchanged to the root module."
+  }
+}
+
+run "retention_days_override_flows_through" {
+  command = plan
+
+  variables {
+    pg_backup_retention_days   = 20
+    blob_delete_retention_days = 30
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_admin.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplita-tls-test.vault.azure.net/secrets/n8nsplita-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_webhook.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplitw-tls-test.vault.azure.net/secrets/n8nsplitw-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.pg_backup_retention_days == 20
+    error_message = "An explicit pg_backup_retention_days override must flow through to the root module."
+  }
+
+  assert {
+    condition     = output.blob_delete_retention_days == 30
+    error_message = "An explicit blob_delete_retention_days override must flow through to the root module."
+  }
 }

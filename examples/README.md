@@ -20,7 +20,7 @@ These tiers are reference configurations, not throughput or cost guarantees. Wor
 
 `small`, `medium`, and `large` issue self-signed certificates only, to keep the Azure Key Vault certificate path runnable without another DNS provider. Replace them with publicly trusted certificates before exposing production traffic. Azure SKU and zone availability varies by region. Check current availability and pricing before apply.
 
-### Main topology selection is separate from feature entitlements
+## Main topology selection is separate from feature entitlements
 
 All eight examples in this directory — the three sizing tiers, `split-ingress`, and the four customer-managed examples — expose `n8n_main_hpa_min_replicas`, a passthrough to the root module's own variable of the same name. It defaults to each example's documented floor (2, except medium's 3 and large's 6) and is the only topology selector: setting it to 1 requests single-main queue mode, which works with a license that lacks `feat:multipleMainInstances` (including Business licenses). Selecting a floor of 1 does not change any other example decision — sizing, storage mode, ingress, or Redis/PostgreSQL topology stay exactly as documented above and in the customer-managed table below.
 
@@ -33,6 +33,7 @@ These examples are small-sized and each focuses on a single decision instead of 
 | Example | What it demonstrates |
 |---|---|
 | [`split-ingress`](./split-ingress/) | Two Application Gateways instead of one: a public gateway that serves only webhook traffic, and a private gateway that serves the editor UI and everything else, each with its own standalone AGIC install. |
+| [`worker-pools`](./worker-pools/) | Three labelled `n8n_worker_pools` beside the default worker deployment, each with its own KEDA scaler on its own `jobs-<name>` queue. Requires a chart that renders `queueMode.workerGroups` and n8n `2.39.0`+; see the module root README's ["Worker pools (early alpha)"](../README.md#worker-pools-early-alpha) section. Early alpha, subject to change without notice. |
 
 ## Customer-managed infrastructure examples
 

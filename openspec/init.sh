@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== Tool check =="
-for tool in terraform tflint checkov terraform-docs helm jq; do
+for tool in terraform tflint checkov terraform-docs helm jq markdownlint; do
   if command -v "$tool" >/dev/null 2>&1; then
     echo "  ok: $tool ($("$tool" --version 2>/dev/null | head -1))"
   else
@@ -26,12 +26,13 @@ terraform fmt -check -recursive
 # section 15.5 deleted modules/infra and modules/workload. modules/controllers
 # is the directly callable KEDA submodule added by
 # add-customer-managed-modularity section 3. The split-ingress topology
-# example and the four customer-managed-* examples (added by
-# add-customer-managed-modularity section 7) match the CI matrices in
-# .github/workflows/terraform-tests.yml. The cloudflare and godaddy
-# DNS-provider examples were removed in slim-first-release-surface section 1;
-# see modules/tls-letsencrypt/README.md for the DNS-01 provider snippets they
-# used to demonstrate.
+# example, the worker-pools topology example (early alpha, added by
+# port-aws-050-enhancements), and the four customer-managed-*
+# examples (added by add-customer-managed-modularity section 7) match the
+# CI matrices in .github/workflows/terraform-tests.yml. The cloudflare and
+# godaddy DNS-provider examples were removed in slim-first-release-surface
+# section 1; see modules/tls-letsencrypt/README.md for the DNS-01 provider
+# snippets they used to demonstrate.
 DIRS=(
   .
   modules/controllers
@@ -41,6 +42,7 @@ DIRS=(
   examples/medium
   examples/large
   examples/split-ingress
+  examples/worker-pools
   examples/customer-managed-cluster
   examples/customer-managed-redis
   examples/customer-managed-storage
@@ -92,6 +94,42 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S warning tests/scripts/preflight-region-check.sh
 fi
 tests/scripts/preflight-region-check.sh --help >/dev/null
+
+echo
+echo "== new-script syntax checks (port-aws-050-enhancements) =="
+# Same treatment for the scripts this change added: chart-values-diff.sh
+# and verify-worker-pools.sh need network or a live cluster for their real
+# work, so only syntax, shellcheck (when installed), and --help run here.
+for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-pools.sh \
+  tests/scripts/check-version-drift.sh tests/scripts/check-checkov.sh scripts/check-example-parity.sh; do
+  bash -n "$script"
+  if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck -S warning "$script"
+  fi
+done
+tests/scripts/chart-values-diff.sh --help >/dev/null
+
+echo
+echo "== markdownlint =="
+# Optional locally, like shellcheck above: CI installs the pinned
+# MARKDOWNLINT_VERSION and runs it there regardless.
+if command -v markdownlint >/dev/null 2>&1; then
+  markdownlint --config .markdownlint.yml README.md AGENTS.md 'docs/**/*.md' 'examples/**/README.md' 'modules/**/README.md'
+else
+  echo "  skipped: markdownlint not installed (npm install -g markdownlint-cli)"
+fi
+
+echo
+echo "== scripts/check-example-parity.sh =="
+scripts/check-example-parity.sh
+
+# Report-only and network-dependent; everything above runs offline. Set
+# SKIP_VERSION_DRIFT=1 to keep this script fully offline.
+if [[ "${SKIP_VERSION_DRIFT:-0}" != "1" ]]; then
+  echo
+  echo "== tests/scripts/check-version-drift.sh (report only, needs network) =="
+  tests/scripts/check-version-drift.sh
+fi
 
 echo
 echo "== Smoke check passed =="

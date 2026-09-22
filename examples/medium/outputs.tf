@@ -6,6 +6,11 @@ output "tier_configuration" {
   value       = local.tier
 }
 
+output "blob_delete_retention_days" {
+  description = "Value of var.blob_delete_retention_days passed into the root module's blob_delete_retention_days input."
+  value       = var.blob_delete_retention_days
+}
+
 output "n8n_url" {
   description = "Canonical HTTPS URL for n8n. The self-signed example certificate causes browser warnings."
   value       = module.n8n.n8n_url

@@ -201,6 +201,7 @@ module "n8n" {
   redis_high_availability_enabled = local.tier.redis_high_availability
 
   storage_account_replication_type           = local.tier.storage_replication_type
+  blob_delete_retention_days                 = var.blob_delete_retention_days
   azure_blob_container_stores_execution_data = true
   n8n_binary_data_storage_mode               = local.tier.binary_data_storage_mode
   n8n_execution_data_storage_mode            = local.tier.execution_data_storage_mode

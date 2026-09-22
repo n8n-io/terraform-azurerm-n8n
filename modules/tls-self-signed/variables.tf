@@ -19,6 +19,11 @@ variable "domain_name" {
     condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.domain_name))
     error_message = "domain_name must be a valid fully qualified domain name (e.g. n8n.example.com)."
   }
+
+  validation {
+    condition     = length(var.domain_name) <= 64
+    error_message = "domain_name must be 64 characters or fewer: it becomes the certificate's Common Name, and RFC 5280 caps a certificate Common Name at 64 octets."
+  }
 }
 
 variable "key_vault_id" {

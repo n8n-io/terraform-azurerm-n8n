@@ -31,6 +31,13 @@ The warm node floor, larger PostgreSQL and Redis SKUs, ZRS storage, and Applicat
 
 See [the tier comparison](../README.md).
 
+## Production considerations
+
+| Module input | Default | Purpose |
+| --- | --- | --- |
+| `pg_backup_retention_days` | `14` | Days Azure retains automated PostgreSQL Flexible Server backups. Azure enforces a 7-35 day range; this tier doubles the module's 7-day default for extra recovery headroom. |
+| `blob_delete_retention_days` | `null` | Optional Blob soft-delete retention window, in days (1-365). `null` leaves soft delete disabled, so a deleted blob or container is immediately unrecoverable. |
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->
@@ -42,9 +49,9 @@ See [the tier comparison](../README.md).
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
 ## Providers
 
@@ -52,7 +59,7 @@ See [the tier comparison](../README.md).
 | ---- | ------- |
 | <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | ~> 4.0 |
 | <a name="provider_random"></a> [random](#provider\_random) | ~> 3.0 |
-| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.12 |
+| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.14 |
 
 ## Modules
 
@@ -87,12 +94,14 @@ See [the tier comparison](../README.md).
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_aks_api_authorized_ip_ranges"></a> [aks\_api\_authorized\_ip\_ranges](#input\_aks\_api\_authorized\_ip\_ranges) | Operator and CI IPv4 CIDRs allowed to reach the public AKS API. Empty leaves it unrestricted and is not recommended for production. | `list(string)` | `[]` | no |
+| <a name="input_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#input\_blob\_delete\_retention\_days) | Optional soft-delete retention window, in days, for the module-managed Blob storage account, passed through to the root module. Null (the default) leaves soft delete disabled. | `number` | `null` | no |
 | <a name="input_common_tags"></a> [common\_tags](#input\_common\_tags) | Additional Azure tags applied to example and module resources. | `map(string)` | `{}` | no |
 | <a name="input_friendly_name_prefix"></a> [friendly\_name\_prefix](#input\_friendly\_name\_prefix) | Lowercase alphanumeric prefix used for Azure resource names. Change it to avoid globally unique name collisions. | `string` | `"n8nmedium"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region for the example. Confirm that the selected AKS, PostgreSQL, Redis, zone, and storage SKUs are available there. | `string` | `"eastus"` | no |
 | <a name="input_n8n_domain"></a> [n8n\_domain](#input\_n8n\_domain) | Canonical fully-qualified domain for n8n. It must be the Azure DNS zone apex or a subdomain of public\_dns\_zone\_name. | `string` | n/a | yes |
 | <a name="input_n8n_license_key"></a> [n8n\_license\_key](#input\_n8n\_license\_key) | n8n Enterprise license activation key. | `string` | n/a | yes |
 | <a name="input_n8n_main_hpa_min_replicas"></a> [n8n\_main\_hpa\_min\_replicas](#input\_n8n\_main\_hpa\_min\_replicas) | Minimum main replicas passed through to the root module's n8n\_main\_hpa\_min\_replicas, the sole topology selector. The default of 3 keeps this example on multi-main. Set to 1 to select single-main queue mode for a license without feat:multipleMainInstances (including Business licenses); other selected features, such as Azure Blob binary/execution-data entitlements, still require their own license grants and are not affected by this setting. | `number` | `3` | no |
+| <a name="input_pg_backup_retention_days"></a> [pg\_backup\_retention\_days](#input\_pg\_backup\_retention\_days) | Number of days to retain automated PostgreSQL Flexible Server backups, passed through to the root module. The medium tier defaults to 14. Azure enforces a range of 7-35 days for Flexible Server. | `number` | `14` | no |
 | <a name="input_public_dns_zone_name"></a> [public\_dns\_zone\_name](#input\_public\_dns\_zone\_name) | Public Azure DNS zone created by this example. Delegate its output name servers at the domain registrar. | `string` | n/a | yes |
 
 ## Outputs
@@ -103,6 +112,7 @@ See [the tier comparison](../README.md).
 | <a name="output_aks_resource_group"></a> [aks\_resource\_group](#output\_aks\_resource\_group) | Resource group containing AKS and the n8n managed services. |
 | <a name="output_appgw_public_ip"></a> [appgw\_public\_ip](#output\_appgw\_public\_ip) | Public IPv4 address of the module-managed Application Gateway. |
 | <a name="output_azure_blob_container_name"></a> [azure\_blob\_container\_name](#output\_azure\_blob\_container\_name) | Name of the private Azure Blob container used for n8n binary and execution data. Consumed by tests/scripts/smoke-test.sh. |
+| <a name="output_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#output\_blob\_delete\_retention\_days) | Value of var.blob\_delete\_retention\_days passed into the root module's blob\_delete\_retention\_days input. |
 | <a name="output_kubectl_config_command"></a> [kubectl\_config\_command](#output\_kubectl\_config\_command) | Command that writes the AKS context into the local kubeconfig. |
 | <a name="output_n8n_encryption_key"></a> [n8n\_encryption\_key](#output\_n8n\_encryption\_key) | Generated n8n encryption key. Back it up to a password manager immediately after the first apply. |
 | <a name="output_n8n_url"></a> [n8n\_url](#output\_n8n\_url) | Canonical HTTPS URL for n8n. The self-signed example certificate causes browser warnings. |

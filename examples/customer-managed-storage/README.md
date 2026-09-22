@@ -18,6 +18,14 @@ AKS, PostgreSQL, Azure Managed Redis, and ingress remain module-managed here to 
 
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
 
+## Production considerations
+
+| Module input | Default | Purpose |
+| ------------- | ------- | ------- |
+| `pg_backup_retention_days` | `7` | Days Azure retains automated PostgreSQL Flexible Server backups. Azure enforces a 7-35 day range and does not allow disabling backups. |
+
+`blob_delete_retention_days` does not apply to this example: the Blob container above is caller-owned (`create_blob_storage = false`), so its own platform team configures Blob soft delete, not this module.
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->
@@ -29,9 +37,9 @@ The root default writes binary data to private Azure Blob and requires the separ
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
 ## Providers
 
@@ -39,7 +47,7 @@ The root default writes binary data to private Azure Blob and requires the separ
 | ---- | ------- |
 | <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | ~> 4.0 |
 | <a name="provider_random"></a> [random](#provider\_random) | ~> 3.0 |
-| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.12 |
+| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.14 |
 
 ## Modules
 
@@ -87,6 +95,7 @@ The root default writes binary data to private Azure Blob and requires the separ
 | <a name="input_n8n_domain"></a> [n8n\_domain](#input\_n8n\_domain) | Fully-qualified domain name for n8n. This example issues its own lab-grade self-signed certificate for it (main.tf); replace that with a real certificate before production use. | `string` | n/a | yes |
 | <a name="input_n8n_license_key"></a> [n8n\_license\_key](#input\_n8n\_license\_key) | n8n Enterprise license activation key. | `string` | n/a | yes |
 | <a name="input_n8n_main_hpa_min_replicas"></a> [n8n\_main\_hpa\_min\_replicas](#input\_n8n\_main\_hpa\_min\_replicas) | Minimum main replicas passed through to the root module's n8n\_main\_hpa\_min\_replicas, the sole topology selector. The default of 2 keeps this example on multi-main. Set to 1 to select single-main queue mode for a license without feat:multipleMainInstances (including Business licenses); other selected features, such as Azure Blob binary/execution-data entitlements, still require their own license grants and are not affected by this setting. | `number` | `2` | no |
+| <a name="input_pg_backup_retention_days"></a> [pg\_backup\_retention\_days](#input\_pg\_backup\_retention\_days) | Number of days to retain automated PostgreSQL Flexible Server backups, passed through to the root module's pg\_backup\_retention\_days. Azure enforces a range of 7–35 days for Flexible Server. | `number` | `7` | no |
 
 ## Outputs
 
@@ -101,6 +110,7 @@ The root default writes binary data to private Azure Blob and requires the separ
 | <a name="output_n8n_url"></a> [n8n\_url](#output\_n8n\_url) | Canonical HTTPS URL for n8n. The self-signed example certificate causes browser warnings. |
 | <a name="output_n8n_workload_uami_client_id"></a> [n8n\_workload\_uami\_client\_id](#output\_n8n\_workload\_uami\_client\_id) | Client ID of the module-owned n8n workload identity granted Storage Blob Data Contributor on the caller-owned container above. |
 | <a name="output_namespace"></a> [namespace](#output\_namespace) | Kubernetes namespace containing n8n. |
+| <a name="output_pg_backup_retention_days"></a> [pg\_backup\_retention\_days](#output\_pg\_backup\_retention\_days) | Effective PostgreSQL backup retention (days) passed to the root module's pg\_backup\_retention\_days. |
 | <a name="output_postgres_fqdn"></a> [postgres\_fqdn](#output\_postgres\_fqdn) | Private FQDN n8n connects to for PostgreSQL. |
 | <a name="output_postgres_password"></a> [postgres\_password](#output\_postgres\_password) | Generated PostgreSQL administrator password. Back it up in a secret manager. |
 | <a name="output_redis_hostname"></a> [redis\_hostname](#output\_redis\_hostname) | Private hostname n8n and KEDA connect to for Redis. |

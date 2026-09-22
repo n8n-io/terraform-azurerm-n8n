@@ -356,15 +356,23 @@ observe different queue names. The exporter reuses `local.redis_connection`
 (`redis.tf`), `local.redis_username_present`/`redis_password_present`
 (`locals.tf`), and `local.redis_password_secret_name`/`_key` exactly as n8n's
 own `redis.passwordSecret` chart value does — it creates no second password
-Secret and never reads a caller-managed Secret's payload. Checkov's
-Terraform framework registers its `CKV_K8S_*` checks against the unsuffixed
-`kubernetes_deployment`/`kubernetes_service` resource types only, not the
-`_v1` variants used throughout this root (matching `terraform-aws-n8n`'s
-observation for its own `redis_exporter` Deployment) — a clean `checkov`
-run says nothing about this file either way, so its pod hardening (dropped
-capabilities, non-root UID 59000, read-only root filesystem, no privilege
-escalation, memory limit, both probes) needs direct test assertions rather
-than a scanner catching a regression. `terraform test`'s mocked `kubernetes`
+Secret and never reads a caller-managed Secret's payload. An earlier version
+of this file claimed checkov's Terraform framework registers `CKV_K8S_*`
+checks against unsuffixed `kubernetes_deployment`/`kubernetes_service`
+resource types only, not the `_v1` variants used throughout this root, and
+that a clean checkov run therefore said nothing about this file. That
+diagnosis was wrong (`port-aws-050-enhancements`, matching the AWS
+sibling's own correction): checkov does register the `_v1`/`_v2` Kubernetes
+resource types. What actually hid this exporter is that checkov evaluates
+`count` from variable defaults and answers every check on a count-0
+resource with UNKNOWN, which it drops from the report — `redis_exporter_enabled`
+is `false` in the module defaults and in every example, so the exporter
+drew zero results under the default configuration. Scanned with the toggle
+on (`tests/checkov/opt-in.tfvars`, `tests/scripts/check-checkov.sh`), the
+resource draws the full set of `CKV_K8S_*` checks; the pod hardening below
+still needs direct test assertions for the fields checkov has no
+Terraform-side check for (e.g. exact UID, exact capability list), not
+because checkov cannot see the resource. `terraform test`'s mocked `kubernetes`
 provider represents at least `spec.replicas` and
 `security_context.run_as_user` as quoted strings in assertion failure
 output even though the provider schema types them numeric — compare with
@@ -454,6 +462,113 @@ storage modes, so `docs/customer-managed-infrastructure.md`'s Blob section
 cross-references the same database-only recipe rather than implying ownership
 of the container substitutes for the entitlement.
 
+
+## `port-aws-050-enhancements`: worker pools (early alpha)
+
+This change (`openspec/changes/port-aws-050-enhancements/`) ports the
+applicable parts of `terraform-aws-n8n` 0.5.0 onto this module; most of it
+(the `n8n_credentials_overwrite_secret_ref` conflict check extended to pool
+`extra_env`, the two new reserved names in `local.n8n_managed_env_names`,
+and the pool-CPU accounting folded into `scaling.tf`'s capacity model) is
+narrow enough that `CHANGELOG.md`'s Unreleased entry is the fuller record.
+The headline addition is `n8n_worker_pools` (new `worker-pools.tf`),
+**EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE**, tracking two upstream
+features that are themselves alpha: n8n's own worker pools, and the chart
+support for them (`queueMode.workerGroups`, n8n-io/n8n-hosting#189), merged
+to the chart's `preview/worker-pools` branch but not released to a numbered
+chart version.
+
+**Chart-values-only.** The feature creates zero new Terraform resources.
+Every pool declared in `var.n8n_worker_pools` maps onto one entry of the
+chart's own `queueMode.workerGroups` Helm value, which the chart itself
+renders into a worker Deployment and a KEDA `ScaledObject`; this module's
+contribution is entirely `worker-pools.tf`'s locals (validated pool names
+at plan time, sizing knobs that fall back to the module-wide `n8n_worker_*`
+defaults instead of the chart's, `N8N_WORKER_POOLS_ENABLED` on
+`config.extraEnv`) plus the merge in `n8n.tf`'s `helm_release.n8n`. The
+default `[]` omits `queueMode.workerGroups` from the values entirely rather
+than sending an empty list, so an untouched deployment sees no Helm diff.
+
+**Pool scalers reuse the default worker's `TriggerAuthentication`.** Every
+KEDA scaler this module renders, the default worker's and each pool's,
+authenticates through the one `kubectl_manifest.keda_trigger_authentication`
+CR (`keda.tf`) via `authenticationRef = { name = local.n8n_redis_keda_auth_name }`
+when `local.redis_authentication_enabled`. When it is false the pool omits
+the `authenticationRef` key entirely, unlike `n8n.tf`, which sends `""` for
+the default worker: the chart schema puts `minLength: 1` on
+`workerGroups[].keda.authenticationRef.name` (top-level `keda` is not in the
+schema), and Helm validates the schema before the template's `and` guard
+runs, so an empty name fails the render. `tests/scripts/check-n8n-chart.sh`
+renders that exact path against the preview chart. The chart's
+`queueMode.workerGroups[].keda` exposes both `triggerMetadata` (merged into
+the pool's two chart-templated Redis triggers) and `authenticationRef`
+(verified against the `preview/worker-pools` branch schema and against the
+published `1.11.0-preview.workerpools.1` build's
+`templates/scaledobject-worker-group.yaml`). The module puts only
+`enableTLS = tostring(local.redis_connection.tls_enabled)` into
+`triggerMetadata`, rendered unconditionally (`"true"`/`"false"`) exactly as
+`n8n.tf` does for the default worker, so the two ScaledObjects compare
+key-for-key and Redis credentials never appear in ScaledObject metadata. An
+earlier draft of this change used a flat `passwordFromEnv`/`username`
+metadata merge instead (the shape `terraform-aws-n8n` uses, where the
+default worker also carries flat metadata) on the mistaken belief that the
+chart had no per-group `authenticationRef`; that shape is functional (KEDA
+resolves `secretKeyRef` env from `containers[0]`, which is `n8n-worker`)
+but inconsistent with this module's own default worker, and it made
+`tests/scripts/verify-worker-pools.sh`'s baseline comparison fail on every
+authenticated deployment. Do not reintroduce it. Get `enableTLS` wrong
+against a TLS-only Redis endpoint and the pool's scaler fails closed
+silently: it sits at `min_replicas` with nothing crashing to announce it,
+the same failure mode `README.md`'s KEDA troubleshooting section already
+documents for the default worker's scaler.
+
+**Two guards, both hard stops.** A chart that predates
+`queueMode.workerGroups` has no `additionalProperties: false` on
+`queueMode`, so Helm accepts the key, renders nothing for it, and the
+release succeeds: `N8N_WORKER_POOLS_ENABLED` lands on every pod, no pool
+Deployment or `ScaledObject` exists, and every project pinned to a pool
+quietly runs on the default queue. Mocked plan-time tests cannot see this,
+and neither can a real plan, so the chart pairing is a `lifecycle.precondition`
+on `helm_release.n8n`: it fails the plan whenever `n8n_worker_pools` is
+non-empty and the pinned `n8n_chart_version` is a numbered release, unless
+`n8n_worker_pools_chart_verified` attests it for a private mirror. A
+prerelease version (one carrying a SemVer 2 `-` segment) is exempt
+automatically, which is how the official preview build installs. The image
+pairing is a `validation` block on `n8n_image_tag` (2.39.0 floor while
+`n8n_worker_pools` is non-empty), next to the existing 2.19 and 2.29 floors
+on the same variable. It was first drafted as an advisory `check` on the
+AWS sibling's premise that `n8n_image_tag` is usually `null` (the chart's
+floating `stable` tag); in this module the variable defaults to a pinned
+version and its regex validation rejects `null`, so the floor is fully
+decidable at plan time and there was no reason to let it through as a
+warning. An old image does not fail loudly: it silently accepts and ignores
+`N8N_WORKER_POOLS_ENABLED` and `N8N_WORKER_POOL_NAME`, so pool workers come
+up healthy while consuming the default queue and every pool queue stays
+empty (wrong capacity, not a no-op). `tests/scripts/verify-worker-pools.sh`
+is what catches the chart-side silent outcome after a live apply, plus an
+image that drifted from the pinned tag. When porting from
+`terraform-aws-n8n`, check both of these premises (`n8n_image_tag` default,
+default worker KEDA auth shape) before copying a guard's severity or a
+scaler's metadata shape.
+
+**Alpha caveats.** The `feat:workerPools` licence entitlement is required,
+and unlike the two guards above, its absence is not silent: a worker
+started with `N8N_WORKER_POOL_NAME` it is not licensed for exits 1, so the
+pool pods crash-loop and `helm_release.n8n`'s existing `atomic = true`
+rolls the release back, failing the apply. Terraform cannot see licence
+entitlements at plan. Scale-from-zero has one bootstrap gap: n8n only
+offers a pool for assignment in a project's Worker Pools setting while one
+of its workers is registered, so a pool declared at `min_replicas = 0`
+cannot be assigned to any project yet; start it at `1`, assign the
+project(s), then lower it back to `0` (the assignment is stored and
+survives the scale-down; KEDA then scales it 0 to 1 within one polling
+interval on the next job). Every pool worker also opens up to
+`postgres_pool_size` PostgreSQL connections the same as the default
+worker does, so raising a pool's ceiling grows the aggregate connection
+count against the Flexible Server's `max_connections` exactly like raising
+`n8n_worker_keda_max_replicas` does; budget the pool ceilings into the same
+arithmetic, not on top of it unaccounted for.
+
 ## What this repo is
 
 `terraform-azurerm-n8n` is a Terraform module that deploys a **production-grade,
@@ -501,7 +616,7 @@ Azure foundations and call the resource-bearing root directly.
 
 ### Architecture at a glance
 
-```
+```text
               ┌──────── Azure DNS (optional, public or private) ────┐
               │                                                     │
    user ──► App Gateway (AGIC, WAF_v2) ──► AKS ──► n8n mains ──► PostgreSQL Flex
@@ -661,10 +776,18 @@ Concretely, in this repo:
 - **`tflint`** against the same set, with the **azurerm** ruleset initialized
   via `tflint --init`. The ruleset comes from `.tflint.hcl` at the module
   root, which pins `terraform-linters/tflint-ruleset-azurerm`.
-- **`checkov`** (`bridgecrewio/checkov-action@v12`) against the Terraform
-  framework. `soft_fail` is currently `true` — see the inline comment in the
-  workflow. **When you add new resources, do not regress curated findings;
-  prefer fixing them over adding suppressions.**
+- **`checkov`**, installed at the pinned `CHECKOV_VERSION` (`.github/workflows/terraform-tests.yml`)
+  rather than via `bridgecrewio/checkov-action`'s own floating `@v12` tag,
+  and run through `tests/scripts/check-checkov.sh`. Two passes: the
+  configuration as written (reported, not gating; a pre-existing,
+  uncurated backlog exists across every sizing example, tracked for a
+  dedicated curation pass), and the same scan with
+  `tests/checkov/opt-in.tfvars` applied so count-0 resources (e.g. the
+  disabled-by-default Redis exporter) are actually evaluated, which is
+  the one thing this job hard-fails on: a rename or a broken toggle that
+  stops a listed opt-in resource from being reached. **When you add new
+  resources, do not regress curated findings; prefer fixing them over
+  adding suppressions.**
 
 ### 2. Unit + integration tests via `terraform test`
 
@@ -741,8 +864,9 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
 - `examples/README.md` compares the sizing tiers; each tier has its own generated README reference.
 - `docs/troubleshooting.md`, `docs/post-deployment.md`, `docs/destroy-cleanup.md`,
   `docs/tls-rotation.md`, `docs/redis.md`, `docs/data-storage.md`,
-  `docs/observability.md`, and `docs/azure-key-vault-external-secrets.md`
-  cover operator-facing concerns that don't belong inline in `README.md`.
+  `docs/observability.md`, `docs/azure-key-vault-external-secrets.md`,
+  `docs/versioning.md`, and `docs/deletion-safety.md` cover operator-facing
+  concerns that don't belong inline in `README.md`.
 - Inline comments in `.tf` files use the `# ── Section ──` banner style.
   Match it when adding new sections.
 - The `kubectl_manifest.keda_trigger_authentication` defer-rendered manifest
@@ -788,8 +912,8 @@ for dir in examples/small examples/medium examples/large examples/split-ingress 
   terraform -chdir="$dir" test -verbose
 done
 
-# Static analysis (matches CI):
-checkov -d . --framework terraform --soft-fail
+# Static analysis (matches CI; requires checkov at the pinned CHECKOV_VERSION):
+tests/scripts/check-checkov.sh
 
 # Refresh the README reference blocks (matches CI's --output-check):
 terraform-docs .

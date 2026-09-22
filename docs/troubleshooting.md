@@ -14,7 +14,7 @@ The first three entries are region/subscription capability gaps that surface 10-
 
 `azurerm_kubernetes_cluster.n8n` fails to create with something like:
 
-```
+```text
 Error: creating Kubernetes Cluster ...: unexpected status 400 (400 Bad Request) with response:
 {
   "code": "AvailabilityZoneNotSupported",
@@ -44,7 +44,7 @@ Every example already exposes this variable for exactly this reason (see the `ak
 
 `azurerm_postgresql_flexible_server.n8n` fails to create:
 
-```
+```text
 Error: creating Flexible Server ...: unexpected status 400 (400 Bad Request) with error:
 ParameterOutOfRange: The value of the 'Version' should be in: []. Verify that the specified parameter value is correct.
 ```
@@ -63,7 +63,7 @@ Pick a region where `az postgres flexible-server list-skus -l <region> --query "
 
 `azurerm_managed_redis.n8n` fails after a few minutes of polling:
 
-```
+```text
 Error: creating Redis Enterprise ...: polling after Create: polling failed:
 Code: "InsufficientCapacity"
 Message: "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region."
@@ -73,7 +73,7 @@ The Azure resource is left behind in `resourceState = CreateFailed`, and the nex
 
 **Root cause**
 
-Azure Managed Redis is capacity-constrained per region and the constraint is point-in-time: the same `Balanced_B0` request was rejected in `germanywestcentral`, `westeurope`, `northeurope`, and `eastus2` on one day while `centralus`, `eastus`, `westus2`, `westus3`, `swedencentral`, `uksouth`, and `francecentral` accepted it within minutes. There is no capacity API, so a SKU being "available" in the region's catalogue says nothing about whether a create will succeed right now. Retrying the same SKU in the same region rarely helps within the hour; changing SKU (`Balanced_B1`, `MemoryOptimized_M10`) sometimes does, changing region usually does. See [`docs/redis.md`](./redis.md) for the allowed SKUs and the `NoCluster` ceiling.
+Azure Managed Redis is capacity-constrained per region and the constraint is point-in-time: the same `Balanced_B0` request was rejected in `germanywestcentral`, `westeurope`, `northeurope`, and `eastus2` on one day while `centralus`, `eastus`, `westus2`, `westus3`, `swedencentral`, `uksouth`, and `francecentral` accepted it within minutes. There is no capacity API, so a SKU being "available" in the region's catalogue says nothing about whether a create will succeed right now. Retrying the same SKU in the same region rarely helps within the hour; changing SKU (`Balanced_B1`, `MemoryOptimized_M10`) sometimes does, changing region usually does. On 2026-09-22 every SKU family (`Balanced_B0`/`B1`/`B3`, `MemoryOptimized_M10`, `ComputeOptimized_X3`) was rejected in `germanywestcentral` within the same hour while `swedencentral` accepted `Balanced_B0`, so when the probe rejects two families, move region rather than trying a third. See [`docs/redis.md`](./redis.md) for the allowed SKUs and the `NoCluster` ceiling.
 
 **Resolution**
 
@@ -110,7 +110,7 @@ A valid `aks_node_os_disk_size_gb` value is not a promise that every Azure VM/di
 
 `helm_release.keda` fails at create time with:
 
-```
+```text
 Error: could not download chart: no cached repo found.
 (try 'helm repo update'):
 open /Users/<you>/Library/Caches/helm/repository/kedacore-index.yaml: no such file or directory
@@ -148,7 +148,7 @@ The same workaround is documented in the AWS sibling at [`terraform-aws-n8n/docs
 
 The very first `terraform plan` (or `apply`) against a fresh module fails with:
 
-```
+```text
 Error: Failed to determine GroupVersionKind for manifest:
 no matches for kind "TriggerAuthentication" in group "keda.sh"
 ```
@@ -180,7 +180,7 @@ kubectl -n n8n describe scaledobject     # KEDA reports the auth ref status
 
 A fresh `terraform apply` against a newly-created cluster fails on one of the first kubernetes-/helm-provider resources with errors of the form:
 
-```
+```text
 Error: Get "https://<cluster>.hcp.<region>.azmk8s.io/api?timeout=…": EOF
 
 Error: Kubernetes cluster unreachable: the server is currently unable to handle the request
@@ -215,7 +215,7 @@ kubectl get --raw=/healthz   # should return "ok"
 
 A pod or `psql` session running inside the VNet returns:
 
-```
+```text
 ERROR:  permission denied to create extension "uuid-ossp"
 HINT:   Must be superuser to create this extension.
 ```
@@ -252,7 +252,7 @@ If step 1 returns `UUID-OSSP` but step 2 still fails, the parameter change has n
 
 `terraform apply` reports `helm_release.n8n` as `Created`. The n8n UI loads but stays at the splash screen with the message **"n8n is starting up"** indefinitely. Pod logs show errors of the form:
 
-```
+```text
 QueryFailedError: relation "n8n_index_xxx" already exists
 ```
 

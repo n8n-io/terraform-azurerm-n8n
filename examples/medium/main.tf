@@ -14,7 +14,7 @@ locals {
     aks_node_count_max           = 10
     pg_sku_name                  = "GP_Standard_D4s_v3"
     pg_storage_mb                = 131072
-    pg_backup_retention_days     = 14
+    pg_backup_retention_days     = var.pg_backup_retention_days
     redis_sku_name               = "Balanced_B5"
     storage_replication_type     = "ZRS"
     main_min_replicas            = var.n8n_main_hpa_min_replicas
@@ -190,6 +190,7 @@ module "n8n" {
   redis_sku_name = local.tier.redis_sku_name
 
   storage_account_replication_type = local.tier.storage_replication_type
+  blob_delete_retention_days       = var.blob_delete_retention_days
 
   n8n_main_cpu_request    = "1500m"
   n8n_main_cpu_limit      = "3000m"

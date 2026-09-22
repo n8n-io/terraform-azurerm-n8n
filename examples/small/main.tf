@@ -15,6 +15,7 @@ locals {
     aks_node_count_max       = 6
     pg_sku_name              = "GP_Standard_D2s_v3"
     pg_storage_mb            = 32768
+    pg_backup_retention_days = var.pg_backup_retention_days
     redis_sku_name           = "Balanced_B0"
     storage_replication_type = "LRS"
     webhook_max_replicas     = 8
@@ -177,12 +178,15 @@ module "n8n" {
   aks_availability_zones       = local.tier.aks_availability_zones
   aks_api_authorized_ip_ranges = var.aks_api_authorized_ip_ranges
 
-  pg_sku_name   = local.tier.pg_sku_name
-  pg_storage_mb = local.tier.pg_storage_mb
+  pg_sku_name              = local.tier.pg_sku_name
+  pg_storage_mb            = local.tier.pg_storage_mb
+  pg_backup_retention_days = local.tier.pg_backup_retention_days
 
   redis_sku_name = local.tier.redis_sku_name
 
   storage_account_replication_type = local.tier.storage_replication_type
+
+  blob_delete_retention_days = var.blob_delete_retention_days
 
   n8n_webhook_hpa_max_replicas = local.tier.webhook_max_replicas
   n8n_main_hpa_min_replicas    = local.tier.main_min_replicas

@@ -1,11 +1,11 @@
 # Pre-apply, post-deployment, and chart-rendering scripts
 
-Five scripts. `check-n8n-chart.sh` is offline and runs in CI on every
+Six scripts. `check-n8n-chart.sh` is offline and runs in CI on every
 pull request. `smoke-test.sh`'s topology-detection self-test
 (`SMOKE_TEST_SELF_TEST=1`) also runs offline in CI; the rest of
-`smoke-test.sh`, all of `verify-custom-image.sh`, and
-`preflight-region-check.sh` are manual verification scripts that need live
-Azure credentials, which a pull request check cannot provide (CI only
+`smoke-test.sh`, all of `verify-custom-image.sh`, `verify-worker-pools.sh`,
+and `preflight-region-check.sh` are manual verification scripts that need
+live Azure credentials, which a pull request check cannot provide (CI only
 syntax-checks and shellchecks the preflight script).
 
 | Script | Use it when |
@@ -15,6 +15,7 @@ syntax-checks and shellchecks the preflight script).
 | [`check-redis-exporter.py`](#redis-exporter-outage-check) | Changes to exporter probes, timeouts, or the pinned image. Runs against a local hanging TCP peer in CI. |
 | [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. Its offline self-test runs in CI on every pull request. |
 | [`verify-custom-image.sh`](#custom-image-verification) | The deployment sets `n8n_image_repository` and `n8n_custom_extensions_path` to bake community packages into the image. |
+| [`verify-worker-pools.sh`](#worker-pools-verification) | The deployment declares `n8n_worker_pools` (alpha). Confirms the chart actually rendered the pool Deployments/ScaledObjects, since a chart that predates `queueMode.workerGroups` accepts and silently drops the values. |
 
 ## Region preflight
 
@@ -197,6 +198,17 @@ deployment health → managed-service connectivity → ingress → API →
 execution → opt-in load test); the deltas live in the Azure-specific
 checks that have no AWS analogue (PostgreSQL Flexible Server, Azure Blob,
 Application Gateway).
+
+AWS 0.5.0 fixed a multi-main misdetection bug in its own `smoke-test.sh`:
+it read the `N8N_MULTI_MAIN_SETUP_ENABLED` Deployment-spec env entry's
+`.value` field, which the pinned chart only ever sets via
+`valueFrom.configMapKeyRef` and so is always empty, making every
+multi-main deployment misdetect as single-main. This does not apply here
+(`port-aws-050-enhancements`): Azure's topology detection reads the
+rendered `n8n-main` HorizontalPodAutoscaler's `minReplicas`/`maxReplicas`
+(single-main clamps both to 1), and the leader-election check separately
+reads the env var's live pod value via `kubectl exec ... printenv`, not
+the Deployment spec's `.value` field.
 
 ### What it covers
 
@@ -506,3 +518,74 @@ than not running it at all.
 
 Against a deployment that sets no custom extensions path, the script
 warns and exits 0 rather than failing, so it is safe to run anywhere.
+
+## Worker pools verification
+
+`verify-worker-pools.sh` covers what a plan-time test cannot: whether the
+chart actually rendered `var.n8n_worker_pools` (early alpha, see
+`worker-pools.tf`). A chart pinned to a version that predates
+`queueMode.workerGroups` accepts the values and silently drops them, so
+`N8N_WORKER_POOLS_ENABLED` lands on every pod while no pool Deployment or
+ScaledObject exists and every pinned project quietly runs on the default
+queue. Only counting the rendered resources after a live apply catches
+that.
+
+This is the Azure sibling of
+[`terraform-aws-n8n/tests/scripts/verify-worker-pools.sh`](https://github.com/n8n-io/terraform-aws-n8n/blob/main/tests/scripts/README.md).
+Same structure and assertions; the only cloud-specific piece is how
+kubectl gets pointed at the cluster (a transient kubeconfig from the
+`kubectl_config_command` Terraform output or `az aks get-credentials`,
+mirroring `smoke-test.sh` above, rather than a switch of the caller's
+current context). Everything the chart renders (Deployment/ScaledObject
+naming, the `app.kubernetes.io/component=worker-group` and
+`n8n.io/worker-pool=<name>` labels, the KEDA trigger shape) is
+chart-defined, not cloud-specific, so those assertions are structurally the
+same. One deliberate difference: this module authenticates every scaler
+through one `TriggerAuthentication` CR, so the per-trigger comparison here
+is `enableTLS` plus `authenticationRef.name`, with `passwordFromEnv` and
+`username` asserted absent, where the AWS sibling compares flat metadata.
+
+### What it covers
+
+- The `scaledobjects.keda.sh` CRD is installed.
+- The rendered pool Deployment and ScaledObject counts match the
+  declared pool count; an undeclared or stale pool resource fails.
+- `N8N_WORKER_POOLS_ENABLED` on a Running main pod (read via `kubectl
+  exec`, not the Deployment template, so a rollout in progress can't
+  hide a stale value).
+- The deployed image tag is checked against `>= 2.39.0`, the first n8n
+  release that reads the pool variables (the module enforces the same
+  floor at plan time as a validation on `n8n_image_tag`; this catches an
+  image that drifted from the pinned tag after apply).
+- Per pool: Deployment existence, the `n8n.io/worker-pool` label,
+  `N8N_WORKER_POOL_NAME`, and replica readiness, with a log-grep fallback
+  that surfaces the licence-gated `worker pools are not licensed` failure
+  mode specifically.
+- Per pool: ScaledObject existence, `READY` status, `scaleTargetRef`, and
+  both triggers' `listName` suffix (`jobs-<pool>:wait` /
+  `jobs-<pool>:active`).
+- Every pool trigger's `enableTLS` and `authenticationRef.name` match the
+  default worker's own ScaledObject baseline, so a pool cannot silently
+  talk plaintext or unauthenticated to a Redis endpoint that needs
+  either; and no pool trigger carries `username` / `passwordFromEnv` in
+  its metadata, because the module routes Redis credentials through the
+  shared `TriggerAuthentication` only.
+- Running pool pods carry `N8N_WORKER_POOL_NAME`; the default worker
+  Deployment carries none.
+
+### Usage
+
+```bash
+cd examples/worker-pools
+../../tests/scripts/verify-worker-pools.sh
+```
+
+Or point at a Terraform directory explicitly, or name the pools
+yourself against a root module with no `worker_pool_names` output:
+
+```bash
+WORKER_POOLS="heavy secteam itop" NAMESPACE=n8n ./tests/scripts/verify-worker-pools.sh
+```
+
+Priority: explicit env > `.env` file > Terraform outputs > built-in
+defaults, matching the other scripts in this directory.

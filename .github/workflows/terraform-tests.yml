@@ -16,10 +16,20 @@ env:
   # examples to pin computed-at-apply attributes to plan-known synthetic
   # values under mock_provider). Bumped from 1.9.8 to track the version
   # the AGENTS.md combined-test-suite wall-clock note was measured on.
-  TF_VERSION: "1.15.1"
-  TFLINT_VERSION: "v0.53.0"
+  TF_VERSION: "1.16.2"
+  TFLINT_VERSION: "v0.64.0"
+  # checkov results are version-dependent, so this gate pins one version
+  # rather than tracking latest. tests/scripts/check-checkov.sh reads this
+  # value and refuses to run against a different local version, which
+  # makes this line the single source of truth for both. Bumping it is a
+  # deliberate change: expect a new release to report findings that need
+  # triaging in the same commit.
+  CHECKOV_VERSION: "3.3.17"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
+  # markdownlint results are version-dependent like checkov's; pinning here
+  # keeps CI and the local dev-loop command in AGENTS.md on the same rules.
+  MARKDOWNLINT_VERSION: "0.49.1"
 
 jobs:
   fmt:
@@ -59,6 +69,7 @@ jobs:
             "examples/medium",
             "examples/large",
             "examples/split-ingress",
+            "examples/worker-pools",
             "examples/customer-managed-cluster",
             "examples/customer-managed-redis",
             "examples/customer-managed-storage",
@@ -97,6 +108,7 @@ jobs:
             "examples/medium",
             "examples/large",
             "examples/split-ingress",
+            "examples/worker-pools",
             "examples/customer-managed-cluster",
             "examples/customer-managed-redis",
             "examples/customer-managed-storage",
@@ -148,6 +160,7 @@ jobs:
             "examples/medium",
             "examples/large",
             "examples/split-ingress",
+            "examples/worker-pools",
             "examples/customer-managed-cluster",
             "examples/customer-managed-redis",
             "examples/customer-managed-storage",
@@ -198,7 +211,7 @@ jobs:
 
       # jq ships preinstalled on the ubuntu-latest runner image; only helm
       # needs an explicit setup step.
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v4.3.0
         with:
           version: "v3.16.4"
 
@@ -261,6 +274,18 @@ jobs:
           shellcheck -S warning tests/scripts/preflight-region-check.sh
           tests/scripts/preflight-region-check.sh --help >/dev/null
 
+      # Same for the scripts port-aws-050-enhancements added: real work
+      # needs network or a live cluster, so CI proves syntax, shellcheck,
+      # and the --help path only.
+      - name: bash -n + shellcheck new scripts
+        run: |
+          for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-pools.sh \
+            tests/scripts/check-version-drift.sh tests/scripts/check-checkov.sh scripts/check-example-parity.sh; do
+            bash -n "$script"
+            shellcheck -S warning "$script"
+          done
+          tests/scripts/chart-values-diff.sh --help >/dev/null
+
   tflint:
     name: tflint (${{ matrix.target }})
     runs-on: ubuntu-latest
@@ -277,6 +302,7 @@ jobs:
             "examples/medium",
             "examples/large",
             "examples/split-ingress",
+            "examples/worker-pools",
             "examples/customer-managed-cluster",
             "examples/customer-managed-redis",
             "examples/customer-managed-storage",
@@ -328,17 +354,79 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: checkov
-        uses: bridgecrewio/checkov-action@v12
+      # 3.11 is the interpreter the pinned checkov was verified against,
+      # and the one bridgecrewio's own checkov image ships.
+      - uses: actions/setup-python@v5
         with:
-          directory: .
-          framework: terraform
-          quiet: true
-          # Module surfaces low-severity findings (e.g. PostgreSQL geo-redundant
-          # backup, Storage Account public access knobs) that are intentional
-          # defaults for a getting-started template. Flip soft_fail to false
-          # once we curate suppressions — see the "Static analysis" section
-          # of AGENTS.md's quality bar.
-          soft_fail: true
-          output_format: cli
-          output_file_path: console
+          python-version: "3.11"
+
+      # Installed at a pinned version instead of via
+      # bridgecrewio/checkov-action, which bakes the checkov version into
+      # its own image: the @v12 tag moves to newer checkov releases on its
+      # own schedule, so a clean local run says nothing about whether this
+      # job would pass (terraform-aws-n8n observed exactly this: a version
+      # drift silently changed which resources a whole check family even
+      # reached). Pinning here makes CHECKOV_VERSION above the single
+      # source of truth for both CI and local runs.
+      - name: install checkov
+        run: pip install "checkov==${{ env.CHECKOV_VERSION }}"
+
+      # The same script contributors run, so "clean locally" and "clean in
+      # CI" cannot drift apart. Module surfaces low-severity, uncurated
+      # findings across every sizing example (e.g. subnet NSG associations,
+      # storage SAS expiration policy) that are intentional defaults for a
+      # getting-started template; continue-on-error preserves the previous
+      # soft_fail: true posture until those are curated in a dedicated pass
+      # (see AGENTS.md's "Static analysis" quality-bar section). The
+      # opt-in second pass (tests/checkov/opt-in.tfvars,
+      # port-aws-050-enhancements section 3) still runs and its coverage
+      # assertion is not soft: check-checkov.sh exits non-zero, and this
+      # step is still reported (yellow) in the GitHub UI, if it fails to
+      # reach a listed opt-in resource.
+      - name: checkov
+        run: tests/scripts/check-checkov.sh
+        continue-on-error: true
+
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install markdownlint-cli
+        run: npm install -g "markdownlint-cli@${{ env.MARKDOWNLINT_VERSION }}"
+
+      - name: markdownlint
+        run: >
+          markdownlint --config .markdownlint.yml
+          README.md AGENTS.md 'docs/**/*.md' 'examples/**/README.md' 'modules/**/README.md'
+
+  example-parity:
+    name: example variable parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/check-example-parity.sh
+        run: scripts/check-example-parity.sh
+
+  version-drift:
+    name: version drift report (non-blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: "v3.16.4"
+
+      # Report-only, matching tests/scripts/check-version-drift.sh's own
+      # never-fail contract. continue-on-error keeps a network hiccup or a
+      # page-format change from failing the build over a report.
+      - name: tests/scripts/check-version-drift.sh
+        run: tests/scripts/check-version-drift.sh
+        continue-on-error: true

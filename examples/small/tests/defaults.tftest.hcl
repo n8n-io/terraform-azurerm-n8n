@@ -59,6 +59,7 @@ run "small_tier_plan" {
       aks_node_count_max       = 6
       pg_sku_name              = "GP_Standard_D2s_v3"
       pg_storage_mb            = 32768
+      pg_backup_retention_days = 7
       redis_sku_name           = "Balanced_B0"
       storage_replication_type = "LRS"
       webhook_max_replicas     = 8
@@ -96,5 +97,52 @@ run "small_tier_single_main_override" {
   assert {
     condition     = module.n8n.n8n_url == "https://n8n.test.example.com"
     error_message = "Unrelated example settings must remain unchanged when selecting single-main."
+  }
+}
+
+run "small_tier_pg_backup_retention_days_override" {
+  command = plan
+
+  variables {
+    pg_backup_retention_days = 20
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = output.tier_configuration.pg_backup_retention_days == 20
+    error_message = "Overriding pg_backup_retention_days must pass the new value through to the root module."
+  }
+}
+
+run "small_tier_blob_delete_retention_days_override" {
+  command = plan
+
+  variables {
+    blob_delete_retention_days = 30
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = var.blob_delete_retention_days == 30
+    error_message = "Overriding blob_delete_retention_days must accept and retain the override value passed as the module.n8n input."
+  }
+
+  assert {
+    condition     = module.n8n.n8n_url == "https://n8n.test.example.com"
+    error_message = "Setting blob_delete_retention_days must not change unrelated example outputs."
   }
 }

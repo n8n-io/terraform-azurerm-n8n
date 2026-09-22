@@ -201,15 +201,41 @@ locals {
     )
   }
 
+  # Each n8n_worker_pools entry (worker-pools.tf) autoscales through its own
+  # KEDA ScaledObject and can reach its own max_replicas independently of the
+  # default worker deployment, and a pool that overrides nothing inherits
+  # n8n_worker_cpu_request, so its per-pod cost is the same coalesce the Helm
+  # values use. Left out of the model, the check below would go quiet exactly
+  # as pools were added, which is when the arithmetic starts to matter.
+  n8n_pool_cpu_requests = {
+    for p in var.n8n_worker_pools :
+    p.name => coalesce(p.cpu_request, var.n8n_worker_cpu_request)
+  }
+  n8n_pool_cpu_request_millis = {
+    for name, quantity in local.n8n_pool_cpu_requests : name => (
+      endswith(quantity, "m") ? tonumber(trimsuffix(quantity, "m")) : tonumber(quantity) * 1000
+    )
+  }
+
+  # Pool pods render from the chart's shared worker pod template, so they
+  # carry the task-runner sidecar too. sum() rejects an empty list, hence the
+  # [0] seed for the no-pools default, which keeps this at 0 and the totals
+  # below unchanged.
+  n8n_pool_peak_cpu_request_millis = sum(concat([0], [
+    for p in var.n8n_worker_pools :
+    p.max_replicas * (local.n8n_pool_cpu_request_millis[p.name] + local.n8n_cpu_request_millis.task_runner)
+  ]))
+
   # Use the effective main ceiling (locals.tf) rather than the raw configured
   # maximum so a higher unused main maximum in single-main mode does not
-  # inflate modeled demand — the chart never schedules more than one main
+  # inflate modeled demand, since the chart never schedules more than one main
   # replica in that mode regardless of the configured HPA maximum.
   n8n_peak_cpu_request_millis = (
     local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) +
     var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
     var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook +
-    local.n8n_cpu_request_millis.redis_exporter
+    local.n8n_cpu_request_millis.redis_exporter +
+    local.n8n_pool_peak_cpu_request_millis
   )
 
   # The capacity model assumes it owns both AKS node pools and their maximum
@@ -234,10 +260,15 @@ check "autoscaling_maxima_fit_aks_capacity" {
       "${local.n8n_main_hpa_effective_max_replicas} x ${local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner}m, worker ",
       "${var.n8n_worker_keda_max_replicas} x ${local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner}m, and webhook ",
       "${var.n8n_webhook_hpa_max_replicas} x ${local.n8n_cpu_request_millis.webhook}m, plus ${local.n8n_cpu_request_millis.redis_exporter}m ",
-      "for the optional Redis exporter when enabled. Supply models two pools at ",
+      "for the optional Redis exporter when enabled",
+      length(var.n8n_worker_pools) > 0 ? join("", [
+        ", plus worker pools ${local.n8n_pool_peak_cpu_request_millis}m across ",
+        "${length(var.n8n_worker_pools)} pool(s) at their ceilings",
+      ]) : "",
+      ". Supply models two pools at ",
       "aks_node_count_max=${var.aks_node_count_max}, VM size ${var.aks_node_vm_size} (${local.aks_node_vcpus} vCPU per node), ",
       "less ${local.aks_node_kube_reserved_cpu_millis}m AKS reservation and ${local.aks_node_daemon_cpu_millis}m daemon requests per node, ",
-      "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima or CPU requests, or raise ",
+      "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima (including any n8n_worker_pools max_replicas) or CPU requests, or raise ",
       "aks_node_count_max or aks_node_vm_size. This diagnostic is advisory and does not fail the plan.",
     ])
   }

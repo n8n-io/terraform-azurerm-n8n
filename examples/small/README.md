@@ -32,6 +32,13 @@ AKS nodes, Application Gateway WAF_v2, PostgreSQL, and Azure Managed Redis domin
 
 See [the tier comparison](../README.md) before choosing this size.
 
+## Production considerations
+
+| Module input | Default | Purpose |
+|---|---|---|
+| `pg_backup_retention_days` | `7` | Days PostgreSQL Flexible Server retains automated backups. Raise it for longer point-in-time recovery coverage. |
+| `blob_delete_retention_days` | `null` (disabled) | Soft-delete retention window, in days, for the Blob storage account and container. Set it to recover an accidentally deleted blob or container within the window. |
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->
@@ -43,9 +50,9 @@ See [the tier comparison](../README.md) before choosing this size.
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
 ## Providers
 
@@ -53,7 +60,7 @@ See [the tier comparison](../README.md) before choosing this size.
 | ---- | ------- |
 | <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | ~> 4.0 |
 | <a name="provider_random"></a> [random](#provider\_random) | ~> 3.0 |
-| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.12 |
+| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.14 |
 
 ## Modules
 
@@ -90,12 +97,14 @@ See [the tier comparison](../README.md) before choosing this size.
 | <a name="input_aks_api_authorized_ip_ranges"></a> [aks\_api\_authorized\_ip\_ranges](#input\_aks\_api\_authorized\_ip\_ranges) | Operator and CI IPv4 CIDRs allowed to reach the public AKS API. Empty leaves it unrestricted and is not recommended for production. | `list(string)` | `[]` | no |
 | <a name="input_aks_availability_zones"></a> [aks\_availability\_zones](#input\_aks\_availability\_zones) | Availability zones used by both AKS node pools. Restrict this list when the selected VM SKU is unavailable in one or more regional zones. | `list(string)` | <pre>[<br/>  "1",<br/>  "2",<br/>  "3"<br/>]</pre> | no |
 | <a name="input_aks_node_vm_size"></a> [aks\_node\_vm\_size](#input\_aks\_node\_vm\_size) | Azure VM SKU for both AKS node pools. Confirm regional and zonal availability for the selected subscription before applying. | `string` | `"Standard_D2s_v5"` | no |
+| <a name="input_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#input\_blob\_delete\_retention\_days) | Optional soft-delete retention window, in days, passed through to the root module's blob\_delete\_retention\_days. Null (the default) leaves Blob soft delete disabled, this example's current behavior. | `number` | `null` | no |
 | <a name="input_common_tags"></a> [common\_tags](#input\_common\_tags) | Additional Azure tags applied to example and module resources. | `map(string)` | `{}` | no |
 | <a name="input_friendly_name_prefix"></a> [friendly\_name\_prefix](#input\_friendly\_name\_prefix) | Lowercase alphanumeric prefix used for Azure resource names. Change it to avoid globally unique name collisions. | `string` | `"n8nsmall"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region for the example. Confirm that the selected AKS, PostgreSQL, Redis, zone, and storage SKUs are available there. | `string` | `"eastus"` | no |
 | <a name="input_n8n_domain"></a> [n8n\_domain](#input\_n8n\_domain) | Canonical fully-qualified domain for n8n. It must be the Azure DNS zone apex or a subdomain of public\_dns\_zone\_name. | `string` | n/a | yes |
 | <a name="input_n8n_license_key"></a> [n8n\_license\_key](#input\_n8n\_license\_key) | n8n Enterprise license activation key. | `string` | n/a | yes |
 | <a name="input_n8n_main_hpa_min_replicas"></a> [n8n\_main\_hpa\_min\_replicas](#input\_n8n\_main\_hpa\_min\_replicas) | Minimum main replicas passed through to the root module's n8n\_main\_hpa\_min\_replicas, the sole topology selector. The default of 2 keeps this example on multi-main. Set to 1 to select single-main queue mode for a license without feat:multipleMainInstances (including Business licenses); other selected features, such as Azure Blob binary/execution-data entitlements, still require their own license grants and are not affected by this setting. | `number` | `2` | no |
+| <a name="input_pg_backup_retention_days"></a> [pg\_backup\_retention\_days](#input\_pg\_backup\_retention\_days) | Number of days to retain automated PostgreSQL Flexible Server backups, passed through to the root module's pg\_backup\_retention\_days. The default of 7 matches this example's documented sizing (Azure enforces 7-35 days for Flexible Server; it cannot disable backups). | `number` | `7` | no |
 | <a name="input_public_dns_zone_name"></a> [public\_dns\_zone\_name](#input\_public\_dns\_zone\_name) | Public Azure DNS zone created by this example. Delegate its output name servers at the domain registrar. | `string` | n/a | yes |
 | <a name="input_resource_group_location"></a> [resource\_group\_location](#input\_resource\_group\_location) | Optional Azure metadata location for both resource groups. Defaults to location. Set this only when moving regional resources while retaining existing resource groups and global DNS zones. | `string` | `null` | no |
 

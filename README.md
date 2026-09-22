@@ -15,19 +15,21 @@ An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this m
 - [Main topology: multi-main and single-main](#main-topology-multi-main-and-single-main)
 - [Credential overwrites](#credential-overwrites)
 - [Task-runner launcher configuration](#task-runner-launcher-configuration)
+- [Worker pools (early alpha)](#worker-pools-early-alpha)
 - [Managed-service topologies](#managed-service-topologies)
 - [Customer-managed infrastructure](#customer-managed-infrastructure)
 - [Ingress, DNS, and TLS](#ingress-dns-and-tls)
 - [Sizing and capacity](#sizing-and-capacity)
 - [Examples](#examples)
 - [Operator documentation](#operator-documentation)
+- [Compatibility](#compatibility)
 - [Support](#support)
 - [Out of scope](#out-of-scope)
 - [Reference](#reference)
 
 ## Architecture
 
-```
+```text
               ┌──────── Azure DNS (optional, public or private) ────┐
               │                                                     │
    user ──► Application Gateway (AGIC, WAF_v2) ──► AKS ──► n8n mains ──► PostgreSQL Flexible Server
@@ -159,7 +161,7 @@ n8n application version `2.29.0` or later is required for the Azure binary/execu
 | Editor/API/scheduled-trigger availability during a main rollout | Brief downtime — there is only ever one main pod | No interruption (a healthy replica keeps serving) |
 | Worker and webhook-processor availability during a Helm rollout | Brief downtime (shared `Recreate`) | No interruption |
 
-Worker and webhook-processor scaling (KEDA `ScaledObject`, webhook HPA) are unaffected by this choice; only their rollout strategy follows the main topology, because chart `1.10.0` exposes a single top-level `strategy` for all three Deployments. `Recreate` is not a general at-most-one guarantee: it prevents a rolling-upgrade overlap, but manual pod deletion, node loss, or a forced operation can still produce more than one main process.
+Worker and webhook-processor scaling (KEDA `ScaledObject`, webhook HPA) are unaffected by this choice; only their rollout strategy follows the main topology, because the pinned chart exposes a single top-level `strategy` for all three Deployments. `Recreate` is not a general at-most-one guarantee: it prevents a rolling-upgrade overlap, but manual pod deletion, node loss, or a forced operation can still produce more than one main process.
 
 Selecting single-main does **not** grant any other Enterprise entitlement. A Business license without `feat:binaryDataAz` / `feat:executionDataAz` still cannot use the Azure binary/execution-data modes — for a new deployment on such a license, set `n8n_binary_data_storage_mode = "database"`, `n8n_execution_data_storage_mode = "database"`, and `n8n_available_binary_data_modes = ["database"]`; see [`docs/data-storage.md`](./docs/data-storage.md#new-deployment-without-azure-storage-entitlements-business-license). Do not remove an existing deployment's Azure storage modes before its retained objects are migrated or expired.
 
@@ -219,6 +221,16 @@ kubectl rollout restart \
   -n <namespace>
 ```
 
+With `n8n_worker_pools` declared, each pool is a fourth kind of deployment
+reading the same file, and the three names above do not reach them. Roll
+them by label in the same step:
+
+```bash
+kubectl rollout restart deployment \
+  -l app.kubernetes.io/component=worker-group \
+  -n <namespace>
+```
+
 `CREDENTIALS_OVERWRITE_PERSISTENCE` is separate and remains out of scope.
 Persistence applies to overwrites submitted through n8n's HTTP endpoint and can
 supersede static file data.
@@ -273,6 +285,44 @@ kubectl rollout restart \
   -n <namespace>
 ```
 
+## Worker pools (early alpha)
+
+`n8n_worker_pools` (**EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE**) declares
+labelled worker pools that run beside the chart's own default worker
+deployment. Each entry becomes one `queueMode.workerGroups` entry in the Helm
+release: a Deployment carrying `N8N_WORKER_POOL_NAME=<name>` plus a KEDA
+`ScaledObject` watching that pool's own `jobs-<name>` queue, so a project
+pinned to a pool routes only to that pool's workers instead of the default
+queue. Per-pool replica bounds, concurrency, resources, and extra env each
+fall back to the module-wide `n8n_worker_*` setting when left null. The
+default is `[]`, which omits `queueMode.workerGroups` from the Helm values
+entirely, so a deployment that declares no pool sees no `helm_release` diff
+at all.
+
+This tracks two upstream features that are themselves alpha: n8n's own worker
+pools, and the chart support for them
+([n8n-io/n8n-hosting#189](https://github.com/n8n-io/n8n-hosting/pull/189)),
+merged to the chart's `preview/worker-pools` branch but not released to a
+numbered chart version. A chart that predates `queueMode.workerGroups`
+accepts the key and silently renders nothing, so a `lifecycle.precondition`
+on `helm_release.n8n` fails the plan whenever `n8n_worker_pools` is non-empty
+and the pinned `n8n_chart_version` is a numbered release; a prerelease
+version (one carrying a SemVer 2 `-` segment) is taken at your word, which
+is how an official preview build installs, and `n8n_worker_pools_chart_verified`
+lets a caller attest a numbered release instead, for a private mirror already
+verified to carry the feature. A validation on `n8n_image_tag` fails the
+plan when pools are declared and the pinned tag is below `2.39.0`, the first
+n8n release that reads the pool variables; an older image silently ignores
+them, so pool workers would consume the default queue instead of failing.
+Each pool's KEDA `ScaledObject` authenticates to Redis through the same
+`TriggerAuthentication` the default worker's scaler uses; no credential is
+placed in scaler metadata.
+
+See [`examples/worker-pools/README.md`](./examples/worker-pools/README.md)
+for a runnable three-pool deployment, the exact command for the official
+GHCR preview build, a private-mirror fallback, and an end-to-end routing
+test.
+
 ## Managed-service topologies
 
 Every stateful dependency has a managed (module-owned) and an external (caller-owned) path, gated by one plan-known boolean each:
@@ -286,6 +336,8 @@ Every stateful dependency has a managed (module-owned) and an external (caller-o
 Both managed and external paths render one canonical connection object per service (`local.postgres_connection`, `local.redis_connection`) so the n8n Helm values and KEDA `TriggerAuthentication` never branch on `create_database` / `create_redis` themselves. Non-blocking `check` diagnostics flag the two directions Terraform can't reject outright: managed-only tuning inputs set while the external path is active, and external-only inputs set while the managed path is active.
 
 Azure Managed Redis regional/SKU availability, `NoCluster` capacity limits, and the queue-draining implications of changing high availability or clustering policy are documented in [`docs/redis.md`](./docs/redis.md).
+
+What `terraform destroy` can and cannot make recoverable on the managed PostgreSQL and Blob layers, and why AWS's RDS/S3 deletion-safety controls have no literal Azure equivalent, is documented in [`docs/deletion-safety.md`](./docs/deletion-safety.md).
 
 ## Customer-managed infrastructure
 
@@ -317,6 +369,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 | [`medium`](./examples/medium/) | Sustained production traffic sizing. |
 | [`large`](./examples/large/) | High-volume sizing: zone-redundant PostgreSQL behind a two-replica PgBouncer, HA Redis. |
 | [`split-ingress`](./examples/split-ingress/) | `create_ingress = false` plus two caller-owned Application Gateways: a public webhook-only frontend and a private admin frontend, each with its own standalone AGIC install. |
+| [`worker-pools`](./examples/worker-pools/) | **Early alpha.** Three labelled `n8n_worker_pools` beside the default worker deployment, each with its own KEDA scaler on its own `jobs-<name>` queue; requires a chart that renders `queueMode.workerGroups` and n8n `2.39.0`+. |
 | [`customer-managed-cluster`](./examples/customer-managed-cluster/) | Existing AKS cluster (`create_aks = false`) with caller-owned ingress; PostgreSQL, Redis, and Blob storage remain module-managed. |
 | [`customer-managed-redis`](./examples/customer-managed-redis/) | External Redis endpoint (`create_redis = false`) with its password delivered through a caller-managed Kubernetes Secret. |
 | [`customer-managed-storage`](./examples/customer-managed-storage/) | Existing private Blob storage account and container (`create_blob_storage = false`), with the module still granting its own workload identity access to the supplied container. |
@@ -327,6 +380,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 - [`docs/post-deployment.md`](./docs/post-deployment.md) — DNS verification, encryption-key backup, license activation, post-apply health checks.
 - [`docs/troubleshooting.md`](./docs/troubleshooting.md) — symptom → root cause → fix for the failure modes observed in real `terraform apply` runs.
 - [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md) — manual recovery for stuck namespace finalizers, half-uninstalled Helm releases, and App Gateway frontend-IP release.
+- [`docs/deletion-safety.md`](./docs/deletion-safety.md) — which AWS deletion-time controls (RDS/S3) have a real Azure analog, and which do not.
 - [`docs/tls-rotation.md`](./docs/tls-rotation.md) — rotating the App Gateway TLS certificate under the BYO-secret contract.
 - [`docs/redis.md`](./docs/redis.md) — Azure Managed Redis SKU/region availability, `NoCluster` sizing, and HA/clustering-policy change caveats.
 - [`docs/data-storage.md`](./docs/data-storage.md) — binary-data and execution-data mode combinations, entitlements, and migration guidance.
@@ -337,6 +391,21 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 - [`docs/manual-azure-qualification.md`](./docs/manual-azure-qualification.md): manual checklist for live Azure lifecycle behavior that offline tests cannot prove. Incomplete checks do not block a merge, but their behaviors remain unverified. A verified one-apply release guarantee requires the live lifecycle evidence specified in `AGENTS.md`. Filled-in copies from completed runs live in [`docs/qualification-runs/`](./docs/qualification-runs/); the 2026-09-16 run covers the `port-aws-040-enhancements` branch.
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history.
 - [`AGENTS.md`](./AGENTS.md) — contributor guide, Azure-specific deltas vs the AWS sibling, and the registry quality bar this module is held to.
+
+## Compatibility
+
+- **Kubernetes provider:** `~> 3.0`. Bumped from `~> 2.0` in
+  `port-aws-050-enhancements`, breaking for callers pinned to the previous
+  major; widen your own `kubernetes` provider constraint if you declare
+  one. The bump plans only the two known cosmetic "Deprecated Resource"
+  warnings on unversioned resource types (`kubernetes_namespace`, three
+  `kubernetes_secret` resources), no resource replacement.
+- **`time` provider:** `~> 0.14`.
+- **n8n Helm chart:** default `1.11.0`.
+- **AKS:** `aks_kubernetes_version` default stays `1.35`.
+- See [`docs/versioning.md`](./docs/versioning.md) for the full pin
+  inventory (every provider, the n8n chart, PostgreSQL, Redis, and the CI
+  toolchain), which file each lives in, and its bump tier.
 
 ## Support
 
@@ -366,9 +435,9 @@ This module does not:
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
 ## Providers
 
@@ -377,9 +446,9 @@ This module does not:
 | <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | ~> 4.0 |
 | <a name="provider_helm"></a> [helm](#provider\_helm) | ~> 2.12 |
 | <a name="provider_kubectl"></a> [kubectl](#provider\_kubectl) | >= 1.14 |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
 | <a name="provider_random"></a> [random](#provider\_random) | ~> 3.0 |
-| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.12 |
+| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.14 |
 
 ## Modules
 
@@ -482,6 +551,7 @@ This module does not:
 | <a name="input_azure_blob_container_name"></a> [azure\_blob\_container\_name](#input\_azure\_blob\_container\_name) | Name of the private Blob container used by n8n binary data and, when enabled, Azure execution-data storage. The default `n8n-data` is shared by both Azure storage features. Changing it does not migrate or backfill objects from the old container. | `string` | `"n8n-data"` | no |
 | <a name="input_azure_blob_container_stores_execution_data"></a> [azure\_blob\_container\_stores\_execution\_data](#input\_azure\_blob\_container\_stores\_execution\_data) | Whether the managed Blob container stores current or historical n8n execution-data bundles. Set true before selecting Azure execution-data storage so the module omits binary lifecycle expiry. Keep it true after switching execution writes away from Azure until all retained Azure bundles have been pruned or migrated. n8n owns execution-data pruning; current object paths cannot scope an Azure lifecycle filter to binary objects without also reaching execution bundles. | `bool` | `false` | no |
 | <a name="input_azure_blob_endpoint"></a> [azure\_blob\_endpoint](#input\_azure\_blob\_endpoint) | Optional custom Azure Blob service endpoint, including scheme (for example `https://account.blob.core.usgovcloudapi.net`). Leave null to use the module-managed storage account's primary Blob endpoint. Endpoint support is a compatibility hook and does not certify the module for sovereign clouds. Marked sensitive to keep private custom hostnames out of plan output. | `string` | `null` | no |
+| <a name="input_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#input\_blob\_delete\_retention\_days) | Optional soft-delete retention window, in days, for the module-managed Blob storage account (blob\_properties.delete\_retention\_policy and container\_delete\_retention\_policy). Null (the default) renders no blob\_properties block, so a freshly created account keeps soft delete disabled, matching the account's behavior before this input existed: a deleted blob or container is immediately unrecoverable, closer to AWS S3's force\_destroy = true than false, since Azure Blob has no separate force\_destroy-style guard on terraform destroy. Setting a value is a one-way switch from Terraform's side: azurerm treats blob\_properties as Optional+Computed, so changing this back to null after an apply plans no change and soft delete stays enabled at the last applied window; disable it out of band (az storage account blob-service-properties update --enable-delete-retention false --enable-container-delete-retention false) if that is what you want. This is the nearest Azure analog to AWS's s3\_force\_destroy (port-aws-050-enhancements); see docs/deletion-safety.md for how the AWS RDS deletion-time controls map onto PostgreSQL Flexible Server. Ignored when create\_blob\_storage = false. | `number` | `null` | no |
 | <a name="input_common_tags"></a> [common\_tags](#input\_common\_tags) | Additional Azure tags merged onto every taggable resource this module creates. Combined with the module's built-in `ManagedBy = terraform` and `Project = n8n` tags via `local.common_tags`. | `map(string)` | `{}` | no |
 | <a name="input_create_aks"></a> [create\_aks](#input\_create\_aks) | When true (the default), the module creates and manages the AKS cluster, its node pools, the API warm-up gate, and AGIC/ingress-related cluster identity. Set to false to deploy onto an existing AKS cluster supplied via existing\_aks\_cluster\_name and existing\_aks\_resource\_group\_name — existing\_aks\_cluster\_prerequisites\_confirmed must then be true, and create\_ingress must be false because the module cannot manage AGIC on a cluster it does not own. Kept as a static boolean rather than inferring ownership from a nullable reference because count expressions cannot depend on values computed at apply time. | `bool` | `true` | no |
 | <a name="input_create_blob_storage"></a> [create\_blob\_storage](#input\_create\_blob\_storage) | When true (the default), the module creates and manages the private Blob storage account, container, private DNS zone and link, private endpoint, and lifecycle policy. Set to false to use an existing Blob storage account and container supplied via existing\_blob\_storage\_account\_name, existing\_blob\_container\_name, existing\_blob\_container\_id, and existing\_blob\_endpoint — existing\_blob\_prerequisites\_confirmed must then be true. The module still grants its n8n workload identity container-scoped data-plane access to the supplied container when automatic authentication is selected. Kept as a static boolean rather than inferring ownership from a nullable reference because count expressions cannot depend on values computed at apply time. | `bool` | `true` | no |
@@ -510,7 +580,7 @@ This module does not:
 | <a name="input_n8n_additional_domains"></a> [n8n\_additional\_domains](#input\_n8n\_additional\_domains) | Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n\_domain. n8n\_domain remains canonical for N8N\_HOST and the editor URL, and supplies the default N8N\_WEBHOOK\_URL unless n8n\_webhook\_url overrides it. The supplied Key Vault certificate must cover every name. | `list(string)` | `[]` | no |
 | <a name="input_n8n_available_binary_data_modes"></a> [n8n\_available\_binary\_data\_modes](#input\_n8n\_available\_binary\_data\_modes) | Binary-data backends n8n may read, rendered as N8N\_AVAILABLE\_BINARY\_DATA\_MODES. Include the active n8n\_binary\_data\_storage\_mode and every historical backend that still contains retained objects. Supported values are database and azure. Removing a mode does not migrate data and makes objects in that backend unreadable. | `list(string)` | <pre>[<br/>  "azure"<br/>]</pre> | no |
 | <a name="input_n8n_binary_data_storage_mode"></a> [n8n\_binary\_data\_storage\_mode](#input\_n8n\_binary\_data\_storage\_mode) | Where n8n writes new binary data. `azure` (the default) writes to the private module-managed Blob container and requires the separate `feat:binaryDataAz` Enterprise entitlement. `database` stores binary data in PostgreSQL and is the durable queue-mode fallback when that entitlement is unavailable. 0.1.0 does not support the inline-memory `default` mode or a shared-filesystem mode. Changing this value does not move existing objects; keep every historical backend in n8n\_available\_binary\_data\_modes until its data expires or is migrated. | `string` | `"azure"` | no |
-| <a name="input_n8n_chart_version"></a> [n8n\_chart\_version](#input\_n8n\_chart\_version) | n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default follows the AWS sibling's validated 1.10 chart line. | `string` | `"1.10.0"` | no |
+| <a name="input_n8n_chart_version"></a> [n8n\_chart\_version](#input\_n8n\_chart\_version) | n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default follows the AWS sibling's validated 1.11 chart line (port-aws-050-enhancements). Chart 1.11.0's only functional changes vs 1.10.0 are the KEDA listName default (this module sets listName explicitly, so it is inert) and an ingress-webhook /mcp/ route (inert because ingress.enabled defaults to false and this module never sets it). | `string` | `"1.11.0"` | no |
 | <a name="input_n8n_community_packages_prevent_loading"></a> [n8n\_community\_packages\_prevent\_loading](#input\_n8n\_community\_packages\_prevent\_loading) | Prevent installed community packages from loading at runtime without uninstalling them. | `bool` | `false` | no |
 | <a name="input_n8n_community_packages_registry"></a> [n8n\_community\_packages\_registry](#input\_n8n\_community\_packages\_registry) | Optional HTTP or HTTPS npm registry used for community-package installation. Null leaves n8n on its public registry default. Custom registries require the matching Enterprise entitlement. | `string` | `null` | no |
 | <a name="input_n8n_credentials_overwrite_secret_ref"></a> [n8n\_credentials\_overwrite\_secret\_ref](#input\_n8n\_credentials\_overwrite\_secret\_ref) | Existing Kubernetes Secret containing n8n credential overwrite JSON. The<br/>module mounts only the selected key, read-only, at<br/>/etc/n8n/credentials-overwrite/<key> on main, worker, and webhook-processor<br/>pods and sets CREDENTIALS\_OVERWRITE\_DATA\_FILE to that path. name is the<br/>Secret's name in var.n8n\_namespace; key defaults to<br/>"credentials-overwrite.json". The module accepts only this reference and<br/>never reads the JSON, so the payload does not enter this module's Helm values<br/>or managed resources. If Terraform creates the Secret, its payload can still<br/>enter the caller's state.<br/><br/>n8n reads the file at startup. Updating the caller-managed Secret does not<br/>roll pods, and the module cannot add a content checksum without reading the<br/>payload into state. After each rotation, manually restart n8n-main,<br/>n8n-worker, and n8n-webhook-processor. CREDENTIALS\_OVERWRITE\_PERSISTENCE is<br/>intentionally outside this file-based feature.<br/><br/>When this input is set, n8n\_extra\_env may not set<br/>CREDENTIALS\_OVERWRITE\_DATA or CREDENTIALS\_OVERWRITE\_DATA\_FILE,<br/>n8n\_extra\_volumes may not use the reserved name "credentials-overwrite",<br/>and n8n\_extra\_volume\_mounts may not use the reserved mount path<br/>"/etc/n8n/credentials-overwrite". Null preserves the escape-hatch behavior<br/>and rendered Helm values from before this input existed. | <pre>object({<br/>    name = string<br/>    key  = optional(string, "credentials-overwrite.json")<br/>  })</pre> | `null` | no |
@@ -534,7 +604,7 @@ This module does not:
 | <a name="input_n8n_helm_timeout"></a> [n8n\_helm\_timeout](#input\_n8n\_helm\_timeout) | Seconds Terraform waits for the n8n Helm release to converge. Increase this for large deployments whose rolling update cannot finish within the 600-second default. | `number` | `600` | no |
 | <a name="input_n8n_image_pull_secrets"></a> [n8n\_image\_pull\_secrets](#input\_n8n\_image\_pull\_secrets) | Names of existing kubernetes.io/dockerconfigjson Secrets in the n8n namespace. The module attaches these names to a module-managed service account when a private custom image needs registry authentication. Callers create and rotate the Secrets; registry credentials never enter this module's inputs or Terraform state through this contract. | `list(string)` | `[]` | no |
 | <a name="input_n8n_image_repository"></a> [n8n\_image\_repository](#input\_n8n\_image\_repository) | Optional container image repository for every n8n application pod, without a tag or digest. Null uses the chart default docker.n8n.io/n8nio/n8n. Use n8n\_image\_tag for the application tag. Private registries can use existing dockerconfigjson Secrets named by n8n\_image\_pull\_secrets; this module accepts Secret names only and never registry credentials. | `string` | `null` | no |
-| <a name="input_n8n_image_tag"></a> [n8n\_image\_tag](#input\_n8n\_image\_tag) | Pinned n8n application version used by the main, worker, webhook-processor, and task-runner images. Azure Blob binary and execution-data modes require n8n 2.29.0 or later. Environment-managed log streaming requires n8n 2.19.0 or later. The default 2.35.0 includes the Azure container-scoped credential startup probe fix. | `string` | `"2.35.0"` | no |
+| <a name="input_n8n_image_tag"></a> [n8n\_image\_tag](#input\_n8n\_image\_tag) | Pinned n8n application version used by the main, worker, webhook-processor, and task-runner images. Azure Blob binary and execution-data modes require n8n 2.29.0 or later. Environment-managed log streaming requires n8n 2.19.0 or later. n8n\_worker\_pools (early alpha) requires n8n 2.39.0 or later. The default 2.35.0 includes the Azure container-scoped credential startup probe fix. | `string` | `"2.35.0"` | no |
 | <a name="input_n8n_license_detach_floating_on_shutdown"></a> [n8n\_license\_detach\_floating\_on\_shutdown](#input\_n8n\_license\_detach\_floating\_on\_shutdown) | Whether n8n main pods detach their floating license on shutdown. The default false prevents a leader shutdown from invalidating the shared certificate and crash-looping replacement mains in this multi-main topology. | `bool` | `false` | no |
 | <a name="input_n8n_license_key"></a> [n8n\_license\_key](#input\_n8n\_license\_key) | n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Leave null when n8n\_license\_key\_secret\_ref selects a caller-managed Kubernetes Secret instead — exactly one of the two must be set. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF\_VAR\_n8n\_license\_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below. | `string` | `null` | no |
 | <a name="input_n8n_license_key_secret_ref"></a> [n8n\_license\_key\_secret\_ref](#input\_n8n\_license\_key\_secret\_ref) | Existing Kubernetes Secret name and key holding the n8n Enterprise license key, for callers who manage this credential outside Terraform. Mutually exclusive with n8n\_license\_key — exactly one must be set. The module does not read the Secret's value; Terraform renders only the name and key into the n8n chart. | <pre>object({<br/>    name = string<br/>    key  = string<br/>  })</pre> | `null` | no |
@@ -594,11 +664,14 @@ This module does not:
 | <a name="input_n8n_worker_concurrency"></a> [n8n\_worker\_concurrency](#input\_n8n\_worker\_concurrency) | Number of jobs each worker pod can process simultaneously. | `number` | `10` | no |
 | <a name="input_n8n_worker_cpu_limit"></a> [n8n\_worker\_cpu\_limit](#input\_n8n\_worker\_cpu\_limit) | CPU limit for each n8n worker container, such as 1000m or 1. | `string` | `"1000m"` | no |
 | <a name="input_n8n_worker_cpu_request"></a> [n8n\_worker\_cpu\_request](#input\_n8n\_worker\_cpu\_request) | CPU request for each n8n worker container, such as 500m or 0.5. Included in the advisory capacity model at n8n\_worker\_keda\_max\_replicas. | `string` | `"500m"` | no |
+| <a name="input_n8n_worker_extra_env"></a> [n8n\_worker\_extra\_env](#input\_n8n\_worker\_extra\_env) | Additional non-secret environment variables applied only to worker containers (chart queueMode.workerExtraEnv). Use for worker-specific tuning that must not affect main or webhook-processor pods; use n8n\_extra\_env for values that should apply everywhere. This reaches every worker, the chart's own unlabelled deployment and each n8n\_worker\_pools pool alike, because they render from one shared pod template; a pool's own extra\_env is applied after this and wins on a repeated name. Set it here for tuning that should apply pool-wide, and on the pool for tuning that should not. Entries render in Helm values and Terraform state. Duplicate names and module or chart-reserved connection, identity, storage, license, runner, and topology names are rejected, including N8N\_WORKER\_POOL\_NAME: pool membership is owned by n8n\_worker\_pools, which also builds the queue and the KEDA scaler that go with it. | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_n8n_worker_keda_jobs_per_replica"></a> [n8n\_worker\_keda\_jobs\_per\_replica](#input\_n8n\_worker\_keda\_jobs\_per\_replica) | Waiting or active Redis jobs per worker replica used as the KEDA scaling target. KEDA takes the maximum desired replica count from the bull:jobs:wait and bull:jobs:active triggers. | `number` | `5` | no |
 | <a name="input_n8n_worker_keda_max_replicas"></a> [n8n\_worker\_keda\_max\_replicas](#input\_n8n\_worker\_keda\_max\_replicas) | Maximum worker replicas KEDA may request from Redis queue depth. The default of 10 participates in the AKS capacity diagnostic with worker and task-runner CPU requests. | `number` | `10` | no |
 | <a name="input_n8n_worker_keda_min_replicas"></a> [n8n\_worker\_keda\_min\_replicas](#input\_n8n\_worker\_keda\_min\_replicas) | Minimum worker replicas for KEDA and the Helm deployment floor. The default of 1 keeps one queue consumer warm when Redis has no waiting jobs. | `number` | `1` | no |
 | <a name="input_n8n_worker_memory_limit"></a> [n8n\_worker\_memory\_limit](#input\_n8n\_worker\_memory\_limit) | Memory limit for each n8n worker container, such as 2Gi or 2048Mi. | `string` | `"2Gi"` | no |
 | <a name="input_n8n_worker_memory_request"></a> [n8n\_worker\_memory\_request](#input\_n8n\_worker\_memory\_request) | Memory request for each n8n worker container, such as 1Gi or 1024Mi. | `string` | `"1Gi"` | no |
+| <a name="input_n8n_worker_pools"></a> [n8n\_worker\_pools](#input\_n8n\_worker\_pools) | EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N\_WORKER\_POOL\_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n\_chart\_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). Also requires n8n\_image\_tag 2.39.0 or later (validated on that variable). Each pool's KEDA ScaledObject authenticates to Redis through the same TriggerAuthentication the default worker's scaler uses. An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, the chart repository this module hardcodes (there is no repository override), at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n\_chart\_version. See examples/worker-pools/README.md for the exact command and a private-mirror fallback. | <pre>list(object({<br/>    name         = string<br/>    min_replicas = optional(number, 1)<br/>    max_replicas = optional(number, 5)<br/><br/>    # Null inherits the module-wide worker setting of the same name.<br/>    concurrency    = optional(number, null)<br/>    cpu_request    = optional(string, null)<br/>    cpu_limit      = optional(string, null)<br/>    memory_request = optional(string, null)<br/>    memory_limit   = optional(string, null)<br/><br/>    # Extra env for this pool's workers only, on top of what every worker gets.<br/>    extra_env = optional(list(object({<br/>      name  = string<br/>      value = string<br/>    })), [])<br/>  }))</pre> | `[]` | no |
+| <a name="input_n8n_worker_pools_chart_verified"></a> [n8n\_worker\_pools\_chart\_verified](#input\_n8n\_worker\_pools\_chart\_verified) | Attests that n8n\_chart\_version, whatever repository it resolves from, renders queueMode.workerGroups. Only consulted when n8n\_worker\_pools is non-empty and n8n\_chart\_version is a numbered release; a prerelease version (one with a SemVer 2 "-" segment) is already taken at your word from the version string itself and needs no extra input. This exists for the one case a hyphen can't cover: a private mirror serving a numbered version you have already built with the feature (n8n-io/n8n-hosting#189) baked in, so you would rather not tag your own build as a prerelease. Setting this to true is a one-time promise, not an automated guarantee: nothing re-checks it if n8n\_chart\_version later changes to point at a different, unverified chart, so treat a bump to this variable's pinned version with the same scrutiny as setting this flag the first time. Leave it false once n8n-io/n8n-hosting#189 merges to main and a real numbered floor replaces this guard entirely (n8n-io/terraform-aws-n8n#125 tracks that; track the Azure equivalent as it is opened). | `bool` | `false` | no |
 | <a name="input_pg_admin_username"></a> [pg\_admin\_username](#input\_pg\_admin\_username) | PostgreSQL administrator (login role) name. Surfaced to n8n via `local.postgres_connection`. Azure Flexible Server reserves a small set of names (`azure_superuser`, `azure_pg_admin`, `admin`, `administrator`, `root`, `guest`, `public`) — the validation below blocks them. Default 'n8n' matches the legacy umbrella module's hardcoded login. Ignored when `create_database = false`. | `string` | `"n8n"` | no |
 | <a name="input_pg_backup_retention_days"></a> [pg\_backup\_retention\_days](#input\_pg\_backup\_retention\_days) | Number of days to retain automated PostgreSQL Flexible Server backups. Azure enforces a range of 7–35 days for Flexible Server (unlike RDS, Azure does not allow disabling backups). Ignored when `create_database = false`. | `number` | `7` | no |
 | <a name="input_pg_enable_high_availability"></a> [pg\_enable\_high\_availability](#input\_pg\_enable\_high\_availability) | Enable zone-redundant HA on the PostgreSQL Flexible Server (synchronous standby in a different availability zone). Requires a non-Burstable SKU (GP\_* or MO\_*) — Burstable does NOT support HA. Adds a ~2× cost premium. Ignored when `create_database = false`. | `bool` | `false` | no |
@@ -626,7 +699,7 @@ This module does not:
 | <a name="input_private_endpoint_subnet_id"></a> [private\_endpoint\_subnet\_id](#input\_private\_endpoint\_subnet\_id) | Resource ID of the subnet additional private endpoints (Storage Account, Key Vault) attach to. Must have `private_endpoint_network_policies` disabled (Azure refuses to create a private endpoint when network policies are enforced on the subnet). May be the same as `redis_subnet_id` when callers prefer to consolidate all PEs onto a single subnet, but a dedicated subnet keeps blast-radius smaller. Format: /subscriptions/<sub>/.../subnets/<name>. | `string` | n/a | yes |
 | <a name="input_public_dns_zone_id"></a> [public\_dns\_zone\_id](#input\_public\_dns\_zone\_id) | Resource ID of an existing public Azure DNS zone used when create\_public\_dns\_record is true. The module creates one A record for n8n\_domain and every n8n\_additional\_domains entry, targeting the managed static public IP. Every hostname must be the zone apex or a subdomain of this zone. Leave null when public DNS is caller-owned. | `string` | `null` | no |
 | <a name="input_redis_exporter_enabled"></a> [redis\_exporter\_enabled](#input\_redis\_exporter\_enabled) | When true, create a single-replica Redis queue metrics exporter Deployment and an internal ClusterIP Service on port 9121 in the effective n8n namespace. Independent of n8n\_metrics\_enabled. The module installs no Prometheus, ServiceMonitor, or other monitoring backend — scraping and discovery remain caller-owned. Disabled by default, in which case neither resource is created. | `bool` | `false` | no |
-| <a name="input_redis_exporter_image"></a> [redis\_exporter\_image](#input\_redis\_exporter\_image) | Container image for the optional Redis queue metrics exporter (oliver006/redis\_exporter). Override to use a caller mirror or a pinned digest. A replacement image must retain the upstream CA bundle for TLS certificate verification and work under UID 59000, which the container always runs as. Any private-registry pull access is the caller's responsibility — the module does not grant the exporter the n8n Azure workload identity. Ignored when redis\_exporter\_enabled = false. | `string` | `"oliver006/redis_exporter:v1.90.0"` | no |
+| <a name="input_redis_exporter_image"></a> [redis\_exporter\_image](#input\_redis\_exporter\_image) | Container image for the optional Redis queue metrics exporter (oliver006/redis\_exporter). Pinned by both tag and digest (multi-arch index, resolves on x86\_64 and Graviton/ARM nodes alike) so the default IfNotPresent pull policy on the running node can never resolve to a superseded image (port-aws-050-enhancements section 3). Override to use a caller mirror or a different pinned digest. A replacement image must retain the upstream CA bundle for TLS certificate verification and work under UID 59000, which the container always runs as. Any private-registry pull access is the caller's responsibility, the module does not grant the exporter the n8n Azure workload identity. Ignored when redis\_exporter\_enabled = false. | `string` | `"oliver006/redis_exporter:v1.90.0@sha256:a129504e65b87c54f79bc92f1afc403475e8ff646a3d7512de469904ceddf986"` | no |
 | <a name="input_redis_external_host"></a> [redis\_external\_host](#input\_redis\_external\_host) | External Redis host. Required when `create_redis = false`. Ignored otherwise. Use this to point n8n and KEDA at an existing Redis deployment, a managed Redis in a different subscription, or any Redis-compatible endpoint. | `string` | `null` | no |
 | <a name="input_redis_external_password"></a> [redis\_external\_password](#input\_redis\_external\_password) | Password for the external Redis endpoint specified by `redis_external_host`. Optional — leave `null` to point at an unauthenticated external Redis (e.g. one that relies on network-level isolation instead of AUTH), or set `redis_password_secret_ref` instead. Ignored when `create_redis = true` (the module reads the generated primary access key from its managed Azure Managed Redis instance). | `string` | `null` | no |
 | <a name="input_redis_external_port"></a> [redis\_external\_port](#input\_redis\_external\_port) | External Redis port. Ignored when `create_redis = true` (the module-managed instance's port is read from the Managed Redis database resource). | `number` | `6380` | no |
@@ -671,8 +744,10 @@ This module does not:
 | <a name="output_postgres_admin_username"></a> [postgres\_admin\_username](#output\_postgres\_admin\_username) | Username n8n authenticates to PostgreSQL with — either `var.pg_admin_username` (`create_database = true`) or `postgres_external_username` (`create_database = false`). |
 | <a name="output_postgres_database_name"></a> [postgres\_database\_name](#output\_postgres\_database\_name) | Database name n8n connects to — either the module-managed database (`create_database = true`, always `n8n`) or `postgres_external_database` (`create_database = false`). |
 | <a name="output_postgres_fqdn"></a> [postgres\_fqdn](#output\_postgres\_fqdn) | Hostname n8n connects to for PostgreSQL — either the module-managed Flexible Server's private FQDN (`create_database = true`) or the caller-supplied `postgres_external_host` (`create_database = false`). |
+| <a name="output_postgres_server_id"></a> [postgres\_server\_id](#output\_postgres\_server\_id) | Resource ID of the module-managed PostgreSQL Flexible Server (`create_database = true`), for caller-owned scoping such as an `azurerm_management_lock` with `lock_level = "CanNotDelete"` (see docs/deletion-safety.md). Null when `create_database = false`. |
 | <a name="output_redis_hostname"></a> [redis\_hostname](#output\_redis\_hostname) | Hostname n8n and KEDA connect to for Redis — either the module-managed Azure Managed Redis instance's private hostname (`create_redis = true`) or the caller-supplied `redis_external_host` (`create_redis = false`). |
 | <a name="output_redis_port"></a> [redis\_port](#output\_redis\_port) | Port n8n and KEDA connect to for Redis — either the module-managed instance's database port (`create_redis = true`) or `redis_external_port` (`create_redis = false`). |
 | <a name="output_redis_primary_access_key"></a> [redis\_primary\_access\_key](#output\_redis\_primary\_access\_key) | Credential n8n and KEDA authenticate to Redis with — either the generated Azure Managed Redis primary access key (`create_redis = true`) or `redis_external_password` (`create_redis = false`). Explicitly null when `redis_password_secret_ref` selects a caller-managed Kubernetes Secret instead, because Terraform never reads that Secret's value. Marked sensitive. |
+| <a name="output_storage_account_id"></a> [storage\_account\_id](#output\_storage\_account\_id) | Resource ID of the module-managed Blob storage account (`create_blob_storage = true`), for caller-owned scoping such as an `azurerm_management_lock` with `lock_level = "CanNotDelete"` (see docs/deletion-safety.md). Null when `create_blob_storage = false`. |
 | <a name="output_storage_account_name"></a> [storage\_account\_name](#output\_storage\_account\_name) | Name of the Blob storage account n8n uses — the module-managed StorageV2 account (create\_blob\_storage = true, the default) or the caller-supplied existing\_blob\_storage\_account\_name (create\_blob\_storage = false). |
 <!-- END_TF_DOCS -->
