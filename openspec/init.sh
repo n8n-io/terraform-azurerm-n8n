@@ -96,16 +96,40 @@ fi
 tests/scripts/preflight-region-check.sh --help >/dev/null
 
 echo
+echo "== new-script syntax checks (port-aws-050-enhancements) =="
+# Same treatment for the scripts this change added: chart-values-diff.sh
+# and verify-worker-pools.sh need network or a live cluster for their real
+# work, so only syntax, shellcheck (when installed), and --help run here.
+for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-pools.sh \
+  tests/scripts/check-version-drift.sh tests/scripts/check-checkov.sh scripts/check-example-parity.sh; do
+  bash -n "$script"
+  if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck -S warning "$script"
+  fi
+done
+tests/scripts/chart-values-diff.sh --help >/dev/null
+
+echo
 echo "== markdownlint =="
-markdownlint --config .markdownlint.yml README.md AGENTS.md 'docs/**/*.md' 'examples/**/README.md' 'modules/**/README.md'
+# Optional locally, like shellcheck above: CI installs the pinned
+# MARKDOWNLINT_VERSION and runs it there regardless.
+if command -v markdownlint >/dev/null 2>&1; then
+  markdownlint --config .markdownlint.yml README.md AGENTS.md 'docs/**/*.md' 'examples/**/README.md' 'modules/**/README.md'
+else
+  echo "  skipped: markdownlint not installed (npm install -g markdownlint-cli)"
+fi
 
 echo
 echo "== scripts/check-example-parity.sh =="
 scripts/check-example-parity.sh
 
-echo
-echo "== tests/scripts/check-version-drift.sh (report only) =="
-tests/scripts/check-version-drift.sh
+# Report-only and network-dependent; everything above runs offline. Set
+# SKIP_VERSION_DRIFT=1 to keep this script fully offline.
+if [[ "${SKIP_VERSION_DRIFT:-0}" != "1" ]]; then
+  echo
+  echo "== tests/scripts/check-version-drift.sh (report only, needs network) =="
+  tests/scripts/check-version-drift.sh
+fi
 
 echo
 echo "== Smoke check passed =="

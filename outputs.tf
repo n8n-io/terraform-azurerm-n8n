@@ -85,6 +85,11 @@ output "postgres_admin_username" {
   value       = local.postgres_connection.username
 }
 
+output "postgres_server_id" {
+  description = "Resource ID of the module-managed PostgreSQL Flexible Server (`create_database = true`), for caller-owned scoping such as an `azurerm_management_lock` with `lock_level = \"CanNotDelete\"` (see docs/deletion-safety.md). Null when `create_database = false`."
+  value       = var.create_database ? azurerm_postgresql_flexible_server.n8n[0].id : null
+}
+
 output "postgres_admin_password" {
   description = "Password n8n authenticates to PostgreSQL with — either the generated `random_password.postgres_admin` (`create_database = true`) or `postgres_external_password` (`create_database = false`). Explicitly null when `postgres_password_secret_ref` selects a caller-managed Kubernetes Secret instead, because Terraform never reads that Secret's value. Marked sensitive."
   value       = local.postgres_connection.password
@@ -117,6 +122,11 @@ output "redis_primary_access_key" {
 output "storage_account_name" {
   description = "Name of the Blob storage account n8n uses — the module-managed StorageV2 account (create_blob_storage = true, the default) or the caller-supplied existing_blob_storage_account_name (create_blob_storage = false)."
   value       = local.effective_blob_storage_account_name
+}
+
+output "storage_account_id" {
+  description = "Resource ID of the module-managed Blob storage account (`create_blob_storage = true`), for caller-owned scoping such as an `azurerm_management_lock` with `lock_level = \"CanNotDelete\"` (see docs/deletion-safety.md). Null when `create_blob_storage = false`."
+  value       = var.create_blob_storage ? azurerm_storage_account.n8n[0].id : null
 }
 
 output "azure_blob_container_name" {

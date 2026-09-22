@@ -23,8 +23,13 @@
 # `kubectl_config_command` Terraform output (or `az aks get-credentials`
 # directly), never the caller's `~/.kube/config`. Everything the chart renders,
 # Deployment/ScaledObject naming, the `app.kubernetes.io/component=worker-group`
-# and `n8n.io/worker-pool=<name>` labels, the KEDA trigger metadata shape, is
-# chart-defined, not cloud-specific, so those assertions are unchanged.
+# and `n8n.io/worker-pool=<name>` labels, the KEDA trigger shape, is
+# chart-defined, not cloud-specific, so those assertions are structurally the
+# same. One deliberate difference: this module authenticates every scaler
+# (default worker and pools alike) through one TriggerAuthentication CR, so
+# the per-trigger comparison here is enableTLS + authenticationRef.name, and
+# passwordFromEnv/username in trigger metadata are asserted absent, whereas
+# the AWS sibling compares flat metadata.
 #
 # Usage:
 #   # Run from an example directory whose outputs include worker_pool_names
@@ -241,6 +246,15 @@ trigger_field() {
     -o jsonpath="{.spec.triggers[$idx].metadata.$field}" 2>/dev/null
 }
 
+# The TriggerAuthentication a trigger references by name, or empty when the
+# trigger carries no authenticationRef (unauthenticated Redis). Same exit
+# semantics as trigger_field.
+trigger_auth_ref() {
+  local so="$1" idx="$2"
+  kubectl get scaledobject -n "$NAMESPACE" "$so" \
+    -o jsonpath="{.spec.triggers[$idx].authenticationRef.name}" 2>/dev/null
+}
+
 so_condition() {
   local so="$1" type="$2"
   kubectl get scaledobject -n "$NAMESPACE" "$so" \
@@ -286,7 +300,7 @@ header "Pool count (the check nothing at plan time can make)"
 if [[ "$RENDERED_COUNT" -eq 0 ]]; then
   fail "expected $EXPECTED_COUNT pool Deployment(s), found none with label app.kubernetes.io/component=worker-group"
   info "This is what a chart that predates queueMode.workerGroups looks like after a clean apply:"
-  info "the key was accepted and ignored. Check n8n_chart_version / n8n_chart_repository, then:"
+  info "the key was accepted and ignored. Check n8n_chart_version (this module hardcodes the chart repository), then:"
   info "  helm -n $NAMESPACE get values $RELEASE_NAME | grep -A2 workerGroups"
   info "  helm -n $NAMESPACE get manifest $RELEASE_NAME | grep -c 'component: worker-group'"
   summarize_and_exit
@@ -360,9 +374,11 @@ else
     fi
   fi
 
-  # Advisory only: the image tag is the one thing here the module's own
-  # plan-time check already covers, but only when n8n_image_tag is pinned. A
-  # floating `stable` slips past it, so read what actually deployed.
+  # The module enforces this floor at plan time as a validation on
+  # n8n_image_tag, so a fresh apply cannot reach here with an old pinned tag.
+  # What this catches is drift: an image retagged or mutated in the registry
+  # after apply, or a deployment whose tag was changed out of band. Read what
+  # actually deployed rather than trusting the plan-time value.
   image=$(kubectl get deploy -n "$NAMESPACE" "$MAIN_DEPLOY" \
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
   tag="${image##*:}"
@@ -379,17 +395,23 @@ else
 fi
 
 # The default worker's triggers tell us whether this deployment speaks TLS to
-# Redis, which every pool's triggers then have to match. Missing entirely
-# would silently baseline every pool against three empty strings, so a
-# non-TLS pool trigger would match a baseline that was never actually read.
+# Redis and which TriggerAuthentication it authenticates through (n8n.tf
+# renders enableTLS unconditionally and an authenticationRef only when Redis
+# has a password or username). Every pool's triggers then have to match both,
+# because worker-pools.tf builds them from the same locals. Missing entirely
+# would silently baseline every pool against empty strings, so a non-TLS pool
+# trigger would match a baseline that was never actually read.
 DEFAULT_SO="${RELEASE_NAME}-worker"
 if [[ -z "$(scaledobject_json "$DEFAULT_SO")" ]]; then
   fail "ScaledObject $DEFAULT_SO not found; cannot establish the default worker's Redis TLS/AUTH baseline for pool comparison"
   summarize_and_exit
 fi
 DEFAULT_TLS=$(trigger_field "$DEFAULT_SO" 0 enableTLS) || { fail "kubectl error reading $DEFAULT_SO trigger metadata (enableTLS)"; summarize_and_exit; }
-DEFAULT_USER=$(trigger_field "$DEFAULT_SO" 0 username) || { fail "kubectl error reading $DEFAULT_SO trigger metadata (username)"; summarize_and_exit; }
-DEFAULT_PWENV=$(trigger_field "$DEFAULT_SO" 0 passwordFromEnv) || { fail "kubectl error reading $DEFAULT_SO trigger metadata (passwordFromEnv)"; summarize_and_exit; }
+DEFAULT_AUTH=$(trigger_auth_ref "$DEFAULT_SO" 0) || { fail "kubectl error reading $DEFAULT_SO trigger authenticationRef"; summarize_and_exit; }
+if [[ -z "$DEFAULT_TLS" ]]; then
+  fail "$DEFAULT_SO trigger 0 carries no enableTLS; the module always renders it, so the baseline cannot be trusted"
+  summarize_and_exit
+fi
 
 # ── Per pool ──────────────────────────────────────────────────────────────────
 
@@ -474,16 +496,26 @@ for pool in $WORKER_POOLS; do
     fail "triggers watch \"${wait_list:-<none>}\" / \"${active_list:-<none>}\", expected *:jobs-${pool}:wait and *:jobs-${pool}:active"
   fi
 
-  # TLS and AUTH metadata must match the default worker's, or the scaler talks
-  # plaintext to a TLS-only endpoint and hangs without crashing.
+  # TLS flag and TriggerAuthentication reference must match the default
+  # worker's, or the scaler talks plaintext to a TLS-only endpoint (or
+  # unauthenticated to a password-protected one) and hangs without crashing.
+  # Credentials never sit in trigger metadata: passwordFromEnv and username
+  # must be absent, as a regression guard against reintroducing the flat
+  # metadata shape.
   for idx in 0 1; do
     tls=$(trigger_field "$name" "$idx" enableTLS) || { fail "kubectl error reading $name trigger $idx metadata (enableTLS)"; continue; }
+    auth=$(trigger_auth_ref "$name" "$idx") || { fail "kubectl error reading $name trigger $idx authenticationRef"; continue; }
     user=$(trigger_field "$name" "$idx" username) || { fail "kubectl error reading $name trigger $idx metadata (username)"; continue; }
     pwenv=$(trigger_field "$name" "$idx" passwordFromEnv) || { fail "kubectl error reading $name trigger $idx metadata (passwordFromEnv)"; continue; }
-    if [[ "$tls" == "$DEFAULT_TLS" && "$user" == "$DEFAULT_USER" && "$pwenv" == "$DEFAULT_PWENV" ]]; then
-      pass "trigger $idx carries the default worker's Redis metadata (enableTLS=${tls:-unset}, passwordFromEnv=${pwenv:-unset}, username=${user:-unset})"
+    if [[ "$tls" == "$DEFAULT_TLS" && "$auth" == "$DEFAULT_AUTH" ]]; then
+      pass "trigger $idx carries the default worker's Redis contract (enableTLS=${tls}, authenticationRef=${auth:-none})"
     else
-      fail "trigger $idx Redis metadata differs from the default worker's: enableTLS=${tls:-unset} vs ${DEFAULT_TLS:-unset}, passwordFromEnv=${pwenv:-unset} vs ${DEFAULT_PWENV:-unset}, username=${user:-unset} vs ${DEFAULT_USER:-unset}"
+      fail "trigger $idx Redis contract differs from the default worker's: enableTLS=${tls:-unset} vs ${DEFAULT_TLS}, authenticationRef=${auth:-none} vs ${DEFAULT_AUTH:-none}"
+    fi
+    if [[ -z "$user" && -z "$pwenv" ]]; then
+      pass "trigger $idx keeps credentials out of metadata (no username/passwordFromEnv)"
+    else
+      fail "trigger $idx carries credentials in metadata (username=${user:-unset}, passwordFromEnv=${pwenv:-unset}); the module routes auth through the TriggerAuthentication only"
     fi
   done
 

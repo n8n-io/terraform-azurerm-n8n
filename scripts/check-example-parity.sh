@@ -33,54 +33,69 @@ fail=0
 # relative to small is expected and documented. Each entry names exactly
 # one side of the diff: "+name" (example declares it, small does not) or
 # "-name" (small declares it, example does not).
-declare -A ALLOW=(
-  # small's own AKS-sizing/foundation inputs that other examples fix at a
-  # tier-specific value (no caller override needed) or never surface
-  # because they build their foundation differently.
-  [-aks_availability_zones]="medium large split-ingress customer-managed-cluster customer-managed-redis customer-managed-everything"
-  [-aks_node_vm_size]="medium large split-ingress customer-managed-redis"
-  [-resource_group_location]="medium large split-ingress customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything"
-  # Only small, medium, and large issue a public Azure DNS zone; the
-  # customer-managed and split-ingress examples use a self-signed cert
-  # with no public DNS record.
-  [-public_dns_zone_name]="split-ingress customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything"
-  # large owns its own PostgreSQL (create_database = false) via a
-  # PgBouncer-fronted Aurora-equivalent setup, so the module's
-  # pg_backup_retention_days passthrough does not apply.
-  [-pg_backup_retention_days]="large customer-managed-everything"
-  # customer-managed-storage and customer-managed-everything externalize
-  # Blob (create_blob_storage = false), so blob_delete_retention_days
-  # does not apply.
-  [-blob_delete_retention_days]="customer-managed-storage customer-managed-everything"
-  # split-ingress's own two-gateway topology inputs.
-  [+admin_allowed_cidr_blocks]="split-ingress"
-  [+create_webhook_waf_policy]="split-ingress"
-  [+webhook_subdomain]="split-ingress"
-  # customer-managed-everything provisions its own PostgreSQL server and
-  # needs its admin password as a plain input, unlike every other example
-  # where the module manages it.
-  [+postgres_admin_password]="customer-managed-everything"
-  # worker-pools is the only example that cannot run the module's default
-  # chart: queueMode.workerGroups ships in a preview build only, so the
-  # version is a required input there (no default) and the attestation
-  # flag goes with it. n8n_image_tag also becomes a required-in-practice
-  # input, pinned above the pools' n8n 2.39.0 floor rather than the
-  # module's own 2.35.0 default. See its README, "Getting a chart that
-  # renders pools".
-  [+n8n_chart_version]="worker-pools"
-  [+n8n_worker_pools_chart_verified]="worker-pools"
-  [+n8n_image_tag]="worker-pools"
-  # It also sizes the chart's own unlabelled worker deployment, which runs
-  # beside the pools as the control group for everything not pinned to one.
-  [+n8n_worker_keda_min_replicas]="worker-pools"
-  [+n8n_worker_keda_max_replicas]="worker-pools"
+# Newline-delimited "key|examples" records rather than an associative array:
+# macOS still ships bash 3.2, which has no `declare -A`, and every other
+# script in this repo stays 3.2-compatible for the same reason (see
+# tests/scripts/verify-custom-image.sh).
+ALLOW=$(cat <<'EOF_ALLOW'
+# small's own AKS-sizing/foundation inputs that other examples fix at a
+# tier-specific value (no caller override needed) or never surface
+# because they build their foundation differently.
+-aks_availability_zones|medium large split-ingress customer-managed-cluster customer-managed-redis customer-managed-everything
+-aks_node_vm_size|medium large split-ingress customer-managed-redis
+-resource_group_location|medium large split-ingress customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
+# Only small, medium, and large issue a public Azure DNS zone; the
+# customer-managed and split-ingress examples use a self-signed cert
+# with no public DNS record.
+-public_dns_zone_name|split-ingress customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
+# large owns its own PostgreSQL (create_database = false) via a
+# PgBouncer-fronted Aurora-equivalent setup, so the module's
+# pg_backup_retention_days passthrough does not apply.
+-pg_backup_retention_days|large customer-managed-everything
+# customer-managed-storage and customer-managed-everything externalize
+# Blob (create_blob_storage = false), so blob_delete_retention_days
+# does not apply.
+-blob_delete_retention_days|customer-managed-storage customer-managed-everything
+# split-ingress's own two-gateway topology inputs.
++admin_allowed_cidr_blocks|split-ingress
++create_webhook_waf_policy|split-ingress
++webhook_subdomain|split-ingress
+# customer-managed-everything provisions its own PostgreSQL server and
+# needs its admin password as a plain input, unlike every other example
+# where the module manages it.
++postgres_admin_password|customer-managed-everything
+# worker-pools is the only example that cannot run the module's default
+# chart: queueMode.workerGroups ships in a preview build only, so the
+# version is a required input there (no default) and the attestation
+# flag goes with it. n8n_image_tag also becomes a required-in-practice
+# input, pinned above the pools' n8n 2.39.0 floor rather than the
+# module's own 2.35.0 default. See its README, "Getting a chart that
+# renders pools".
++n8n_chart_version|worker-pools
++n8n_worker_pools_chart_verified|worker-pools
++n8n_image_tag|worker-pools
+# It also sizes the chart's own unlabelled worker deployment, which runs
+# beside the pools as the control group for everything not pinned to one.
++n8n_worker_keda_min_replicas|worker-pools
++n8n_worker_keda_max_replicas|worker-pools
+EOF_ALLOW
 )
+
+# Examples listed for one allowlist key, or empty when the key is absent.
+allow_examples() {
+  printf '%s\n' "$ALLOW" | awk -F'|' -v k="$1" '$1 == k { print $2; exit }'
+}
+
+allow_keys() {
+  printf '%s\n' "$ALLOW" | awk -F'|' 'NF > 1 && $1 !~ /^#/ { print $1 }'
+}
 
 is_allowed() {
   local sign="$1" name="$2" example="$3"
-  local key="${sign}${name}"
-  [[ -n "${ALLOW[$key]:-}" ]] || return 1
-  [[ " ${ALLOW[$key]} " == *" $example "* ]]
+  local examples
+  examples="$(allow_examples "${sign}${name}")"
+  [[ -n "$examples" ]] || return 1
+  [[ " $examples " == *" $example "* ]]
 }
 
 for example in "${EXAMPLES[@]}"; do
@@ -109,10 +124,11 @@ done
 
 # A stale allowlist entry: the named example no longer has the diff the
 # entry claims to explain.
-for key in "${!ALLOW[@]}"; do
+while IFS= read -r key; do
+  [[ -z "$key" ]] && continue
   sign="${key:0:1}"
   name="${key:1}"
-  for example in ${ALLOW[$key]}; do
+  for example in $(allow_examples "$key"); do
     ex_names="$(names "$example")"
     in_base=$(grep -qxF "$name" <<<"$base_names" && echo yes || echo no)
     in_ex=$(grep -qxF "$name" <<<"$ex_names" && echo yes || echo no)
@@ -125,7 +141,7 @@ for key in "${!ALLOW[@]}"; do
       fail=1
     fi
   done
-done
+done <<<"$(allow_keys)"
 
 if [[ $fail -eq 0 ]]; then
   echo "OK: every example's variable-name diff against examples/small is allowlisted, and no allowlist entry is stale."

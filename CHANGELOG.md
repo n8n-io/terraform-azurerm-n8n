@@ -210,16 +210,24 @@ image instead of a floating tag.
   (1-365 days) for the module-managed Blob storage account
   (`blob_properties.delete_retention_policy` and
   `container_delete_retention_policy`). The nearest Azure analog to AWS's
-  `s3_force_destroy`; see
-  [`docs/deletion-safety.md`](./docs/deletion-safety.md) for why AWS's
-  four RDS deletion-time controls have no PostgreSQL Flexible Server
-  equivalent at all and are not ported.
+  `s3_force_destroy`. One-way from Terraform's side: reverting to `null`
+  after an apply plans no change (azurerm treats `blob_properties` as
+  Optional+Computed); disable soft delete out of band if needed. See
+  [`docs/deletion-safety.md`](./docs/deletion-safety.md) for how AWS's
+  four RDS deletion-time controls map onto PostgreSQL Flexible Server: a
+  caller-owned `CanNotDelete` management lock with `prevent_destroy` is
+  the deletion-protection analog, and a dropped server's backup survives
+  5 days only.
+- `postgres_server_id` and `storage_account_id` outputs (null on the
+  respective `create_* = false` path), so a caller can scope an
+  `azurerm_management_lock` to the module-managed server or account.
 - `tests/scripts/chart-values-diff.sh` and `tests/scripts/lib/tf-defaults.sh`:
   diffs the pinned n8n chart's `values.yaml` against a candidate version
   via `helm show values`, sharing a `read_default` helper with the new
   version-drift script below.
-- `tests/scripts/check-version-drift.sh`, wired into a weekly
-  `version-drift` CI job (report-only): currency for every Terraform
+- `tests/scripts/check-version-drift.sh`, wired into a report-only
+  `version-drift` CI job (runs with the rest of the workflow on push,
+  pull request, and manual dispatch): currency for every Terraform
   provider, the CI toolchain, and the pinned n8n chart against public
   release feeds, and `aks_kubernetes_version` against Azure's published
   AKS supported-versions page (not `endoflife.date`, which has no
@@ -257,9 +265,13 @@ image instead of a floating tag.
   is taken at the caller's word, which is how a preview build installs;
   the new `n8n_worker_pools_chart_verified` input lets a caller attest a
   numbered release instead, for a private mirror already verified to carry
-  the feature), and the `worker_pools_require_n8n_2_39` `check` warns when
-  a pinned `n8n_image_tag` is below `2.39.0`, the first n8n release that
-  reads the pool variables. The `feat:workerPools` licence entitlement is
+  the feature), and a validation on `n8n_image_tag` fails the plan when
+  pools are declared and the pinned tag is below `2.39.0`, the first n8n
+  release that reads the pool variables (the module's own default,
+  `2.35.0`, predates it, so declaring a pool also means pinning the image).
+  Each pool's KEDA `ScaledObject` authenticates through the same
+  `TriggerAuthentication` CR the default worker's scaler references; only
+  `enableTLS` goes into scaler metadata. The `feat:workerPools` licence entitlement is
   required as well, and its absence is not silent: a worker started with
   `N8N_WORKER_POOL_NAME` it is not licensed for exits 1, so the pool pods
   crash-loop and the Helm release rolls back, failing the apply. Terraform
@@ -285,8 +297,9 @@ image instead of a floating tag.
   `n8n_worker_pools`. Reads the pool names and namespace from the
   example's outputs and asserts, per pool, the Deployment and ScaledObject
   exist and are labelled, the ScaledObject is `READY=True`, its triggers
-  watch `jobs-<pool>` with the default worker's Redis TLS and auth
-  metadata, pods carry `N8N_WORKER_POOL_NAME`, and the mains carry
+  watch `jobs-<pool>` with the default worker's `enableTLS` flag and
+  `TriggerAuthentication` reference (and no credential in trigger
+  metadata), pods carry `N8N_WORKER_POOL_NAME`, and the mains carry
   `N8N_WORKER_POOLS_ENABLED`.
 
 ### Changed

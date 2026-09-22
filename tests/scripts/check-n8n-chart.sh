@@ -58,6 +58,16 @@ chart_version=$(console <<< 'var.n8n_chart_version')
 echo "== Pulling n8n chart ${chart_version} =="
 helm pull "oci://ghcr.io/n8n-io/n8n-helm-chart/n8n" --version "$chart_version" --untar --untardir "$tmp"
 
+# Worker pools (early alpha) render only on a chart that carries
+# queueMode.workerGroups, which no numbered release does yet; the official
+# preview build is the only public chart that exercises worker-pools.tf's
+# real output. Keep this in step with the version examples/worker-pools
+# documents and the worker_pools runs in tests/chart-values.tftest.hcl pin.
+preview_chart_version="1.11.0-preview.workerpools.1"
+echo "== Pulling n8n preview chart ${preview_chart_version} (worker pools) =="
+mkdir -p "$tmp/preview"
+helm pull "oci://ghcr.io/n8n-io/n8n-helm-chart/n8n" --version "$preview_chart_version" --untar --untardir "$tmp/preview"
+
 # Export each fixture's exact planned Helm values. Secret references keep the
 # values known and non-sensitive; no credential payload enters the plan.
 echo "== Planning module Helm values with mocked providers =="
@@ -90,7 +100,8 @@ render() {
   local values_file="$1"
   local out_prefix="$2"
   local template="$3"
-  helm template n8n "$tmp/n8n" -f "$values_file" \
+  local chart_dir="${4:-$tmp/n8n}"
+  helm template n8n "$chart_dir" -f "$values_file" \
     --show-only "templates/${template}.yaml" > "$tmp/${out_prefix}-${template}.yaml"
   console <<< "jsonencode(yamldecode(file(\"$tmp/${out_prefix}-${template}.yaml\")))" > "$tmp/${out_prefix}-${template}.json"
 }
@@ -122,6 +133,13 @@ export_values dns "$tmp/dns-values.json"
 
 echo "== Rendering split editor/webhook URL values fixture (n8n_webhook_url override) =="
 export_values split_url "$tmp/split-url-values.json"
+
+echo "== Rendering worker-only environment values fixture (n8n_worker_extra_env) =="
+export_values worker_extra_env "$tmp/worker-extra-env-values.json"
+
+echo "== Rendering worker pools values fixtures (unauthenticated and authenticated Redis) =="
+export_values worker_pools "$tmp/worker-pools-values.json"
+export_values worker_pools_authenticated "$tmp/worker-pools-auth-values.json"
 
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
@@ -158,6 +176,18 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/split-url-values.json" split-url "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  render "$tmp/worker-extra-env-values.json" worker-extra-env "$template"
+done
+
+# Against the preview chart: Helm's schema validation runs on every one of
+# these calls, so a values shape the workerGroups schema rejects (for example
+# an empty authenticationRef.name) fails here, not at apply.
+for template in deployment-worker-group scaledobject-worker-group scaledobject-worker deployment-main; do
+  render "$tmp/worker-pools-values.json" worker-pools "$template" "$tmp/preview/n8n"
+  render "$tmp/worker-pools-auth-values.json" worker-pools-auth "$template" "$tmp/preview/n8n"
 done
 
 main_min=$(console <<< 'var.n8n_main_hpa_min_replicas')
@@ -422,6 +452,96 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
 done
 
 echo "PASS: pod DNS configuration is identical on all three pod families with no null fields, and is omitted by default"
+
+echo "== Verify worker-only environment manifests (queueMode.workerExtraEnv) =="
+
+jq -e '
+  [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_ONLY_SETTING")] | length == 1
+  and .[0].value == "worker-only"
+' "$tmp/worker-extra-env-deployment-worker.json" >/dev/null \
+  || { echo "FAIL: deployment-worker must render exactly one N8N_WORKER_ONLY_SETTING entry from n8n_worker_extra_env" >&2; exit 1; }
+
+for template in deployment-main deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_ONLY_SETTING")] | length == 0
+  ' "$tmp/worker-extra-env-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must not receive n8n_worker_extra_env entries (worker-only)" >&2; exit 1; }
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_ONLY_SETTING")] | length == 0
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} unexpectedly renders a worker-only entry in the default fixture (n8n_worker_extra_env empty)" >&2; exit 1; }
+done
+
+echo "PASS: n8n_worker_extra_env renders on the worker container only, and is omitted by default"
+
+echo "== Verify worker pools manifests against the preview chart (${preview_chart_version}) =="
+
+# One pool Deployment, labelled and carrying N8N_WORKER_POOL_NAME, and the
+# mains carrying N8N_WORKER_POOLS_ENABLED.
+jq -e '
+  .metadata.name == "n8n-worker-gpu"
+  and .metadata.labels["n8n.io/worker-pool"] == "gpu"
+  and .metadata.labels["app.kubernetes.io/component"] == "worker-group"
+  and ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_POOL_NAME")] | length == 1 and .[0].value == "gpu")
+  and ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_POOLS_ENABLED")] | length == 1 and .[0].value == "true")
+' "$tmp/worker-pools-deployment-worker-group.json" >/dev/null \
+  || { echo "FAIL: the preview chart must render one n8n-worker-gpu Deployment labelled worker-group/n8n.io/worker-pool=gpu with N8N_WORKER_POOL_NAME=gpu and N8N_WORKER_POOLS_ENABLED=true" >&2; exit 1; }
+
+jq -e '
+  [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_POOLS_ENABLED")] | length == 1 and .[0].value == "true"
+' "$tmp/worker-pools-deployment-main.json" >/dev/null \
+  || { echo "FAIL: main pods must carry N8N_WORKER_POOLS_ENABLED=true while pools are declared" >&2; exit 1; }
+
+# Pool ScaledObject on the unauthenticated external Redis path: the pool's
+# own queue, the module's threshold, enableTLS equal to what the default
+# worker's own triggers render (the fixture's external Redis keeps the
+# module default redis_external_tls_enabled = true, so "true" here), and no
+# authenticationRef on either scaler. The pool key must be omitted, not "":
+# the chart schema puts minLength 1 on it, and the helm template call above
+# would already have failed on an empty name.
+default_tls=$(jq -r '.spec.triggers[0].metadata.enableTLS' "$tmp/worker-pools-scaledobject-worker.json")
+[[ "$default_tls" == "true" || "$default_tls" == "false" ]] \
+  || { echo "FAIL: default worker ScaledObject baseline must render enableTLS as \"true\" or \"false\", got '${default_tls}'" >&2; exit 1; }
+
+jq -e --argjson jobs "$worker_jobs" --arg tls "$default_tls" '
+  .metadata.name == "n8n-worker-gpu"
+  and .spec.scaleTargetRef.name == "n8n-worker-gpu"
+  and .spec.minReplicaCount == 0 and .spec.maxReplicaCount == 3
+  and ([.spec.triggers[].metadata.listName] | sort) == ["bull:jobs-gpu:active", "bull:jobs-gpu:wait"]
+  and (.spec.triggers | all(.metadata.listLength == ($jobs | tostring)))
+  and (.spec.triggers | all(.metadata.enableTLS == $tls))
+  and (.spec.triggers | all(has("authenticationRef") | not))
+  and (.spec.triggers | all(.metadata | has("passwordFromEnv") or has("username") | not))
+' "$tmp/worker-pools-scaledobject-worker-group.json" >/dev/null \
+  || { echo "FAIL: pool ScaledObject (unauthenticated Redis) must watch bull:jobs-gpu:{wait,active} with the module threshold, the default worker's enableTLS (${default_tls}), no authenticationRef, and no credential metadata" >&2; exit 1; }
+
+jq -e '.spec.triggers | all(.authenticationRef.name == "" or (has("authenticationRef") | not))' \
+  "$tmp/worker-pools-scaledobject-worker.json" >/dev/null \
+  || { echo "FAIL: default worker ScaledObject baseline (unauthenticated Redis) must render no effective authenticationRef" >&2; exit 1; }
+
+# Authenticated path: both scalers reference the module's TriggerAuthentication.
+jq -e '
+  .spec.triggers | length == 2
+  and all(.authenticationRef.name == "n8n-redis-keda-auth")
+  and all(.metadata | has("passwordFromEnv") or has("username") | not)
+' "$tmp/worker-pools-auth-scaledobject-worker-group.json" >/dev/null \
+  || { echo "FAIL: pool ScaledObject (authenticated Redis) must reference TriggerAuthentication n8n-redis-keda-auth on every trigger and carry no credential metadata" >&2; exit 1; }
+
+jq -e '.spec.triggers | length == 2 and all(.authenticationRef.name == "n8n-redis-keda-auth")' \
+  "$tmp/worker-pools-auth-scaledobject-worker.json" >/dev/null \
+  || { echo "FAIL: default worker ScaledObject (authenticated Redis) must reference TriggerAuthentication n8n-redis-keda-auth" >&2; exit 1; }
+
+# Default fixture on the pinned numbered chart: no pool objects and no flag.
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '[.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_POOLS_ENABLED")] | length == 0' \
+    "$tmp/multi-main-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} unexpectedly renders N8N_WORKER_POOLS_ENABLED in the default fixture (no pools)" >&2; exit 1; }
+done
+
+echo "PASS: worker pools render one labelled Deployment and one ScaledObject per pool on the preview chart, with the pool's queue, the module threshold, enableTLS, and the shared TriggerAuthentication matching the default worker's scaler; omitted by default"
 
 echo "== Self-test: duplicate managed environment-entry detector =="
 # This does not scan module output; it proves the jq expression the checks

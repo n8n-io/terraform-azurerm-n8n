@@ -6820,9 +6820,9 @@ run "redis_exporter_cpu_demand_increases_by_exactly_its_request" {
 # and n8n_image_tag to 2.39.0. The module's default chart predates
 # queueMode.workerGroups and the precondition on helm_release.n8n fails the
 # plan on that pairing (tested separately below), and the module's default
-# n8n_image_tag (2.35.0) predates the pool env vars, which trips
-# check.worker_pools_require_n8n_2_39 as an uncaught warning on every other
-# run in this section. A prerelease chart is the honest pin: at the time of
+# n8n_image_tag (2.35.0) predates the pool env vars, which fails the
+# n8n_image_tag validation on every other run in this section (also tested
+# separately below). A prerelease chart is the honest pin: at the time of
 # writing the only chart that renders pools is a preview build from
 # n8n-io/n8n-hosting#189, and the guard takes a prerelease at the caller's
 # word rather than comparing it against a release that does not exist yet.
@@ -7241,15 +7241,16 @@ run "module_wide_cpu_request_rejects_an_unparseable_quantity_a_pool_would_inheri
   expect_failures = [var.n8n_worker_cpu_request]
 }
 
-# Every pool's scaler has to carry the same Redis TLS and AUTH metadata the
-# default worker's own triggers carry. The chart builds a pool's triggers from
-# the queue name itself, so keda.triggerMetadata is the only route in, and
-# without it a pool's ScaledObject opens a plaintext connection to a TLS-only
-# endpoint: KEDA hangs, the ScaledObject goes READY=False, and the pool sits at
-# min_replicas with nothing crashing to announce it. That failure is invisible
-# to a plan, which is why it is asserted here against the shared local
-# worker-pools.tf builds it from.
-run "worker_pools_carry_the_redis_tls_metadata_on_their_scalers" {
+# Every pool's scaler has to carry the same Redis TLS flag and the same
+# TriggerAuthentication reference the default worker's own triggers carry
+# (n8n.tf). The chart builds a pool's two Redis triggers from the queue name
+# itself and exposes keda.triggerMetadata and keda.authenticationRef as the
+# two places to reach them. Without enableTLS a pool's ScaledObject opens a
+# plaintext connection to a TLS-only endpoint: KEDA hangs, the ScaledObject
+# goes READY=False, and the pool sits at min_replicas with nothing crashing
+# to announce it. That failure is invisible to a plan, which is why it is
+# asserted here against the worker group list worker-pools.tf builds.
+run "worker_pools_reuse_the_default_worker_keda_authentication" {
   command = plan
 
   variables {
@@ -7266,33 +7267,29 @@ run "worker_pools_carry_the_redis_tls_metadata_on_their_scalers" {
   }
 
   assert {
-    condition     = local.n8n_worker_pools_redis_trigger_metadata["enableTLS"] == "true"
-    error_message = "precondition: the module-managed Redis instance is always TLS-enabled and must put enableTLS into the shared pool KEDA metadata"
-  }
-
-  assert {
-    condition     = local.n8n_worker_pools_redis_trigger_metadata["passwordFromEnv"] == "QUEUE_BULL_REDIS_PASSWORD"
-    error_message = "precondition: the module-managed Redis instance always has a password and must put passwordFromEnv into the shared pool KEDA metadata"
-  }
-
-  assert {
-    condition     = !contains(keys(local.n8n_worker_pools_redis_trigger_metadata), "username")
-    error_message = "precondition: the module-managed Redis instance uses access-key auth with no username, so the shared pool KEDA metadata must not carry a username key"
+    condition = alltrue([
+      for g in local.n8n_worker_groups :
+      g.keda.triggerMetadata == { enableTLS = "true" }
+    ])
+    error_message = "the module-managed Redis instance is always TLS-enabled, so every pool's keda.triggerMetadata must be exactly { enableTLS = \"true\" }: no passwordFromEnv or username, which belong in the TriggerAuthentication"
   }
 
   assert {
     condition = alltrue([
       for g in local.n8n_worker_groups :
-      g.keda.triggerMetadata == local.n8n_worker_pools_redis_trigger_metadata
+      g.keda.authenticationRef.name == local.n8n_redis_keda_auth_name
     ])
-    error_message = "every pool's keda.triggerMetadata must equal the shared Redis TLS/AUTH metadata, or its scaler drifts from what the rest of the module knows about the Redis connection"
+    error_message = "every pool's keda.authenticationRef must name the module's shared TriggerAuthentication (kubectl_manifest.keda_trigger_authentication), the same CR the default worker's triggers reference in n8n.tf"
   }
 }
 
-# The no-TLS, no-auth path: the metadata map is empty rather than absent, and
-# the chart guards the block with `with`, so nothing is rendered into the
-# trigger.
-run "worker_pools_carry_empty_trigger_metadata_without_tls" {
+# The no-TLS, no-auth external path: enableTLS is still rendered ("false"),
+# exactly as the default worker's triggers render it, and authenticationRef
+# is omitted entirely. Not "" as n8n.tf sends for the default worker: the
+# chart schema puts minLength 1 on workerGroups[].keda.authenticationRef.name
+# (top-level keda is unvalidated), and Helm checks the schema before the
+# template's `and` guard runs, so an empty name fails the render.
+run "worker_pools_render_enable_tls_false_and_no_auth_ref_without_tls" {
   command = plan
 
   variables {
@@ -7306,8 +7303,71 @@ run "worker_pools_carry_empty_trigger_metadata_without_tls" {
   }
 
   assert {
-    condition     = length(local.n8n_worker_groups[0].keda.triggerMetadata) == 0
-    error_message = "without TLS, a password, or a username, a pool's triggerMetadata must be empty, not null or a partial map"
+    condition     = local.n8n_worker_groups[0].keda.triggerMetadata == { enableTLS = "false" }
+    error_message = "without TLS a pool's triggerMetadata must still carry enableTLS = \"false\", matching the default worker's trigger, not an empty map"
+  }
+
+  assert {
+    condition     = !contains(keys(local.n8n_worker_groups[0].keda), "authenticationRef")
+    error_message = "without a Redis password or username a pool's keda block must omit authenticationRef entirely; an empty name fails the chart schema's minLength 1"
+  }
+}
+
+# External Redis with a username and password: the TriggerAuthentication
+# carries both, and the pool references it by name instead of leaking the
+# username into ScaledObject metadata.
+run "worker_pools_keep_redis_username_out_of_scaler_metadata" {
+  command = plan
+
+  variables {
+    n8n_chart_version          = "1.11.0-preview.workerpools.1"
+    n8n_image_tag              = "2.39.0"
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "external-redis.example.com"
+    redis_external_tls_enabled = true
+    redis_external_username    = "n8n-queue"
+    redis_external_password    = "not-a-real-password"
+
+    n8n_worker_pools = [{ name = "gpu", min_replicas = 1, max_replicas = 4 }]
+  }
+
+  # Makes helm_release.n8n.values plan-known so the rendered-values
+  # cross-check below can decode it.
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = local.n8n_worker_groups[0].keda.triggerMetadata == { enableTLS = "true" }
+    error_message = "a pool's triggerMetadata must never carry username or passwordFromEnv; credentials flow through the TriggerAuthentication only"
+  }
+
+  assert {
+    condition     = local.n8n_worker_groups[0].keda.authenticationRef.name == local.n8n_redis_keda_auth_name
+    error_message = "with an authenticated external Redis a pool must reference the shared TriggerAuthentication"
+  }
+
+  # Cross-check against the default worker's hand-built triggers in the
+  # rendered Helm values (fully plan-known on the external-Redis path) so the
+  # two scalers cannot drift apart in n8n.tf and worker-pools.tf without one
+  # of them noticing.
+  assert {
+    condition = alltrue([
+      for trigger in yamldecode(helm_release.n8n.values[0]).keda.worker.triggers :
+      trigger.metadata.enableTLS == yamldecode(helm_release.n8n.values[0]).queueMode.workerGroups[0].keda.triggerMetadata.enableTLS &&
+      trigger.authenticationRef.name == yamldecode(helm_release.n8n.values[0]).queueMode.workerGroups[0].keda.authenticationRef.name
+    ])
+    error_message = "a pool's enableTLS and authenticationRef.name must match the default worker's triggers exactly in the rendered Helm values"
   }
 }
 
@@ -7587,7 +7647,10 @@ run "worker_pools_do_not_block_the_default_chart_when_no_pool_is_declared" {
   }
 }
 
-run "worker_pools_warn_when_the_pinned_n8n_image_predates_them" {
+# The image floor is a hard validation on n8n_image_tag, like the existing
+# 2.19 and 2.29 floors on the same variable, because an older image silently
+# consumes the default queue from inside a pool Deployment.
+run "worker_pools_reject_a_pinned_n8n_image_that_predates_them" {
   command = plan
 
   variables {
@@ -7596,7 +7659,20 @@ run "worker_pools_warn_when_the_pinned_n8n_image_predates_them" {
     n8n_worker_pools  = [{ name = "gpu" }]
   }
 
-  expect_failures = [check.worker_pools_require_n8n_2_39]
+  expect_failures = [var.n8n_image_tag]
+}
+
+# The module's own default image tag (2.35.0) predates pools, so declaring a
+# pool without also pinning n8n_image_tag must fail rather than warn.
+run "worker_pools_reject_the_module_default_n8n_image" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0-preview.workerpools.1"
+    n8n_worker_pools  = [{ name = "gpu" }]
+  }
+
+  expect_failures = [var.n8n_image_tag]
 }
 
 run "worker_pools_accept_the_first_n8n_release_that_ships_them" {
@@ -7610,6 +7686,35 @@ run "worker_pools_accept_the_first_n8n_release_that_ships_them" {
 
   assert {
     condition     = length(local.n8n_worker_groups) == 1
-    error_message = "2.39.0 is the first n8n release with the pool env vars and must not trip the image check"
+    error_message = "2.39.0 is the first n8n release with the pool env vars and must not trip the image floor"
+  }
+}
+
+run "worker_pools_accept_a_later_major_n8n_release" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0-preview.workerpools.1"
+    n8n_image_tag     = "3.0.0"
+    n8n_worker_pools  = [{ name = "gpu" }]
+  }
+
+  assert {
+    condition     = length(local.n8n_worker_groups) == 1
+    error_message = "a later major n8n release must pass the 2.39 floor"
+  }
+}
+
+# The floor is scoped to pools: an old image with no pools declared is fine.
+run "n8n_image_floor_for_pools_is_inert_without_pools" {
+  command = plan
+
+  variables {
+    n8n_image_tag = "2.30.0"
+  }
+
+  assert {
+    condition     = length(local.n8n_worker_groups) == 0
+    error_message = "an image older than 2.39 must remain valid while n8n_worker_pools is empty"
   }
 }

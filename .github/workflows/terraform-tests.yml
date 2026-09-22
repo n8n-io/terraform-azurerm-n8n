@@ -274,6 +274,18 @@ jobs:
           shellcheck -S warning tests/scripts/preflight-region-check.sh
           tests/scripts/preflight-region-check.sh --help >/dev/null
 
+      # Same for the scripts port-aws-050-enhancements added: real work
+      # needs network or a live cluster, so CI proves syntax, shellcheck,
+      # and the --help path only.
+      - name: bash -n + shellcheck new scripts
+        run: |
+          for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-pools.sh \
+            tests/scripts/check-version-drift.sh tests/scripts/check-checkov.sh scripts/check-example-parity.sh; do
+            bash -n "$script"
+            shellcheck -S warning "$script"
+          done
+          tests/scripts/chart-values-diff.sh --help >/dev/null
+
   tflint:
     name: tflint (${{ matrix.target }})
     runs-on: ubuntu-latest

@@ -182,7 +182,7 @@ check "blob_tuning_requires_module_managed_blob_storage" {
     error_message = join("", [
       "A storage_account_replication_type, azure_blob_binary_retention_days, or blob_delete_retention_days ",
       "override is set while create_blob_storage = false. The module creates no storage account, container, ",
-      "or lifecycle policy in that mode, so none of them apply, replication, retention, networking, and ",
+      "or lifecycle policy in that mode, so none of them apply. Replication, retention, networking, and ",
       "encryption are properties of the existing Blob storage account and container you supplied.",
     ])
   }

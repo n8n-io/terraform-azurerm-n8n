@@ -308,7 +308,7 @@ module "n8n" {
   # (plus feat:multipleMainInstances unless n8n_main_hpa_min_replicas = 1) and
   # a chart that renders queueMode.workerGroups; see README.md before
   # uncommenting.
-  n8n_worker_pools = local.worker_pools
+  # n8n_worker_pools = local.worker_pools
 
   depends_on = [
     time_sleep.storage_rbac,

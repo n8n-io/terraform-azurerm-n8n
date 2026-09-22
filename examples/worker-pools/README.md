@@ -12,7 +12,7 @@ Use this example when some executions need different hardware or isolation: heav
 
 > **Early Alpha, subject to change without notice.** Worker pools are an alpha n8n feature, and the chart side that renders them (`queueMode.workerGroups`) is merged to a preview branch, not released. This example, the root module's `n8n_worker_pools` input, and the guidance below may all change to track either upstream feature. What it needs once the pools above are uncommented:
 >
-> - **n8n 2.39.0 or later** on the image (this example's `n8n_image_tag` default). That is the first release that reads `N8N_WORKER_POOLS_ENABLED` and `N8N_WORKER_POOL_NAME`; an older image accepts both and ignores them, so the pods come up healthy with the feature doing nothing. The root module's own default (`2.35.0`) predates that floor, which is why this example pins its own default rather than leaving it at the module default.
+> - **n8n 2.39.0 or later** on the image (this example's `n8n_image_tag` default). That is the first release that reads `N8N_WORKER_POOLS_ENABLED` and `N8N_WORKER_POOL_NAME`; an older image accepts both and ignores them, so the pods come up healthy with the feature doing nothing. The root module enforces the floor as a validation on `n8n_image_tag` whenever `n8n_worker_pools` is non-empty; its own default (`2.35.0`) predates it, which is why this example pins its own default rather than leaving it at the module default.
 > - **A license carrying `feat:workerPools`.** Without it a worker started with `N8N_WORKER_POOL_NAME` exits 1 with `worker pools are not licensed`, every pool pod crash-loops, and the Helm release fails its wait and is rolled back by `atomic`, so the apply fails. Terraform cannot see entitlements at plan, so the log line is the diagnosis: `kubectl -n n8n logs -l n8n.io/worker-pool=<pool> -c n8n-worker --previous | grep licensed`. Multi-main (this example's default) also needs `feat:multipleMainInstances`; set `n8n_main_hpa_min_replicas = 1` to run single-main on a license that lacks it.
 > - **A Helm chart that renders `queueMode.workerGroups`.** No published chart *release* carries it yet; the feature is [n8n-io/n8n-hosting#189](https://github.com/n8n-io/n8n-hosting/pull/189), merged to the chart's `preview/worker-pools` branch. An official prerelease build is published from that branch to `oci://ghcr.io/n8n-io/n8n-helm-chart` via [n8n-io/n8n-hosting#191](https://github.com/n8n-io/n8n-hosting/pull/191)'s `Preview chart` GitHub Action, which is why `n8n_chart_version` is a required input of this example and the root module fails the plan when the pinned chart is a numbered release that predates the feature (prerelease builds are exempt). See [Getting a chart that renders pools](#getting-a-chart-that-renders-pools) below.
 >
@@ -122,7 +122,7 @@ terraform apply
 This first apply creates no worker pools: `n8n_worker_pools = local.worker_pools` in `main.tf`'s `module "n8n"` block starts commented out. To deploy the three-pool topology documented above, uncomment that line and re-apply:
 
 ```bash
-terraform plan   # a "worker_pools_require_n8n_2_39" warning here means n8n_image_tag is too old
+terraform plan   # fails on the n8n_image_tag validation if the pinned image predates 2.39.0
 terraform apply
 ```
 
@@ -136,7 +136,7 @@ Run the scripted check first, once the pools are uncommented and applied. It rea
 ../../tests/scripts/verify-worker-pools.sh
 ```
 
-It asserts, per pool: the `n8n-worker-<pool>` Deployment exists and carries the `n8n.io/worker-pool` label; the ScaledObject of the same name exists and targets that Deployment; the ScaledObject is `READY=True` and its triggers watch `bull:jobs-<pool>:wait` / `:active` with the same TLS and AUTH metadata the default worker's triggers carry; running pool pods have `N8N_WORKER_POOL_NAME` set; the main Deployment has `N8N_WORKER_POOLS_ENABLED=true`; and KEDA's external metric for the pool's queue resolves. It also fails if the cluster has pool Deployments the outputs do not list.
+It asserts, per pool: the `n8n-worker-<pool>` Deployment exists and carries the `n8n.io/worker-pool` label; the ScaledObject of the same name exists and targets that Deployment; the ScaledObject is `READY=True` and its triggers watch `bull:jobs-<pool>:wait` / `:active` with the same `enableTLS` flag and `TriggerAuthentication` reference the default worker's triggers carry, and no credential in trigger metadata; running pool pods have `N8N_WORKER_POOL_NAME` set; the main Deployment has `N8N_WORKER_POOLS_ENABLED=true`; and KEDA's external metric for the pool's queue resolves. It also fails if the cluster has pool Deployments the outputs do not list.
 
 By hand, the same thing:
 

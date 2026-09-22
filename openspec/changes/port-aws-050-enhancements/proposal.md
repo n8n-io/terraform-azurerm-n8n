@@ -25,8 +25,14 @@ assumption.
   pinned `CHECKOV_VERSION` (Azure currently runs checkov unpinned).
 - Add `n8n_worker_extra_env` (chart `queueMode.workerExtraEnv`) with the
   same guards as `n8n_extra_env` and coverage under the credentials-overwrite
-  conflict validation. `n8n_worker_pools` is excluded (alpha, unreleased
-  chart branch).
+  conflict validation.
+- Follow-up scope added after the initial proposal: `n8n_worker_pools`
+  (EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE), chart-values-only via
+  `queueMode.workerGroups`, with a `helm_release.n8n` precondition for the
+  chart pairing, a hard `n8n_image_tag` 2.39.0 floor while pools are
+  declared, reuse of the module's `TriggerAuthentication` for every pool
+  scaler, `examples/worker-pools/`, and `tests/scripts/verify-worker-pools.sh`.
+  See design Decision 6 and the `n8n-workload-configuration` delta spec.
 - Best-effort deletion-safety analogs: new nullable
   `blob_delete_retention_days` (blob/container soft delete, absent today),
   `nullable = false` on `pg_backup_retention_days`, and a
@@ -47,11 +53,11 @@ assumption.
   digest.
 - Tooling and docs: `scripts/check-example-parity.sh`,
   `tests/scripts/check-version-drift.sh` with an AKS-specific
-  Kubernetes-support source plus a weekly workflow, a markdownlint CI job
+  Kubernetes-support source as a report-only CI job (no schedule yet), a markdownlint CI job
   with generated blocks wrapped, `docs/versioning.md`, and a README
   `## Compatibility` section (none exists today).
-- Explicit exclusions: `n8n_worker_pools` and its example/verifier,
-  `metrics_server_chart_version` (AKS ships metrics-server), the RDS
+- Explicit exclusions: `metrics_server_chart_version` (AKS ships
+  metrics-server), the RDS
   `db_engine_version` bump, `check-helm-chart-coverage.sh` (gates a
   coverage doc Azure never had; follow-up), `docs/istio-ingress.md`, and
   cloudflare/godaddy README notes (examples removed earlier).

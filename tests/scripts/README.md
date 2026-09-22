@@ -538,8 +538,12 @@ kubectl gets pointed at the cluster (a transient kubeconfig from the
 mirroring `smoke-test.sh` above, rather than a switch of the caller's
 current context). Everything the chart renders (Deployment/ScaledObject
 naming, the `app.kubernetes.io/component=worker-group` and
-`n8n.io/worker-pool=<name>` labels, the KEDA trigger metadata shape) is
-chart-defined, not cloud-specific, so those assertions are unchanged.
+`n8n.io/worker-pool=<name>` labels, the KEDA trigger shape) is
+chart-defined, not cloud-specific, so those assertions are structurally the
+same. One deliberate difference: this module authenticates every scaler
+through one `TriggerAuthentication` CR, so the per-trigger comparison here
+is `enableTLS` plus `authenticationRef.name`, with `passwordFromEnv` and
+`username` asserted absent, where the AWS sibling compares flat metadata.
 
 ### What it covers
 
@@ -549,8 +553,10 @@ chart-defined, not cloud-specific, so those assertions are unchanged.
 - `N8N_WORKER_POOLS_ENABLED` on a Running main pod (read via `kubectl
   exec`, not the Deployment template, so a rollout in progress can't
   hide a stale value).
-- The deployed image tag is advisory-checked against `>= 2.39.0`, the
-  first n8n release that reads the pool variables.
+- The deployed image tag is checked against `>= 2.39.0`, the first n8n
+  release that reads the pool variables (the module enforces the same
+  floor at plan time as a validation on `n8n_image_tag`; this catches an
+  image that drifted from the pinned tag after apply).
 - Per pool: Deployment existence, the `n8n.io/worker-pool` label,
   `N8N_WORKER_POOL_NAME`, and replica readiness, with a log-grep fallback
   that surfaces the licence-gated `worker pools are not licensed` failure
@@ -558,9 +564,12 @@ chart-defined, not cloud-specific, so those assertions are unchanged.
 - Per pool: ScaledObject existence, `READY` status, `scaleTargetRef`, and
   both triggers' `listName` suffix (`jobs-<pool>:wait` /
   `jobs-<pool>:active`).
-- Every pool trigger's `enableTLS` / `username` / `passwordFromEnv`
-  matches the default worker's own ScaledObject baseline, so a pool
-  cannot silently talk plaintext to a TLS-only Redis.
+- Every pool trigger's `enableTLS` and `authenticationRef.name` match the
+  default worker's own ScaledObject baseline, so a pool cannot silently
+  talk plaintext or unauthenticated to a Redis endpoint that needs
+  either; and no pool trigger carries `username` / `passwordFromEnv` in
+  its metadata, because the module routes Redis credentials through the
+  shared `TriggerAuthentication` only.
 - Running pool pods carry `N8N_WORKER_POOL_NAME`; the default worker
   Deployment carries none.
 

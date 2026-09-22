@@ -203,3 +203,53 @@ run "split_url" {
     n8n_webhook_url = "https://hooks.test.example.com:8443/n8n/"
   }
 }
+
+# Worker-only environment (port-aws-050-enhancements section 2). The chart
+# renders queueMode.workerExtraEnv on the worker container only, so
+# check-n8n-chart.sh asserts both presence on deployment-worker and absence on
+# deployment-main and deployment-webhook-processor.
+run "worker_extra_env" {
+  command = plan
+
+  variables {
+    n8n_worker_extra_env = [
+      { name = "N8N_WORKER_ONLY_SETTING", value = "worker-only" },
+    ]
+  }
+}
+
+# Worker pools (port-aws-050-enhancements section 7, early alpha). The
+# file-level fixture is already the unauthenticated external-Redis path
+# (TLS on, the module default), which is exactly where a pool's keda block must omit
+# authenticationRef: the chart schema puts minLength 1 on
+# workerGroups[].keda.authenticationRef.name and an empty string fails the
+# render. check-n8n-chart.sh renders this against the preview chart build
+# (the pinned default chart predates queueMode.workerGroups) and asserts on
+# the pool Deployment and ScaledObject.
+run "worker_pools" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0-preview.workerpools.1"
+    n8n_image_tag     = "2.39.0"
+    n8n_worker_pools = [
+      { name = "gpu", min_replicas = 0, max_replicas = 3, concurrency = 2 },
+    ]
+  }
+}
+
+# Same pool on an authenticated Redis: the pool's authenticationRef must name
+# the module's TriggerAuthentication, matching the default worker's triggers.
+run "worker_pools_authenticated" {
+  command = plan
+
+  variables {
+    n8n_chart_version       = "1.11.0-preview.workerpools.1"
+    n8n_image_tag           = "2.39.0"
+    redis_external_username = "n8n-queue"
+    redis_external_password = "not-a-real-password"
+    n8n_worker_pools = [
+      { name = "gpu", min_replicas = 0, max_replicas = 3, concurrency = 2 },
+    ]
+  }
+}

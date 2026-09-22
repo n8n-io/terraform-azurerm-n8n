@@ -649,7 +649,7 @@ variable "storage_account_replication_type" {
 }
 
 variable "blob_delete_retention_days" {
-  description = "Optional soft-delete retention window, in days, for the module-managed Blob storage account (blob_properties.delete_retention_policy and container_delete_retention_policy). Null (the default) leaves soft delete disabled, matching the account's behavior before this input existed: a deleted blob or container is immediately unrecoverable, closer to AWS S3's force_destroy = true than false, since Azure Blob has no separate force_destroy-style guard on terraform destroy. This is the nearest Azure analog to that AWS deletion-safety control (port-aws-050-enhancements); AWS's db_deletion_protection, db_skip_final_snapshot, db_final_snapshot_identifier, and db_delete_automated_backups have no PostgreSQL Flexible Server equivalent at all (see docs/deletion-safety.md) and so are not ported. Ignored when create_blob_storage = false."
+  description = "Optional soft-delete retention window, in days, for the module-managed Blob storage account (blob_properties.delete_retention_policy and container_delete_retention_policy). Null (the default) renders no blob_properties block, so a freshly created account keeps soft delete disabled, matching the account's behavior before this input existed: a deleted blob or container is immediately unrecoverable, closer to AWS S3's force_destroy = true than false, since Azure Blob has no separate force_destroy-style guard on terraform destroy. Setting a value is a one-way switch from Terraform's side: azurerm treats blob_properties as Optional+Computed, so changing this back to null after an apply plans no change and soft delete stays enabled at the last applied window; disable it out of band (az storage account blob-service-properties update --enable-delete-retention false --enable-container-delete-retention false) if that is what you want. This is the nearest Azure analog to AWS's s3_force_destroy (port-aws-050-enhancements); see docs/deletion-safety.md for how the AWS RDS deletion-time controls map onto PostgreSQL Flexible Server. Ignored when create_blob_storage = false."
   type        = number
   default     = null
 
@@ -1017,7 +1017,7 @@ variable "n8n_helm_timeout" {
 }
 
 variable "n8n_image_tag" {
-  description = "Pinned n8n application version used by the main, worker, webhook-processor, and task-runner images. Azure Blob binary and execution-data modes require n8n 2.29.0 or later. Environment-managed log streaming requires n8n 2.19.0 or later. The default 2.35.0 includes the Azure container-scoped credential startup probe fix."
+  description = "Pinned n8n application version used by the main, worker, webhook-processor, and task-runner images. Azure Blob binary and execution-data modes require n8n 2.29.0 or later. Environment-managed log streaming requires n8n 2.19.0 or later. n8n_worker_pools (early alpha) requires n8n 2.39.0 or later. The default 2.35.0 includes the Azure container-scoped credential startup probe fix."
   type        = string
   default     = "2.35.0"
 
@@ -1050,6 +1050,24 @@ variable "n8n_image_tag" {
       ) : true
     )
     error_message = "n8n_log_streaming_managed_by_env requires n8n_image_tag 2.19.0 or later."
+  }
+
+  validation {
+    # Worker pools (worker-pools.tf, EARLY ALPHA). A hard stop like the two
+    # floors above rather than an advisory check: an older image accepts and
+    # ignores N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME, so pool
+    # workers come up healthy while consuming the default queue and every
+    # pool queue stays empty. Not a no-op, but wrong capacity.
+    condition = !can(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)) ? true : (
+      length(var.n8n_worker_pools) > 0 ? (
+        tonumber(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)[0]) > 2 ? true : (
+          tonumber(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)[0]) == 2 ? (
+            tonumber(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)[1]) >= local.n8n_worker_pools_min_n8n_minor
+          ) : false
+        )
+      ) : true
+    )
+    error_message = "n8n_worker_pools requires n8n_image_tag 2.${local.n8n_worker_pools_min_n8n_minor}.0 or later, the first n8n release that reads N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME. Older images accept both variables and ignore them: mains never route to a pool and pool workers consume the default queue, so the pods come up healthy while every pool queue stays empty. Pin n8n_image_tag to 2.${local.n8n_worker_pools_min_n8n_minor}.0 or later, or remove the pools."
   }
 }
 
@@ -2349,7 +2367,7 @@ variable "n8n_worker_extra_env" {
 # per entry, alongside the chart's own unlabelled worker deployment.
 
 variable "n8n_worker_pools" {
-  description = "EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N_WORKER_POOL_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n_chart_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, this variable's default n8n_chart_repository, at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n_chart_version. See examples/worker-pools/README.md for the exact command and a private-mirror fallback."
+  description = "EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N_WORKER_POOL_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n_chart_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). Also requires n8n_image_tag 2.39.0 or later (validated on that variable). Each pool's KEDA ScaledObject authenticates to Redis through the same TriggerAuthentication the default worker's scaler uses. An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, the chart repository this module hardcodes (there is no repository override), at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n_chart_version. See examples/worker-pools/README.md for the exact command and a private-mirror fallback."
   type = list(object({
     name         = string
     min_replicas = optional(number, 1)
@@ -2485,6 +2503,7 @@ variable "n8n_worker_pools" {
   }
 }
 
+# no validation: a plain bool needs no extra check.
 variable "n8n_worker_pools_chart_verified" {
   description = "Attests that n8n_chart_version, whatever repository it resolves from, renders queueMode.workerGroups. Only consulted when n8n_worker_pools is non-empty and n8n_chart_version is a numbered release; a prerelease version (one with a SemVer 2 \"-\" segment) is already taken at your word from the version string itself and needs no extra input. This exists for the one case a hyphen can't cover: a private mirror serving a numbered version you have already built with the feature (n8n-io/n8n-hosting#189) baked in, so you would rather not tag your own build as a prerelease. Setting this to true is a one-time promise, not an automated guarantee: nothing re-checks it if n8n_chart_version later changes to point at a different, unverified chart, so treat a bump to this variable's pinned version with the same scrutiny as setting this flag the first time. Leave it false once n8n-io/n8n-hosting#189 merges to main and a real numbered floor replaces this guard entirely (n8n-io/terraform-aws-n8n#125 tracks that; track the Azure equivalent as it is opened)."
   type        = bool

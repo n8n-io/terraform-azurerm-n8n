@@ -489,45 +489,67 @@ defaults instead of the chart's, `N8N_WORKER_POOLS_ENABLED` on
 default `[]` omits `queueMode.workerGroups` from the values entirely rather
 than sending an empty list, so an untouched deployment sees no Helm diff.
 
-**KEDA `triggerMetadata` instead of `TriggerAuthentication`, deliberately.**
-Every other KEDA scaler this module creates (the default worker's) uses a
-`kubectl_manifest.keda_trigger_authentication` CR plus an
-`authenticationRef` on the trigger. A pool's `ScaledObject` cannot use that
-pattern: the chart templates it entirely from the pool name, and
-`queueMode.workerGroups[].keda` exposes only a flat `triggerMetadata` merge
-point, with no field to reference a `TriggerAuthentication` by name. This is
-a chart schema constraint, not a module choice, and it is not something to
-"fix" toward the default worker's pattern later. `local.n8n_worker_pools_redis_trigger_metadata`
-rebuilds the same `enableTLS`/`passwordFromEnv`/`username` shape the default
-worker's trigger carries, from the same `local.redis_connection` /
-`local.redis_password_present` this module already computes, so a pool's
-scaler authenticates identically even though the mechanism differs. Get
-this wrong (for example, omit `enableTLS` against a TLS-only Redis
-endpoint) and the pool's scaler fails closed silently: it sits at
-`min_replicas` with nothing crashing to announce it, the same failure mode
-`README.md`'s KEDA troubleshooting section already documents for the
-default worker's scaler.
+**Pool scalers reuse the default worker's `TriggerAuthentication`.** Every
+KEDA scaler this module renders, the default worker's and each pool's,
+authenticates through the one `kubectl_manifest.keda_trigger_authentication`
+CR (`keda.tf`) via `authenticationRef = { name = local.n8n_redis_keda_auth_name }`
+when `local.redis_authentication_enabled`. When it is false the pool omits
+the `authenticationRef` key entirely, unlike `n8n.tf`, which sends `""` for
+the default worker: the chart schema puts `minLength: 1` on
+`workerGroups[].keda.authenticationRef.name` (top-level `keda` is not in the
+schema), and Helm validates the schema before the template's `and` guard
+runs, so an empty name fails the render. `tests/scripts/check-n8n-chart.sh`
+renders that exact path against the preview chart. The chart's
+`queueMode.workerGroups[].keda` exposes both `triggerMetadata` (merged into
+the pool's two chart-templated Redis triggers) and `authenticationRef`
+(verified against the `preview/worker-pools` branch schema and against the
+published `1.11.0-preview.workerpools.1` build's
+`templates/scaledobject-worker-group.yaml`). The module puts only
+`enableTLS = tostring(local.redis_connection.tls_enabled)` into
+`triggerMetadata`, rendered unconditionally (`"true"`/`"false"`) exactly as
+`n8n.tf` does for the default worker, so the two ScaledObjects compare
+key-for-key and Redis credentials never appear in ScaledObject metadata. An
+earlier draft of this change used a flat `passwordFromEnv`/`username`
+metadata merge instead (the shape `terraform-aws-n8n` uses, where the
+default worker also carries flat metadata) on the mistaken belief that the
+chart had no per-group `authenticationRef`; that shape is functional (KEDA
+resolves `secretKeyRef` env from `containers[0]`, which is `n8n-worker`)
+but inconsistent with this module's own default worker, and it made
+`tests/scripts/verify-worker-pools.sh`'s baseline comparison fail on every
+authenticated deployment. Do not reintroduce it. Get `enableTLS` wrong
+against a TLS-only Redis endpoint and the pool's scaler fails closed
+silently: it sits at `min_replicas` with nothing crashing to announce it,
+the same failure mode `README.md`'s KEDA troubleshooting section already
+documents for the default worker's scaler.
 
-**Two guards, two severities.** A chart that predates
+**Two guards, both hard stops.** A chart that predates
 `queueMode.workerGroups` has no `additionalProperties: false` on
 `queueMode`, so Helm accepts the key, renders nothing for it, and the
 release succeeds: `N8N_WORKER_POOLS_ENABLED` lands on every pod, no pool
 Deployment or `ScaledObject` exists, and every project pinned to a pool
 quietly runs on the default queue. Mocked plan-time tests cannot see this,
 and neither can a real plan, so the chart pairing is a `lifecycle.precondition`
-on `helm_release.n8n` (a hard stop): it fails the plan whenever
-`n8n_worker_pools` is non-empty and the pinned `n8n_chart_version` is a
-numbered release, unless `n8n_worker_pools_chart_verified` attests it for a
-private mirror. A prerelease version (one carrying a SemVer 2 `-` segment)
-is exempt automatically, which is how the official preview build installs.
-The image pairing (`check.worker_pools_require_n8n_2_39`) stays an advisory
-warning instead: `n8n_image_tag` is frequently left `null` (the chart's
-floating `stable` tag), which the check cannot resolve, so it cannot be
-relied on to catch every case, and an old image does not fail loudly. It
-silently accepts and ignores `N8N_WORKER_POOLS_ENABLED` and
-`N8N_WORKER_POOL_NAME`, so the pods come up healthy with the feature doing
-nothing. `tests/scripts/verify-worker-pools.sh` is what actually catches
-both silent outcomes, after a live apply.
+on `helm_release.n8n`: it fails the plan whenever `n8n_worker_pools` is
+non-empty and the pinned `n8n_chart_version` is a numbered release, unless
+`n8n_worker_pools_chart_verified` attests it for a private mirror. A
+prerelease version (one carrying a SemVer 2 `-` segment) is exempt
+automatically, which is how the official preview build installs. The image
+pairing is a `validation` block on `n8n_image_tag` (2.39.0 floor while
+`n8n_worker_pools` is non-empty), next to the existing 2.19 and 2.29 floors
+on the same variable. It was first drafted as an advisory `check` on the
+AWS sibling's premise that `n8n_image_tag` is usually `null` (the chart's
+floating `stable` tag); in this module the variable defaults to a pinned
+version and its regex validation rejects `null`, so the floor is fully
+decidable at plan time and there was no reason to let it through as a
+warning. An old image does not fail loudly: it silently accepts and ignores
+`N8N_WORKER_POOLS_ENABLED` and `N8N_WORKER_POOL_NAME`, so pool workers come
+up healthy while consuming the default queue and every pool queue stays
+empty (wrong capacity, not a no-op). `tests/scripts/verify-worker-pools.sh`
+is what catches the chart-side silent outcome after a live apply, plus an
+image that drifted from the pinned tag. When porting from
+`terraform-aws-n8n`, check both of these premises (`n8n_image_tag` default,
+default worker KEDA auth shape) before copying a guard's severity or a
+scaler's metadata shape.
 
 **Alpha caveats.** The `feat:workerPools` licence entitlement is required,
 and unlike the two guards above, its absence is not silent: a worker

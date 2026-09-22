@@ -29,16 +29,19 @@ done
 WORKFLOW=".github/workflows/terraform-tests.yml"
 
 echo "== Terraform provider currency (GitHub releases) =="
-declare -A PROVIDER_REPOS=(
-  [azurerm]="hashicorp/terraform-provider-azurerm"
-  [kubernetes]="hashicorp/terraform-provider-kubernetes"
-  [helm]="hashicorp/terraform-provider-helm"
-  [random]="hashicorp/terraform-provider-random"
-  [time]="hashicorp/terraform-provider-time"
-  [kubectl]="gavinbunney/terraform-provider-kubectl"
-)
-for name in "${!PROVIDER_REPOS[@]}"; do
-  repo="${PROVIDER_REPOS[$name]}"
+# "name repo" pairs rather than an associative array: macOS still ships bash
+# 3.2, which has no `declare -A`, and the rest of this repo's scripts stay
+# 3.2-compatible for the same reason (see tests/scripts/verify-custom-image.sh).
+PROVIDER_REPOS="
+azurerm hashicorp/terraform-provider-azurerm
+kubernetes hashicorp/terraform-provider-kubernetes
+helm hashicorp/terraform-provider-helm
+random hashicorp/terraform-provider-random
+time hashicorp/terraform-provider-time
+kubectl gavinbunney/terraform-provider-kubectl
+"
+while read -r name repo; do
+  [[ -z "$name" ]] && continue
   latest=$(curl -sf "https://api.github.com/repos/${repo}/releases/latest" \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_name','?'))" 2>/dev/null || echo "unavailable")
   pinned=$(python3 -c "
@@ -48,7 +51,7 @@ m = re.search(r'${name}\s*=\s*\{[^}]*version\s*=\s*\"([^\"]+)\"', text, re.S)
 print(m.group(1) if m else 'unpinned')
 ")
   echo "  ${name}: repo pin '${pinned}', latest release ${latest}"
-done
+done <<<"$PROVIDER_REPOS"
 
 echo
 echo "== CI toolchain currency (GitHub releases) =="

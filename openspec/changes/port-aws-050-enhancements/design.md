@@ -46,7 +46,9 @@ User decisions (this port):
 1. Deletion-safety analogs: best-effort mapping, not a literal AWS-input
    port. Document explicitly wherever no Azure primitive matches.
 2. Version-currency tooling: in scope for this change, adapted to AKS.
-3. `n8n_worker_pools`: excluded entirely (alpha, unreleased chart branch).
+3. `n8n_worker_pools`: excluded from the initial scope (alpha, unreleased
+   chart branch), then requested as a follow-up inside this same change
+   once the official preview chart build became pullable. See Decision 6.
 
 ## Goals and non-goals
 
@@ -61,7 +63,7 @@ controls with honest documentation, and add AKS-adapted version-currency
 and example-parity tooling.
 
 **Non-goals:** No resource-module split, provider configuration, cloud
-service topology change, `n8n_worker_pools`, metrics-server installation,
+service topology change, metrics-server installation,
 `db_engine_version`-style PostgreSQL bump (ordinary currency, tracked
 separately), Istio documentation, helm-chart-coverage doc/check (Azure has
 no coverage doc to gate; see table), or live Azure qualification as a
@@ -80,10 +82,10 @@ completion gate.
 | CI toolchain bumps | Port, adapted | `TF_VERSION 1.15.1 -> 1.16.2`, `TFLINT_VERSION v0.53.0 -> v0.64.0`, Helm `v3.16.4` -> current under `azure/setup-helm@v4.3.0`. `CHECKOV_VERSION` does not exist in Azure: adding a pin is new work, do it (an unpinned scanner is itself a currency gap). |
 | markdownlint CI job | Port (bounded) | Azure has `README.md`, `AGENTS.md`, `docs/*.md` and no lint. Add with the same `<!-- markdownlint-disable -->` wrap around the generated block. Expect a first-run cleanup pass; keep the config permissive (line-length off) to avoid the noise the AWS repo hit. |
 | `docs/versioning.md` | Port | Azure has no pin inventory. Write one enumerating providers, Terraform floor, n8n chart, `aks_kubernetes_version`, PostgreSQL version, Redis SKU/version knobs, CI toolchain, and the three bump tiers. Link from a new README `## Compatibility` section (Azure has none today) and from `AGENTS.md`. |
-| `check-version-drift.sh` + weekly workflow | Port, adapted | Replace EKS/`endoflife.date` with the AKS supported-versions source (see Decision 5). |
+| `check-version-drift.sh` + weekly workflow | Port, adapted | Replace EKS/`endoflife.date` with the AKS supported-versions source (see Decision 5). Wired as a report-only job in the existing workflow; a `schedule:` trigger is a follow-up, so no doc may call it "weekly" until one exists. |
 | `check-helm-chart-coverage.sh` + `docs/helm-chart-coverage.md` | Skip | The check gates a coverage doc Azure never had. Creating the doc is a separate, larger documentation change; do not half-port the gate. Flag for a follow-up. |
 | `chart-values-diff.sh` | Port | Tiny, credential-free, directly useful for the 1.11.0 bump in this change. No Taskfile: expose as a plain script documented in `tests/scripts/README.md`. |
-| `n8n_worker_pools` (alpha), its example, `verify-worker-pools.sh`, pool env-name guards | Skip | Alpha, unreleased chart branch, "subject to change without notice". No pool env names to guard in Azure. |
+| `n8n_worker_pools` (alpha), its example, `verify-worker-pools.sh`, pool env-name guards | Port (follow-up, adapted) | Initially skipped as alpha on an unreleased chart branch; re-scoped in once `oci://ghcr.io/n8n-io/n8n-helm-chart/n8n:1.11.0-preview.workerpools.1` was pullable. Two Azure adaptations differ from the AWS shape, both because the AWS premises do not hold here: pool scalers reference the module's existing `TriggerAuthentication` (this module's default worker does too; AWS uses flat metadata), and the n8n 2.39 image floor is a hard validation on `n8n_image_tag` (its default here is a pinned version, not `null`). See Decision 6. |
 | `n8n_worker_extra_env` | Port | Generic chart passthrough, independent of pools. Extend the credentials-overwrite conflict validation to cover it. |
 | Deletion controls (5 AWS inputs) | Port, adapted (best effort) | See Decision 3. |
 | `scripts/check-example-parity.sh` | Port | Same drift class across Azure's eight examples. |
@@ -191,8 +193,10 @@ safety feature is prohibited.
 and `aks_kubernetes_version` against Microsoft's AKS supported-versions
 data (`az aks get-versions` needs credentials, so use the public
 release-notes/JSON source; document the fallback if none is stable). Report
-only, exit 0. Weekly `.github/workflows/version-drift.yml` syncing to one
-tracking issue, mirroring AWS. Share the `read_default` helper in
+only, exit 0. Wired as a report-only `version-drift` job
+(`continue-on-error`) in `.github/workflows/terraform-tests.yml`; the AWS
+sibling's separate scheduled workflow and tracking-issue sync are a
+follow-up, not part of this change. Share the `read_default` helper in
 `tests/scripts/lib/tf-defaults.sh` with `chart-values-diff.sh`.
 
 `scripts/check-example-parity.sh`: names-only diff against `examples/small`
@@ -244,3 +248,43 @@ follow-up recorded per `docs/manual-azure-qualification.md`.
   `modules/tls-*/variables.tf` `domain_name`.
 - `openspec/changes/archive/2026-09-14-port-aws-040-enhancements/` as the
   structural precedent.
+
+### 6. `n8n_worker_pools` (follow-up scope, early alpha)
+
+Chart-values-only: each `var.n8n_worker_pools` entry becomes one
+`queueMode.workerGroups` entry (`worker-pools.tf`), rendered by the chart
+into a worker Deployment plus a KEDA `ScaledObject` on `jobs-<name>`. Zero
+new Terraform resources; default `[]` omits the key so an untouched
+deployment sees no Helm diff. `N8N_WORKER_POOLS_ENABLED=true` is appended to
+`config.extraEnv` only while pools are declared, and both pool env names are
+reserved in `local.n8n_managed_env_names`.
+
+Two Azure-specific departures from the AWS port, each because a premise the
+AWS shape rests on is false here:
+
+1. **KEDA authentication.** The chart's `workerGroups[].keda` exposes
+   `authenticationRef` as well as `triggerMetadata` (verified against the
+   `preview/worker-pools` branch schema and the published
+   `1.11.0-preview.workerpools.1` build). This module's default worker
+   authenticates through `kubectl_manifest.keda_trigger_authentication`,
+   so every pool does too: `triggerMetadata = { enableTLS = tostring(...) }`
+   rendered unconditionally, `authenticationRef = { name = ... }` merged in
+   only when `local.redis_authentication_enabled` (omitted, not `""`: the
+   chart schema puts `minLength: 1` on that name, and Helm validates it
+   before the template's guard runs; `check-n8n-chart.sh` renders the
+   unauthenticated path against the preview build). No credential in
+   scaler metadata, and `verify-worker-pools.sh` can compare pool triggers
+   against the default worker's key-for-key. The AWS flat
+   `passwordFromEnv`/`username` shape matches the AWS default worker, not
+   this module's.
+2. **Image floor severity.** AWS uses an advisory `check` because its
+   `n8n_image_tag` defaults to `null`. Here the variable defaults to a
+   pinned version and its regex validation rejects `null`, so the 2.39.0
+   floor is fully decidable at plan and is a `validation` on
+   `n8n_image_tag`, next to the existing 2.19 and 2.29 floors.
+
+The chart pairing stays a `lifecycle.precondition` on `helm_release.n8n`:
+numbered chart versions fail while `n8n_worker_pools` is non-empty unless
+`n8n_worker_pools_chart_verified` attests them; a SemVer prerelease passes
+on the version string alone. Replace with a numeric floor once
+n8n-io/n8n-hosting#189 reaches a numbered release.
