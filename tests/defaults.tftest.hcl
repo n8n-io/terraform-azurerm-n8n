@@ -1341,8 +1341,8 @@ run "controllers_and_base_n8n_release_in_plan" {
   }
 
   assert {
-    condition     = helm_release.n8n.version == "1.11.0" && var.n8n_image_tag == "2.35.0"
-    error_message = "The base release must pin chart 1.11.0 and n8n 2.35.0."
+    condition     = helm_release.n8n.version == "1.13.0" && var.n8n_image_tag == "2.35.0"
+    error_message = "The base release must pin chart 1.13.0 and n8n 2.35.0."
   }
 
   assert {
@@ -3685,6 +3685,87 @@ run "rejects_inverted_worker_autoscaler_range" {
   expect_failures = [var.n8n_worker_keda_min_replicas]
 }
 
+# External database and Redis keep helm_release.n8n.values known at plan time;
+# the module-managed Redis hostname is only known after apply.
+run "omits_worker_pause_annotations_by_default" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = "external-password-value"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).keda.worker.pause == false && yamldecode(helm_release.n8n.values[0]).keda.worker.pausedReplicaCount == null
+    error_message = "Worker KEDA autoscaling must not be paused by default, with no held replica count."
+  }
+}
+
+run "renders_paused_worker_autoscaling_with_a_held_count" {
+  command = plan
+
+  variables {
+    create_database                      = false
+    postgres_external_host               = "external-pg.example.com"
+    postgres_external_username           = "n8n"
+    postgres_external_password           = "external-password-value"
+    create_redis                         = false
+    redis_external_host                  = "redis.external.example.com"
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 0
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).keda.worker.pause == true && yamldecode(helm_release.n8n.values[0]).keda.worker.pausedReplicaCount == 0
+    error_message = "n8n_worker_keda_pause and n8n_worker_keda_paused_replica_count must reach keda.worker.pause / pausedReplicaCount, including a zero hold count."
+  }
+}
+
+run "rejects_negative_paused_worker_replica_count" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = -1
+  }
+
+  expect_failures = [var.n8n_worker_keda_paused_replica_count]
+}
+
+run "warns_when_paused_worker_replica_count_is_inert" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_paused_replica_count = 2
+  }
+
+  expect_failures = [check.worker_keda_paused_replica_count_requires_pause]
+}
+
 run "rejects_invalid_autoscaler_tuning_values" {
   command = plan
 
@@ -3966,7 +4047,7 @@ run "raising_unused_single_main_maximum_does_not_raise_capacity_demand" {
   }
 
   assert {
-    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == local.n8n_cpu_request_millis.main + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
     error_message = "Single-main capacity demand must use the clamped effective ceiling of 1 main replica, not the configured maximum."
   }
 }
@@ -3980,7 +4061,7 @@ run "single_main_high_maximum_matches_capacity_demand_at_maximum_one" {
   }
 
   assert {
-    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == local.n8n_cpu_request_millis.main + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
     error_message = "Raising the unused single-main maximum from 1 to 20 must not change modeled CPU demand — it must remain identical to the maximum-1 case."
   }
 }
@@ -6800,7 +6881,7 @@ run "redis_exporter_cpu_demand_increases_by_exactly_its_request" {
   assert {
     condition = (
       local.n8n_peak_cpu_request_millis == (
-        local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_cpu_request_millis.task_runner) +
+        local.n8n_main_hpa_effective_max_replicas * local.n8n_cpu_request_millis.main +
         var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
         var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook +
         10
@@ -7188,11 +7269,12 @@ run "capacity_model_counts_each_pool_at_its_ceiling" {
 
   # Pool pods render from the chart's shared worker pod template, so each one
   # carries the task runner sidecar the default worker pods carry. The
-  # no-pools total (16600m) is main 6 x 1200m + worker 10 x 700m + webhook 8 x
-  # 300m at this module's own defaults.
+  # no-pools total (15400m) is main 6 x 1000m (no sidecar on main in queue
+  # mode, chart #179) + worker 10 x 700m + webhook 8 x 300m at this module's
+  # own defaults.
   assert {
-    condition     = local.n8n_peak_cpu_request_millis == 16600 + 9000
-    error_message = "total peak is ${local.n8n_peak_cpu_request_millis}m, expected the no-pools 16600m plus 9000m of pools"
+    condition     = local.n8n_peak_cpu_request_millis == 15400 + 9000
+    error_message = "total peak is ${local.n8n_peak_cpu_request_millis}m, expected the no-pools 15400m plus 9000m of pools"
   }
 }
 

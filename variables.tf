@@ -995,9 +995,9 @@ variable "keda_chart_version" {
 }
 
 variable "n8n_chart_version" {
-  description = "n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default follows the AWS sibling's validated 1.11 chart line (port-aws-050-enhancements). Chart 1.11.0's only functional changes vs 1.10.0 are the KEDA listName default (this module sets listName explicitly, so it is inert) and an ingress-webhook /mcp/ route (inert because ingress.enabled defaults to false and this module never sets it)."
+  description = "n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default 1.13.0 is ahead of the AWS sibling's 1.12.0 pin. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner and the first upgrade dips the worker count to 1 until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount exist (chart #177; see n8n_worker_keda_pause). Inert here: the chart's image.tag default moving from a floating stable tag to its appVersion (this module always sets n8n_image_tag) and the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject)."
   type        = string
-  default     = "1.11.0"
+  default     = "1.13.0"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-.+)?$", var.n8n_chart_version))
@@ -1556,7 +1556,7 @@ variable "n8n_main_hpa_min_replicas" {
 }
 
 variable "n8n_main_hpa_max_replicas" {
-  description = "Maximum main replicas for the CPU HPA. The default of 6 participates in the AKS capacity diagnostic with the main and task-runner CPU requests. A higher value remains valid in single-main mode (n8n_main_hpa_min_replicas = 1) but has no effect there — the effective ceiling clamps to 1."
+  description = "Maximum main replicas for the CPU HPA. The default of 6 participates in the AKS capacity diagnostic with the main CPU request. A higher value remains valid in single-main mode (n8n_main_hpa_min_replicas = 1) but has no effect there — the effective ceiling clamps to 1."
   type        = number
   default     = 6
   nullable    = false
@@ -1662,6 +1662,24 @@ variable "n8n_worker_keda_max_replicas" {
   validation {
     condition     = var.n8n_worker_keda_max_replicas >= 1 && var.n8n_worker_keda_max_replicas == floor(var.n8n_worker_keda_max_replicas)
     error_message = "n8n_worker_keda_max_replicas must be a positive whole number."
+  }
+}
+
+variable "n8n_worker_keda_pause" {
+  description = "Pause KEDA autoscaling of the chart's worker Deployment (sets autoscaling.keda.sh/paused on the worker ScaledObject). While paused, workers hold their current replica count, or n8n_worker_keda_paused_replica_count when that is set. Use for maintenance windows and migrations; queued jobs wait in Redis until autoscaling resumes. Webhook processors have no equivalent here because this module scales them with its own HPA (scaling.tf), not a KEDA ScaledObject. tests/scripts/smoke-test.sh skips the worker-floor assertion while this is true."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "n8n_worker_keda_paused_replica_count" {
+  description = "Replica count the worker Deployment holds while n8n_worker_keda_pause is true (sets autoscaling.keda.sh/paused-replicas). 0 scales workers to zero, for example to drain the queue before a migration. Null freezes workers at whatever count they have when paused. Ignored, with a plan-time warning, when n8n_worker_keda_pause is false."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_worker_keda_paused_replica_count == null ? true : (var.n8n_worker_keda_paused_replica_count >= 0 && var.n8n_worker_keda_paused_replica_count == floor(var.n8n_worker_keda_paused_replica_count))
+    error_message = "n8n_worker_keda_paused_replica_count must be a whole number of 0 or more, or null to freeze workers at their current count."
   }
 }
 
@@ -1902,7 +1920,7 @@ variable "n8n_task_runner_image_tag" {
 }
 
 variable "n8n_task_runner_cpu_request" {
-  description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every main and worker replica when task runners are enabled."
+  description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every worker replica when task runners are enabled. Main pods carry no sidecar in queue mode (n8n offloads manual executions to workers), so the main ceiling is not multiplied by this."
   type        = string
   default     = "200m"
   nullable    = false

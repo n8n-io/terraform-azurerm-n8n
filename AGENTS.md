@@ -569,6 +569,57 @@ count against the Flexible Server's `max_connections` exactly like raising
 `n8n_worker_keda_max_replicas` does; budget the pool ceilings into the same
 arithmetic, not on top of it unaccounted for.
 
+## Chart 1.13.0 bump (`feat/chart-1.13.0`)
+
+`n8n_chart_version` defaults to `1.13.0`, deliberately ahead of the AWS
+sibling's `1.12.0`; the "follows the AWS sibling's chart line" wording is
+gone from the variable description. Run `tests/scripts/chart-values-diff.sh
+<candidate>` before any future bump, but also diff `templates/` directly:
+the values diff for 1.11.0 to 1.13.0 showed only the pause keys and the
+`image.tag` default, while the template diff carried the two changes that
+actually mattered here. First, `n8n.autoscalerOwnsReplicas`
+(n8n-hosting #201) drops `spec.replicas` from the worker and webhook-processor
+Deployments whenever a KEDA `ScaledObject` renders for that component, or
+the chart's own HPA is on with KEDA off. In this module that predicate is
+unconditionally true for the worker (KEDA always on, non-empty triggers,
+`n8n_worker_keda_min_replicas >= 1` by validation) and unconditionally false
+for the webhook processor (the module never sets `keda.webhookProcessor.enabled`
+or `hpa.webhookProcessor.enabled`; `scaling.tf`'s HPA is invisible to the
+chart), so `queueMode.workerReplicaCount` now only gates whether the worker
+Deployment exists and `check-n8n-chart.sh` asserts the field is absent on
+the worker and present on the webhook processor. The first upgrade dips the
+worker Deployment to 1 replica until the KEDA-created HPA restores
+`minReplicas`; that is upstream's documented behavior, not something to
+gate. Second, `n8n.mainTaskRunnersEnabled` (n8n-hosting #179) renders the
+task-runner sidecar, its env, and the launcher ConfigMap mount on main only
+in standalone mode; this module always runs queue mode, so only workers
+carry the sidecar, `scaling.tf`'s capacity model no longer multiplies the
+main ceiling by the sidecar request, and the launcher-config assertions in
+`check-n8n-chart.sh` expect no sidecar on main. `keda.worker.pause` /
+`pausedReplicaCount` are exposed as `n8n_worker_keda_pause` /
+`n8n_worker_keda_paused_replica_count`; the chart's webhook-processor pause
+is intentionally not exposed because no webhook `ScaledObject` exists here
+for the annotation to land on. The typed `keda` schema (#202) types
+`pausedReplicaCount` as `["integer", "null"]` and `authenticationRef.name`
+as a plain string, so rendering `null` and `""` from Terraform is fine; the
+default fixture in `tests/chart-values.tftest.hcl` already uses an
+unauthenticated external Redis, so the `""` case is exercised on every
+`check-n8n-chart.sh` run. `queueMode.workerGroups` remains unreleased
+(preview branch only), so nothing in `worker-pools.tf` or
+`examples/worker-pools` changed, and pools callers on the `1.11.0`-based
+preview chart get neither #201 nor #179 until a new preview build exists.
+
+A `run` block in `tests/defaults.tftest.hcl` that decodes
+`helm_release.n8n.values[0]` must set `create_database = false` /
+`create_redis = false` with external hosts and the `azurerm_user_assigned_identity.n8n_workload`
+`override_resource`, or the plan-time value is unknown (the module-managed
+Redis hostname is a post-apply attribute) and the assertion fails with
+"Unknown condition value"; the base run's `values` are unknown for that
+reason, so new default-shape assertions belong in their own run. In jq, `|`
+binds looser than `and`, so `[...] | length == 0 and (.spec...)` evaluates
+the right-hand side against the filtered array, not the document;
+parenthesize each side.
+
 ## What this repo is
 
 `terraform-azurerm-n8n` is a Terraform module that deploys a **production-grade,

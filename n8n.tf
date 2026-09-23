@@ -182,11 +182,12 @@ resource "kubernetes_secret" "n8n_task_runners" {
 }
 
 # ── Helm release ──────────────────────────────────────────────────────────────
-# The chart is pinned to the AWS sibling's validated 1.10 line. The application
-# and task-runner images are pinned to one n8n version so storage and runner
-# protocol changes cannot drift between pod families. Explicit multiMain.setup,
-# wait, atomic, cleanup, and timeout settings preserve the migration-leader and
-# rollback safeguards from the former workload tier.
+# The chart is pinned to 1.13.0 (see var.n8n_chart_version for the delta
+# since 1.11.0). The application and task-runner images are pinned to one n8n
+# version so storage and runner protocol changes cannot drift between pod
+# families. Explicit multiMain.setup, wait, atomic, cleanup, and timeout
+# settings preserve the migration-leader and rollback safeguards from the
+# former workload tier.
 resource "helm_release" "n8n" {
   name            = "n8n"
   repository      = "oci://ghcr.io/n8n-io/n8n-helm-chart"
@@ -212,14 +213,21 @@ resource "helm_release" "n8n" {
       }
     }
 
-    # The chart renders spec.replicas unconditionally for all three workload
-    # Deployments. Use each autoscaler's minimum so a Helm upgrade at the floor
-    # does not scale the Deployment down before its autoscaler reconciles.
-    # Single-main (local.n8n_main_multi_enabled = false) sets top-level
-    # replicaCount instead — the chart's deployment-main.yaml selects between
-    # multiMain.replicas and replicaCount based on multiMain.enabled. The
-    # pinned schema requires multiMain.replicas >= 2 only while enabled, so
-    # leaving it at the configured minimum is safe on both branches.
+    # spec.replicas ownership differs per Deployment on chart 1.13.0:
+    # - main: the chart renders it unconditionally (multiMain.replicas or
+    #   replicaCount, selected by multiMain.enabled), so it is set to the HPA
+    #   floor and a Helm upgrade at the floor never scales main down first.
+    # - worker: the chart omits it whenever a KEDA ScaledObject renders for
+    #   the worker (n8n.autoscalerOwnsReplicas, chart #201). This module always
+    #   enables KEDA with non-empty triggers and a floor of at least 1, so the
+    #   ScaledObject owns the count outright; workerReplicaCount below only
+    #   gates whether the worker Deployment exists (0 would remove it).
+    # - webhook-processor: still rendered unconditionally, because this module
+    #   never enables the chart's own webhook KEDA scaler or HPA. scaling.tf's
+    #   HPA targets the Deployment from outside the chart, so the chart has no
+    #   way to know an autoscaler owns it.
+    # The pinned schema requires multiMain.replicas >= 2 only while enabled,
+    # so leaving it at the configured minimum is safe on both branches.
     multiMain = {
       enabled  = local.n8n_main_multi_enabled
       replicas = var.n8n_main_hpa_min_replicas
@@ -267,9 +275,9 @@ resource "helm_release" "n8n" {
       replicaCount                           = var.n8n_webhook_hpa_min_replicas
       disableProductionWebhooksOnMainProcess = true
 
-      # The pinned chart renders executions.data only on main and worker pods
-      # (confirmed unchanged from 1.10.0 through 1.11.0 by diffing chart
-      # templates directly; port-aws-050-enhancements section 1).
+      # The chart renders executions.data only on main and worker pods
+      # (re-checked on 1.13.0: tests/scripts/check-n8n-chart.sh's duplicate
+      # detector fails if the chart ever adds them to webhook pods too).
       # The webhook process also decides retention when a queued run finishes,
       # so it must receive the same defaults. Keep these role-specific to avoid
       # duplicating the chart-owned entries on main and worker containers.
@@ -603,6 +611,12 @@ resource "helm_release" "n8n" {
         cooldownPeriod  = 300
         minReplicaCount = var.n8n_worker_keda_min_replicas
         maxReplicaCount = var.n8n_worker_keda_max_replicas
+        # Rendered as ScaledObject annotations by the chart (autoscaling.keda.sh/
+        # paused, paused-replicas). A null count renders as YAML null, which the
+        # chart's kindIs "invalid" guard treats as unset; the schema types it
+        # ["integer", "null"], so no conditional merge is needed.
+        pause              = var.n8n_worker_keda_pause
+        pausedReplicaCount = var.n8n_worker_keda_paused_replica_count
         triggers = [
           for list_name in local.n8n_bull_queue_keys : {
             type = "redis"
@@ -713,6 +727,13 @@ check "task_runner_image_tag_requires_task_runners" {
   assert {
     condition     = var.n8n_task_runner_image_tag != null ? var.n8n_task_runners_enabled : true
     error_message = "n8n_task_runner_image_tag is set while n8n_task_runners_enabled is false, so the tag is inert. Enable task runners or clear the tag."
+  }
+}
+
+check "worker_keda_paused_replica_count_requires_pause" {
+  assert {
+    condition     = var.n8n_worker_keda_paused_replica_count != null ? var.n8n_worker_keda_pause : true
+    error_message = "n8n_worker_keda_paused_replica_count is set while n8n_worker_keda_pause is false. The chart only renders autoscaling.keda.sh/paused-replicas while the ScaledObject is paused, so the count is inert. Set n8n_worker_keda_pause = true or clear the count."
   }
 }
 

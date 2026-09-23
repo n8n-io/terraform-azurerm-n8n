@@ -141,6 +141,9 @@ echo "== Rendering worker pools values fixtures (unauthenticated and authenticat
 export_values worker_pools "$tmp/worker-pools-values.json"
 export_values worker_pools_authenticated "$tmp/worker-pools-auth-values.json"
 
+echo "== Rendering paused worker autoscaling values fixture (pause with a zero hold count) =="
+export_values worker_pause "$tmp/worker-pause-values.json"
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
@@ -182,6 +185,8 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
   render "$tmp/worker-extra-env-values.json" worker-extra-env "$template"
 done
 
+render "$tmp/worker-pause-values.json" worker-pause scaledobject-worker
+
 # Against the preview chart: Helm's schema validation runs on every one of
 # these calls, so a values shape the workerGroups schema rejects (for example
 # an empty authenticationRef.name) fails here, not at apply.
@@ -212,8 +217,11 @@ for template in deployment-worker deployment-webhook-processor; do
     || { echo "FAIL: ${template} unexpectedly overrides .spec.strategy" >&2; exit 1; }
 done
 
-jq -e --argjson n "$worker_min" '.spec.replicas == $n' "$tmp/multi-main-deployment-worker.json" >/dev/null \
-  || { echo "FAIL: deployment-worker.spec.replicas != n8n_worker_keda_min_replicas" >&2; exit 1; }
+# Chart >= 1.13.0 (#201) leaves spec.replicas off the worker Deployment once a
+# KEDA ScaledObject renders for it, which this module's configuration always
+# does; the ScaledObject's minReplicaCount (asserted below) is the floor.
+jq -e '(.spec | has("replicas")) | not' "$tmp/multi-main-deployment-worker.json" >/dev/null \
+  || { echo "FAIL: deployment-worker must leave .spec.replicas to KEDA (chart 1.13.0 omits it once the worker ScaledObject renders)" >&2; exit 1; }
 
 jq -e --argjson n "$webhook_min" '.spec.replicas == $n' "$tmp/multi-main-deployment-webhook-processor.json" >/dev/null \
   || { echo "FAIL: deployment-webhook-processor.spec.replicas != n8n_webhook_hpa_min_replicas" >&2; exit 1; }
@@ -234,6 +242,19 @@ jq -e --argjson mn "$worker_min" --argjson mx "$worker_max" --argjson jobs "$wor
   and (.spec.triggers | all(.metadata.listLength == ($jobs | tostring)))
 ' "$tmp/multi-main-scaledobject-worker.json" >/dev/null \
   || { echo "FAIL: worker ScaledObject bounds/triggers do not match n8n_worker_keda_* variables" >&2; exit 1; }
+
+# Default fixture: pause inputs at their defaults must add no annotations at
+# all (the chart writes the key only when there is something to put in it),
+# and pausedReplicaCount: null must pass the typed keda schema.
+jq -e '(.metadata.annotations // {}) | to_entries | map(select(.key | startswith("autoscaling.keda.sh/paused"))) | length == 0' \
+  "$tmp/multi-main-scaledobject-worker.json" >/dev/null \
+  || { echo "FAIL: worker ScaledObject carries a KEDA pause annotation in the default fixture (n8n_worker_keda_pause false)" >&2; exit 1; }
+
+jq -e '
+  .metadata.annotations["autoscaling.keda.sh/paused"] == "true"
+  and .metadata.annotations["autoscaling.keda.sh/paused-replicas"] == "0"
+' "$tmp/worker-pause-scaledobject-worker.json" >/dev/null \
+  || { echo "FAIL: worker ScaledObject must carry autoscaling.keda.sh/paused=true and paused-replicas=0 when n8n_worker_keda_pause is true with a zero hold count" >&2; exit 1; }
 
 echo "PASS: deployment families, main HPA/PDB, and worker KEDA match the module's variables"
 
@@ -406,23 +427,27 @@ echo "PASS: the application heap ceiling renders exactly one NODE_OPTIONS entry 
 
 echo "== Verify caller-managed task-runner launcher configuration manifests (customConfig mount) =="
 
-for template in deployment-main deployment-worker; do
-  jq -e '
-    (.spec.template.spec.containers | map(select(.name == "task-runner"))[0].volumeMounts | map(select(.name == "task-runner-config"))[0])
-    == {"name": "task-runner-config", "mountPath": "/etc/n8n-task-runners.json", "subPath": "n8n-task-runners.json", "readOnly": true}
-  ' "$tmp/task-runner-config-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} task-runner sidecar must mount the caller-managed ConfigMap key at /etc/n8n-task-runners.json using subPath" >&2; exit 1; }
-
-  jq -e '
-    [.spec.template.spec.volumes[] | select(.name == "task-runner-config")][0].configMap.name == "n8n-task-runner-launcher"
-  ' "$tmp/task-runner-config-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} pod volumes must reference the caller-supplied ConfigMap name for task-runner-config" >&2; exit 1; }
-done
+# Chart 1.13.0 (#179) renders the task-runner sidecar on main only in
+# standalone mode; this module always runs queue mode, so only the worker
+# carries the sidecar and the launcher mount.
+jq -e '
+  (.spec.template.spec.containers | map(select(.name == "task-runner"))[0].volumeMounts | map(select(.name == "task-runner-config"))[0])
+  == {"name": "task-runner-config", "mountPath": "/etc/n8n-task-runners.json", "subPath": "n8n-task-runners.json", "readOnly": true}
+' "$tmp/task-runner-config-deployment-worker.json" >/dev/null \
+  || { echo "FAIL: deployment-worker task-runner sidecar must mount the caller-managed ConfigMap key at /etc/n8n-task-runners.json using subPath" >&2; exit 1; }
 
 jq -e '
-  [.spec.template.spec.containers[] | select(.name == "task-runner")] | length == 0
-' "$tmp/task-runner-config-deployment-webhook-processor.json" >/dev/null \
-  || { echo "FAIL: deployment-webhook-processor must gain no task-runner sidecar or launcher mount" >&2; exit 1; }
+  [.spec.template.spec.volumes[] | select(.name == "task-runner-config")][0].configMap.name == "n8n-task-runner-launcher"
+' "$tmp/task-runner-config-deployment-worker.json" >/dev/null \
+  || { echo "FAIL: deployment-worker pod volumes must reference the caller-supplied ConfigMap name for task-runner-config" >&2; exit 1; }
+
+for template in deployment-main deployment-webhook-processor; do
+  jq -e '
+    ([.spec.template.spec.containers[] | select(.name == "task-runner")] | length == 0)
+    and ([.spec.template.spec.volumes[]? | select(.name == "task-runner-config")] | length == 0)
+  ' "$tmp/task-runner-config-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must gain no task-runner sidecar or launcher mount (chart 1.13.0 renders the main sidecar only in standalone mode)" >&2; exit 1; }
+done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   jq -e '
@@ -431,7 +456,7 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
     || { echo "FAIL: ${template} unexpectedly mounts a task-runner-config volume in the default fixture (n8n_task_runner_custom_config null)" >&2; exit 1; }
 done
 
-echo "PASS: caller-managed task-runner launcher configuration mounts on main/worker sidecars only, with an exact file path and subPath, and is omitted by default"
+echo "PASS: caller-managed task-runner launcher configuration mounts on the worker sidecar only, with an exact file path and subPath, and is omitted by default"
 
 echo "== Verify pod DNS configuration manifests (dnsConfig) =="
 

@@ -717,7 +717,17 @@ detect_topology
 header "Pod readiness"
 
 check_deployment "n8n-main"              "$MAIN_MIN"    "n8n-main"
-check_deployment "n8n-worker"            "$WORKER_MIN"  "n8n-worker"
+# n8n_worker_keda_pause annotates the ScaledObject; while paused the worker
+# count is whatever was held (possibly 0), so the floor assertion is moot.
+worker_paused=$(kubectl get scaledobject n8n-worker -n "$NAMESPACE" \
+  -o jsonpath='{.metadata.annotations.autoscaling\.keda\.sh/paused}' 2>/dev/null || echo "")
+if [[ "$worker_paused" == "true" ]]; then
+  held=$(kubectl get scaledobject n8n-worker -n "$NAMESPACE" \
+    -o jsonpath='{.metadata.annotations.autoscaling\.keda\.sh/paused-replicas}' 2>/dev/null || echo "")
+  skip "n8n-worker floor check: KEDA autoscaling is paused (n8n_worker_keda_pause = true, held count: ${held:-current})"
+else
+  check_deployment "n8n-worker"          "$WORKER_MIN"  "n8n-worker"
+fi
 check_deployment "n8n-webhook-processor" "$WEBHOOK_MIN" "n8n-webhook-processor"
 
 # ── Application version ───────────────────────────────────────────────────────
