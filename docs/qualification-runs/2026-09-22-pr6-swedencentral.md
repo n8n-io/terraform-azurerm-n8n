@@ -44,8 +44,11 @@ exercise the new input), `common_tags` for the test owner, and
 `n8n_chart_version = "1.11.0-preview.workerpools.1"` (required by the example).
 Self-signed TLS from `modules/tls-self-signed`. The example-owned public zone
 `pr6.n8ns.net` was delegated by hand from the shared `n8ns.net` Azure DNS zone
-so public resolution could be verified; the NS records are removed together
-with the stack at the end of the run.
+so public resolution could be verified. At the end of the run the four NS
+records were removed; the now-empty `pr6` NS record set itself could not be
+deleted because the shared zone carries a `CanNotDelete` lock that child
+record sets inherit (the same inheritance `docs/deletion-safety.md`
+describes). It is inert and can be deleted by whoever holds the lock.
 
 ## Region note
 
@@ -144,9 +147,11 @@ the default queue still executes end to end.
 
 **Result:** PASS for the `germanywestcentral` partial stack (59 resources
 destroyed cleanly after the Redis orphan was removed by hand). The
-`swedencentral` stack was still running when this report was committed, kept
-for the manual project-to-pool routing check listed below; its destroy is the
-last step of the run and is recorded in the follow-up commit.
+`swedencentral` stack (67 resources, pools active) was destroyed after the
+PR merged: `Destroy complete! Resources: 67 destroyed`, no `pr6*` resource
+groups, no Managed Redis orphan, and no soft-deleted Key Vault left behind.
+The manual project-to-pool routing check below was not performed before the
+destroy.
 
 ### Cases 2, 4 to 14
 
