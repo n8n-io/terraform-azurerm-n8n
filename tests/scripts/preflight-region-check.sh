@@ -36,6 +36,9 @@ Usage (from the root you will apply, e.g. examples/small):
     --dir PATH           Terraform root to plan (default: current directory)
     --region NAME        skip the plan; use this region + flag/root defaults
     --vm-size SKU        aks_node_vm_size          (root default Standard_D4s_v4)
+    --node-count-max N   aks_node_count_max        (root default 6; each of the system and
+                                                     user node pools scales 0..N independently,
+                                                     so peak demand is 2 x N nodes of --vm-size)
     --zones 1,2,3        aks_availability_zones    (root default 1,2,3; pass '' for a zone-less region)
     --pg-version N       pg_version                (root default 16)
     --pg-sku SKU         pg_sku_name               (root default GP_Standard_D2s_v3)
@@ -47,13 +50,14 @@ EOF
 
 # `zones_set` distinguishes an explicit `--zones ''` (zone-less region) from
 # an omitted flag, which falls back to the plan or the root default.
-dir=. region='' vm_size='' zones='' zones_set=false pg_version='' pg_sku='' redis_sku='' probe_redis=false
+dir=. region='' vm_size='' node_count_max='' zones='' zones_set=false pg_version='' pg_sku='' redis_sku='' probe_redis=false
 need_value() { (($# >= 2)) || { echo "Option $1 requires a value" >&2; usage >&2; exit 2; }; }
 while (($#)); do
   case $1 in
     --dir) need_value "$@"; dir=$2; shift 2 ;;
     --region) need_value "$@"; region=$2; shift 2 ;;
     --vm-size) need_value "$@"; vm_size=$2; shift 2 ;;
+    --node-count-max) need_value "$@"; node_count_max=$2; shift 2 ;;
     --zones) need_value "$@"; zones=$2; zones_set=true; shift 2 ;;
     --pg-version) need_value "$@"; pg_version=$2; shift 2 ;;
     --pg-sku) need_value "$@"; pg_sku=$2; shift 2 ;;
@@ -100,13 +104,14 @@ if [[ -z $region ]]; then
     *) echo "plan spans several regions ($locations); pass --region to pick one" >&2; exit 1 ;;
   esac
   [[ -n $vm_size ]] || vm_size=$(res azurerm_kubernetes_cluster default_node_pool.0.vm_size)
+  [[ -n $node_count_max ]] || node_count_max=$(res azurerm_kubernetes_cluster default_node_pool.0.max_count)
   $zones_set || zones=$(res azurerm_kubernetes_cluster default_node_pool.0.zones | jq -r 'join(",")' 2>/dev/null || true)
   [[ -n $pg_version ]] || pg_version=$(res azurerm_postgresql_flexible_server version)
   [[ -n $pg_sku ]] || pg_sku=$(res azurerm_postgresql_flexible_server sku_name)
   [[ -n $redis_sku ]] || redis_sku=$(res azurerm_managed_redis sku_name)
   source="terraform plan of $dir"
 else
-  : "${vm_size:=Standard_D4s_v4}" "${pg_version:=16}" "${pg_sku:=GP_Standard_D2s_v3}" "${redis_sku:=Balanced_B1}"
+  : "${vm_size:=Standard_D4s_v4}" "${node_count_max:=6}" "${pg_version:=16}" "${pg_sku:=GP_Standard_D2s_v3}" "${redis_sku:=Balanced_B1}"
   $zones_set || zones=1,2,3
   echo "NOTE: --region given; checking root-module defaults and flags, not the terraform.tfvars of $dir." >&2
 fi
@@ -129,7 +134,7 @@ fi
 [[ $(jq 'length' "$tmp/loc.json") -eq 1 ]] \
   || { echo "Unknown region '$region' for this subscription (az account list-locations -o table lists the valid names)" >&2; exit 1; }
 echo "Region: $region   Subscription: $sub"
-echo "Inputs from $source: vm=${vm_size:-n/a} zones=[${zones:-none}] pg=${pg_version:-n/a}/${pg_sku:-n/a} redis=${redis_sku:-n/a}"
+echo "Inputs from $source: vm=${vm_size:-n/a} node_count_max=${node_count_max:-n/a} zones=[${zones:-none}] pg=${pg_version:-n/a}/${pg_sku:-n/a} redis=${redis_sku:-n/a}"
 
 echo
 echo "== Resource providers =="
@@ -163,6 +168,54 @@ else
     pass "$vm_size offered with no location-level subscription restrictions"
     hcl=$([[ -n $offered ]] && sed 's/[^,]*/"&"/g' <<<"$offered" || true)
     fail "zones [$missing] not offered for $vm_size in $region; region offers [${offered:-none}] -> set aks_availability_zones = [$hcl]"
+  fi
+fi
+
+echo
+echo "== vCPU quota headroom: ${vm_size:-n/a} x $((2 * ${node_count_max:-0})) nodes (system + user pool, each 0..${node_count_max:-n/a}) =="
+# AKS SKU/zone availability (checked above) says nothing about whether the
+# subscription's regional vCPU quota can actually hold the autoscaler's
+# ceiling; a quota wall surfaces only ~10-20 min into apply, as
+# helm_release.n8n's 600s timeout expires waiting for a node the autoscaler
+# could not add (Error: OperationNotAllowed, "Operation results in exceeding
+# quota limits"). Both node pools share var.aks_node_vm_size and each scales
+# 0..aks_node_count_max independently (aks.tf), so worst-case demand is both
+# pools simultaneously at the ceiling: 2 x aks_node_count_max nodes.
+if [[ -z $vm_size ]]; then
+  skip "no module-managed AKS cluster in the plan (create_aks = false); nothing to check"
+elif [[ ! -s "$tmp/skus.json" ]]; then
+  skip "SKU lookup for $vm_size did not run or failed above; vCPU quota unchecked"
+else
+  vcpus=$(jq -r --arg n "$vm_size" '[.[] | select(.name == $n)][0].capabilities[]? | select(.name == "vCPUs") | .value' "$tmp/skus.json")
+  family=$(jq -r --arg n "$vm_size" '[.[] | select(.name == $n)][0].family // empty' "$tmp/skus.json")
+  if [[ -z $vcpus || -z $family ]]; then
+    skip "could not read vCPU count/family for $vm_size from the SKU lookup above; vCPU quota unchecked"
+  elif ! az_json "$tmp/usage.json" vm list-usage -l "$region"; then
+    fail "az vm list-usage failed: $(az_err)"
+  else
+    needed=$((2 * node_count_max * vcpus))
+    # "cores" is the subscription's aggregate regional vCPU cap across every
+    # VM family; the family entry (e.g. standardDSv5Family) is a separate,
+    # usually tighter, per-family cap. Both must clear the ceiling.
+    check_quota() {
+      local key=$1 label=$2
+      local row current limit
+      row=$(jq -c --arg n "$key" '[.[] | select(.name.value == $n)][0] // empty' "$tmp/usage.json")
+      if [[ -z $row ]]; then
+        skip "$label ('$key') not found in az vm list-usage output for $region; vCPU quota unchecked for it"
+        return
+      fi
+      current=$(jq -r '.currentValue' <<<"$row")
+      limit=$(jq -r '.limit' <<<"$row")
+      if ((current + needed <= limit)); then
+        pass "$label: $current used + $needed needed <= $limit limit"
+      else
+        fail "$label: $current used + $needed needed > $limit limit -> request a quota increase (az quota update --resource-name $key --scope /subscriptions/<id>/providers/Microsoft.Compute/locations/$region --limit-object value=<new> --resource-type dedicated), pick a smaller aks_node_vm_size/aks_node_count_max, or try another region"
+      fi
+    }
+    check_quota "$family" "$vm_size family quota"
+    check_quota cores "Regional aggregate vCPU quota"
+    echo "  (advisory: currentValue already includes any existing nodes of this SKU, e.g. a cluster this apply will resize rather than create; a false failure there is safe to verify with az vm list-usage directly.)"
   fi
 fi
 

@@ -716,7 +716,7 @@ concern, and one deliberate nested call to the directly composable
 | `examples/small/`, `examples/medium/`, `examples/large/` | End-to-end sizing examples with caller-owned Azure foundations, a Key Vault certificate helper, and one root `module "n8n"` call. |
 | `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |
 | `tests/scripts/smoke-test.sh`     | Post-`apply` smoke test for live deployments.               |
-| `tests/scripts/preflight-region-check.sh` | Pre-`apply` region/subscription capability check (AKS SKU zones, PostgreSQL Flexible Server versions/SKU, optional Managed Redis capacity probe); reads region and SKUs from the caller's own `terraform plan`. |
+| `tests/scripts/preflight-region-check.sh` | Pre-`apply` region/subscription capability check (AKS SKU zones, subscription vCPU quota headroom, PostgreSQL Flexible Server versions/SKU, optional Managed Redis capacity probe); reads region, sizing, and SKUs from the caller's own `terraform plan`. |
 | `docs/`                           | Long-form supplementary docs (upgrading n8n and the chart, troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
 | `README.md`                       | Human entry point — architecture, prerequisites, usage, and the auto-generated Reference block. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |
@@ -1014,14 +1014,20 @@ a populated `terraform.tfvars`, but **never apply from CI** in this repo.
 
 ### Running `tests/scripts/preflight-region-check.sh` before a live apply
 
-Three failures only surface 10-20 minutes into an apply and are region or
+Four failures only surface 10-20 minutes into an apply and are region or
 subscription gaps, not module bugs: AKS `AvailabilityZoneNotSupported`,
+an AKS autoscaler stuck in `Backoff` on `OperationNotAllowed` (subscription
+vCPU quota, discovered on the port-aws-050-enhancements worker-pools live run
+and the feat/chart-1.13.0 live run: the same subscription's regional `cores`
+limit was 10, two system plus two user `Standard_D2s_v5` nodes already
+consume 8, and the autoscaler cannot add the node two main pods need),
 PostgreSQL Flexible Server `ParameterOutOfRange 'Version' ... in: []`, and
-Managed Redis `InsufficientCapacity` (see the first three entries of
+Managed Redis `InsufficientCapacity` (see the first four entries of
 `docs/troubleshooting.md`). Run the preflight from the root you will apply;
 with no flags it plans that root (`-refresh=false`) and reads the region, VM
-size, zones, PostgreSQL version/SKU, and Redis SKU the plan would request, so
-the check matches the caller's configuration rather than the module defaults:
+size, node-count ceiling, zones, PostgreSQL version/SKU, and Redis SKU the
+plan would request, so the check matches the caller's configuration rather
+than the module defaults:
 
 ```bash
 az login
@@ -1031,20 +1037,30 @@ terraform init                                          # populated terraform.tf
 ../../tests/scripts/preflight-region-check.sh --probe-redis   # also creates+deletes a throwaway Managed Redis cluster
 ```
 
-Every value can be overridden (`--region`, `--vm-size`, `--zones`,
-`--pg-version`, `--pg-sku`, `--redis-sku`); `--region` alone skips the plan.
-Azure has no capacity API for Managed Redis, so only the probe answers that
-question, and only for the moment it runs. It needs `jq` and Azure CLI
-`>= 2.75` (enforced by the script: older releases nest the PostgreSQL
-capability payload differently, and the on-demand `redisenterprise` extension
-declares the same floor). Like the smoke test it needs live credentials for
-every real check; CI runs `bash -n`, `shellcheck`, and `--help` against it,
-and `openspec/init.sh` does the same (`shellcheck` only when installed).
-The plan reader filters `.mode == "managed"` so
-`data.azurerm_kubernetes_cluster.existing` cannot hijack region detection,
-and refuses a plan spanning several regions. Note that `az aks list-vm-skus` does exist (in the `aks-preview`
-extension); the script uses the core-CLI `az vm list-skus` so it works
-without extensions, not because the AKS command is missing.
+Every value can be overridden (`--region`, `--vm-size`, `--node-count-max`,
+`--zones`, `--pg-version`, `--pg-sku`, `--redis-sku`); `--region` alone
+skips the plan. The vCPU quota check reads `az vm list-usage` for both the
+VM family (e.g. `standardDSv5Family`) and the aggregate `cores` cap against
+worst-case demand of `aks_node_vm_size` x `2 x aks_node_count_max` (system
+and user pool each scaling `0..aks_node_count_max` independently, aks.tf);
+it is advisory on an existing cluster, since `currentValue` already counts
+that cluster's own nodes toward the total. Azure has no capacity API for
+Managed Redis, so only `--probe-redis` answers that question, and only for
+the moment it runs. It needs `jq` and Azure CLI `>= 2.75` (enforced by the
+script: older releases nest the PostgreSQL capability payload differently,
+and the on-demand `redisenterprise` extension declares the same floor).
+Like the smoke test it needs live credentials for every real check; CI runs
+`bash -n`, `shellcheck`, and `--help` against it, and `openspec/init.sh`
+does the same (`shellcheck` only when installed). The plan reader filters
+`.mode == "managed"` so `data.azurerm_kubernetes_cluster.existing` cannot
+hijack region detection, and refuses a plan spanning several regions. Note
+that `az aks list-vm-skus` does exist (in the `aks-preview` extension); the
+script uses the core-CLI `az vm list-skus` so it works without extensions,
+not because the AKS command is missing. A quota increase via `az quota
+update` is often auto-approved within a minute, but the autoscaler's own
+`Backoff` on the failed scale-up (observed up to 10-15 min) still has to
+expire before a retry succeeds; retrying immediately after the quota
+change can still fail once more.
 
 ### Running `tests/scripts/smoke-test.sh` against a live deployment
 

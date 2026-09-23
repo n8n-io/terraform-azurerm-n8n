@@ -21,13 +21,14 @@ syntax-checks and shellchecks the preflight script).
 
 `preflight-region-check.sh` answers one question before a 15-30 minute
 apply: can this subscription actually get the managed services the module
-asks for in this region? Three failures observed in live runs only surface
+asks for in this region? Four failures observed in live runs only surface
 after the VNet, Key Vault, and Application Gateway already exist, and are
 region or subscription gaps rather than module bugs:
 
 | Failure | Check |
 |---|---|
 | AKS `AvailabilityZoneNotSupported` | `az vm list-skus` for the planned `aks_node_vm_size`: SKU offered, no location-level subscription restriction, every planned zone in the SKU's zone list (zone-level restrictions are subtracted first) |
+| `helm_release.n8n` times out; AKS autoscaler stuck in `Backoff` on `OperationNotAllowed` | `az vm list-usage` for the planned `aks_node_vm_size`'s VM family and the aggregate `cores` cap, against worst-case demand of `aks_node_vm_size x 2 x aks_node_count_max` (system and user node pool each scale `0..aks_node_count_max` independently). Advisory on an existing cluster, since `currentValue` already counts its own nodes |
 | PostgreSQL Flexible Server `ParameterOutOfRange: 'Version' should be in: []` | `az postgres flexible-server list-skus`: at least one version offered, the planned `pg_version` among them, the planned `pg_sku_name` under its edition |
 | Azure Managed Redis `InsufficientCapacity` | Opt-in `--probe-redis` only: creates a throwaway cluster of the planned `redis_sku_name` in a tagged `n8n-preflight-*` resource group and deletes it. Azure has no capacity API, so the answer is valid only for the moment it runs |
 

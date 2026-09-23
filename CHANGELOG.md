@@ -106,6 +106,20 @@ image instead of a floating tag.
   `az vm list-skus`. `tests/scripts/README.md` documents the script; CI runs
   `bash -n`, `shellcheck`, and `--help` against it, and `openspec/init.sh`
   does the same (`shellcheck` when available).
+- **`tests/scripts/preflight-region-check.sh` now checks subscription vCPU
+  quota headroom**, a fourth region/subscription gap that surfaces the same
+  way as the three above: `helm_release.n8n` times out after
+  `n8n_helm_timeout` (default 600s) and rolls back because the AKS
+  autoscaler is stuck in `Backoff` on `OperationNotAllowed`, unable to add a
+  node either pool needs. Reads `az vm list-usage` for both the VM family
+  (e.g. `standardDSv5Family`) and the aggregate `cores` cap against
+  worst-case demand of `aks_node_vm_size x 2 x aks_node_count_max` (the
+  system and user node pools each scale `0..aks_node_count_max`
+  independently). New `--node-count-max` flag, defaulting from the plan or
+  the root default of 6 like the other sizing flags. Advisory on an
+  existing cluster, since `currentValue` already counts its own nodes.
+  `docs/troubleshooting.md` gained a fourth entry; the intro line on both it
+  and `README.md` now says "four" instead of "three".
 - **Optional single-main queue mode** (`n8n_main_hpa_min_replicas = 1`): a
   Business-compatible topology for licenses without
   `feat:multipleMainInstances`. Clamps the main HPA to 1/1 regardless of
