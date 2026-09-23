@@ -201,6 +201,19 @@ locals {
     )
   }
 
+  # Verified upstream 1.12.0 (n8n-hosting #179) removes task-runner sidecars
+  # from queue-mode mains, unchanged through 1.13.0 (that release only reworks
+  # worker/webhook-processor replica ownership and bumps appVersion;
+  # deployment-main.yaml's runner placement is untouched). Previews, older or
+  # future releases and any chart this list has not been checked against keep
+  # the conservative main-sidecar allowance until their topology is verified.
+  # Same shape as terraform-aws-n8n's n8n_chart_has_worker_only_runners, minus
+  # its repository check (helm_release.n8n hardcodes the upstream OCI
+  # repository here) and its build-metadata strip (n8n_chart_version's
+  # validation never admits a "+build" suffix).
+  n8n_chart_has_worker_only_runners = contains(["1.12.0", "1.13.0"], var.n8n_chart_version)
+  n8n_main_task_runner_cpu_millis   = local.n8n_chart_has_worker_only_runners ? 0 : local.n8n_cpu_request_millis.task_runner
+
   # Each n8n_worker_pools entry (worker-pools.tf) autoscales through its own
   # KEDA ScaledObject and can reach its own max_replicas independently of the
   # default worker deployment, and a pool that overrides nothing inherits
@@ -229,12 +242,10 @@ locals {
   # Use the effective main ceiling (locals.tf) rather than the raw configured
   # maximum so a higher unused main maximum in single-main mode does not
   # inflate modeled demand, since the chart never schedules more than one main
-  # replica in that mode regardless of the configured HPA maximum. Main pods
-  # carry no task-runner sidecar: chart 1.13.0 (#179) renders it only in
-  # standalone mode, and this module always runs queue mode, where n8n
-  # offloads manual executions to workers.
+  # replica in that mode regardless of the configured HPA maximum. The main
+  # sidecar allowance is chart-dependent (n8n_main_task_runner_cpu_millis).
   n8n_peak_cpu_request_millis = (
-    local.n8n_main_hpa_effective_max_replicas * local.n8n_cpu_request_millis.main +
+    local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_main_task_runner_cpu_millis) +
     var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
     var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook +
     local.n8n_cpu_request_millis.redis_exporter +
@@ -260,7 +271,7 @@ check "autoscaling_maxima_fit_aks_capacity" {
     error_message = join("", [
       "Autoscaler maxima request ${local.n8n_peak_cpu_request_millis}m CPU, but the modeled AKS supply leaves only ",
       "${local.n8n_schedulable_cpu_millis}m schedulable for n8n. Demand is main ",
-      "${local.n8n_main_hpa_effective_max_replicas} x ${local.n8n_cpu_request_millis.main}m, worker ",
+      "${local.n8n_main_hpa_effective_max_replicas} x ${local.n8n_cpu_request_millis.main + local.n8n_main_task_runner_cpu_millis}m, worker ",
       "${var.n8n_worker_keda_max_replicas} x ${local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner}m, and webhook ",
       "${var.n8n_webhook_hpa_max_replicas} x ${local.n8n_cpu_request_millis.webhook}m, plus ${local.n8n_cpu_request_millis.redis_exporter}m ",
       "for the optional Redis exporter when enabled",

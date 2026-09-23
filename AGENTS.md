@@ -593,9 +593,13 @@ worker Deployment to 1 replica until the KEDA-created HPA restores
 gate. Second, `n8n.mainTaskRunnersEnabled` (n8n-hosting #179) renders the
 task-runner sidecar, its env, and the launcher ConfigMap mount on main only
 in standalone mode; this module always runs queue mode, so only workers
-carry the sidecar, `scaling.tf`'s capacity model no longer multiplies the
-main ceiling by the sidecar request, and the launcher-config assertions in
-`check-n8n-chart.sh` expect no sidecar on main. `keda.worker.pause` /
+carry the sidecar, `scaling.tf`'s capacity model drops the sidecar request
+from the main ceiling only for the verified upstream charts `1.12.0` and
+`1.13.0` (`local.n8n_chart_has_worker_only_runners`, the same version-gated
+shape as `terraform-aws-n8n` minus its repository check, since this module
+hardcodes the OCI repository; the `1.11.0`-based worker-pools preview
+chart therefore still counts the main sidecar), and the launcher-config
+assertions in `check-n8n-chart.sh` expect no sidecar on main. `keda.worker.pause` /
 `pausedReplicaCount` are exposed as `n8n_worker_keda_pause` /
 `n8n_worker_keda_paused_replica_count`; the chart's webhook-processor pause
 is intentionally not exposed because no webhook `ScaledObject` exists here
@@ -708,7 +712,7 @@ concern, and one deliberate nested call to the directly composable
 | `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |
 | `tests/scripts/smoke-test.sh`     | Post-`apply` smoke test for live deployments.               |
 | `tests/scripts/preflight-region-check.sh` | Pre-`apply` region/subscription capability check (AKS SKU zones, PostgreSQL Flexible Server versions/SKU, optional Managed Redis capacity probe); reads region and SKUs from the caller's own `terraform plan`. |
-| `docs/`                           | Long-form supplementary docs (troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
+| `docs/`                           | Long-form supplementary docs (upgrading n8n and the chart, troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
 | `README.md`                       | Human entry point — architecture, prerequisites, usage, and the auto-generated Reference block. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |
 | `.copywrite.hcl`                  | Enforces the `# Copyright n8n GmbH 2025` / `# SPDX-License-Identifier: MIT` header on every `.tf`. |

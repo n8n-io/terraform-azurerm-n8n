@@ -4047,7 +4047,7 @@ run "raising_unused_single_main_maximum_does_not_raise_capacity_demand" {
   }
 
   assert {
-    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == local.n8n_cpu_request_millis.main + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == (local.n8n_cpu_request_millis.main + local.n8n_main_task_runner_cpu_millis) + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
     error_message = "Single-main capacity demand must use the clamped effective ceiling of 1 main replica, not the configured maximum."
   }
 }
@@ -4061,7 +4061,7 @@ run "single_main_high_maximum_matches_capacity_demand_at_maximum_one" {
   }
 
   assert {
-    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == local.n8n_cpu_request_millis.main + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1 && local.n8n_peak_cpu_request_millis == (local.n8n_cpu_request_millis.main + local.n8n_main_task_runner_cpu_millis) + var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) + var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook
     error_message = "Raising the unused single-main maximum from 1 to 20 must not change modeled CPU demand — it must remain identical to the maximum-1 case."
   }
 }
@@ -6881,7 +6881,7 @@ run "redis_exporter_cpu_demand_increases_by_exactly_its_request" {
   assert {
     condition = (
       local.n8n_peak_cpu_request_millis == (
-        local.n8n_main_hpa_effective_max_replicas * local.n8n_cpu_request_millis.main +
+        local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_main_task_runner_cpu_millis) +
         var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
         var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook +
         10
@@ -7268,13 +7268,66 @@ run "capacity_model_counts_each_pool_at_its_ceiling" {
   }
 
   # Pool pods render from the chart's shared worker pod template, so each one
-  # carries the task runner sidecar the default worker pods carry. The
-  # no-pools total (15400m) is main 6 x 1000m (no sidecar on main in queue
-  # mode, chart #179) + worker 10 x 700m + webhook 8 x 300m at this module's
-  # own defaults.
+  # carries the task runner sidecar the default worker pods carry. This run
+  # pins the 1.11.0-based preview chart (pools need it), which is not on the
+  # worker-only-runner list, so main keeps its 200m sidecar allowance: the
+  # no-pools total is main 6 x 1200m + worker 10 x 700m + webhook 8 x 300m
+  # = 16600m at this module's own defaults.
   assert {
-    condition     = local.n8n_peak_cpu_request_millis == 15400 + 9000
-    error_message = "total peak is ${local.n8n_peak_cpu_request_millis}m, expected the no-pools 15400m plus 9000m of pools"
+    condition     = local.n8n_peak_cpu_request_millis == 16600 + 9000
+    error_message = "total peak is ${local.n8n_peak_cpu_request_millis}m, expected the no-pools 16600m (preview chart keeps the main sidecar) plus 9000m of pools"
+  }
+}
+
+# The main-sidecar allowance is version-gated the same way terraform-aws-n8n's
+# n8n_chart_has_worker_only_runners is: only charts verified to place runners
+# on workers alone drop it. Every other version (older, preview, future) keeps
+# the conservative 200m per main replica.
+run "capacity_model_drops_main_runner_on_the_default_chart" {
+  command = plan
+
+  assert {
+    condition     = var.n8n_chart_version == "1.13.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
+    error_message = "Upstream chart 1.13.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
+  }
+}
+
+run "capacity_model_drops_main_runner_on_chart_1_12_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.12.0"
+  }
+
+  assert {
+    condition     = local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
+    error_message = "Upstream chart 1.12.0 introduced worker-only runners and must be modeled the same as 1.13.0."
+  }
+}
+
+run "capacity_model_keeps_main_runner_on_an_older_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0"
+  }
+
+  assert {
+    condition     = !local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 16600
+    error_message = "Chart 1.11.0 still renders the main sidecar, so the model must keep 6 x 200m for main: 16600m expected, got ${local.n8n_peak_cpu_request_millis}m."
+  }
+}
+
+run "capacity_model_keeps_main_runner_on_a_preview_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.13.0-preview.workerpools.1"
+  }
+
+  assert {
+    condition     = !local.n8n_chart_has_worker_only_runners
+    error_message = "A prerelease chart is not on the verified list and must keep the conservative main-sidecar allowance."
   }
 }
 

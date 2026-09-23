@@ -340,14 +340,18 @@ image instead of a floating tag.
     floor no longer writes a static count back over KEDA's decision.
     Webhook processors are unaffected: the module's own HPA is outside the
     chart's view, so the chart keeps rendering `webhookProcessor.replicaCount`.
-  - **Main pods lose the task-runner sidecar** (n8n-hosting #179). In queue
-    mode n8n offloads manual executions to workers and starts no broker on
-    main, so the chart renders the sidecar, its env, and the launcher
-    ConfigMap mount on workers only. Main pods roll once to drop the
-    container; `n8n_task_runner_*` resources now apply to workers alone,
-    and `check.autoscaling_maxima_fit_aks_capacity` no longer adds the
-    sidecar request to the main ceiling (modeled peak demand falls by
-    `n8n_main_hpa_max_replicas x n8n_task_runner_cpu_request`).
+  - **Main pods lose the task-runner sidecar** (n8n-hosting #179, shipped
+    in chart `1.12.0`). In queue mode n8n offloads manual executions to
+    workers and starts no broker on main, so the chart renders the sidecar,
+    its env, and the launcher ConfigMap mount on workers only. Main pods
+    roll once to drop the container; `n8n_task_runner_*` resources now
+    apply to workers alone, and `check.autoscaling_maxima_fit_aks_capacity`
+    stops adding the sidecar request to the main ceiling for the verified
+    upstream charts `1.12.0` and `1.13.0` (`local.n8n_chart_has_worker_only_runners`,
+    the same version-gated shape as `terraform-aws-n8n`; modeled peak
+    demand at the defaults falls from 16600m to 15400m). Any other
+    `n8n_chart_version`, including the `1.11.0`-based worker-pools preview
+    chart, keeps the conservative main-sidecar allowance.
   Inert here: the chart's `image.tag` default moving from floating
   `stable` to its appVersion (this module always sets `n8n_image_tag`),
   and the `keda` block gaining a typed schema (this module's values
@@ -355,7 +359,8 @@ image instead of a floating tag.
   fixture with schema validation on). `queueMode.workerGroups` is still
   unreleased, so `n8n_worker_pools` callers stay on the `1.11.0`-based
   preview chart and do not pick up either change until a new preview
-  build is cut.
+  build is cut. New `docs/upgrading-n8n.md` (the counterpart of the AWS
+  and GCP siblings' guide) carries the per-version upgrade notes.
 - CI toolchain currency: `TF_VERSION` `1.16.2` (was `1.15.1`),
   `TFLINT_VERSION` `v0.64.0` (was `v0.53.0`), pinned `CHECKOV_VERSION`
   `3.3.17` (was unpinned via `bridgecrewio/checkov-action@v12`'s own

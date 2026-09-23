@@ -427,9 +427,9 @@ echo "PASS: the application heap ceiling renders exactly one NODE_OPTIONS entry 
 
 echo "== Verify caller-managed task-runner launcher configuration manifests (customConfig mount) =="
 
-# Chart 1.13.0 (#179) renders the task-runner sidecar on main only in
-# standalone mode; this module always runs queue mode, so only the worker
-# carries the sidecar and the launcher mount.
+# Chart 1.12.0 and later (n8n-hosting #179) render the task-runner sidecar on
+# main only in standalone mode; this module always runs queue mode, so only
+# the worker carries the sidecar and the launcher mount.
 jq -e '
   (.spec.template.spec.containers | map(select(.name == "task-runner"))[0].volumeMounts | map(select(.name == "task-runner-config"))[0])
   == {"name": "task-runner-config", "mountPath": "/etc/n8n-task-runners.json", "subPath": "n8n-task-runners.json", "readOnly": true}
@@ -446,7 +446,7 @@ for template in deployment-main deployment-webhook-processor; do
     ([.spec.template.spec.containers[] | select(.name == "task-runner")] | length == 0)
     and ([.spec.template.spec.volumes[]? | select(.name == "task-runner-config")] | length == 0)
   ' "$tmp/task-runner-config-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} must gain no task-runner sidecar or launcher mount (chart 1.13.0 renders the main sidecar only in standalone mode)" >&2; exit 1; }
+    || { echo "FAIL: ${template} must gain no task-runner sidecar or launcher mount (chart >= 1.12.0 renders the main sidecar only in standalone mode)" >&2; exit 1; }
 done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do

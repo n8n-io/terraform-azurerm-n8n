@@ -1920,7 +1920,7 @@ variable "n8n_task_runner_image_tag" {
 }
 
 variable "n8n_task_runner_cpu_request" {
-  description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every worker replica when task runners are enabled. Main pods carry no sidecar in queue mode (n8n offloads manual executions to workers), so the main ceiling is not multiplied by this."
+  description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every worker replica when task runners are enabled, and for every main replica only when n8n_chart_version is not one of the upstream charts verified to place runners on workers alone (1.12.0 and 1.13.0, n8n-hosting #179): on those, queue-mode main pods carry no sidecar because n8n offloads manual executions to workers, so the main ceiling is not multiplied by this."
   type        = string
   default     = "200m"
   nullable    = false
