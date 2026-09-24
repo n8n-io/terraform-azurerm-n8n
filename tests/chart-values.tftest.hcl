@@ -184,6 +184,23 @@ run "task_runner_config" {
   }
 }
 
+# Rendered by check-n8n-chart.sh as scaledobject-worker: the chart turns these
+# into autoscaling.keda.sh/paused and paused-replicas annotations. 0 is the
+# scale-to-zero case the chart guards against Go's falsy zero.
+run "worker_pause" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 0
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).keda.worker.pause == true && yamldecode(helm_release.n8n.values[0]).keda.worker.pausedReplicaCount == 0
+    error_message = "keda.worker.pause and pausedReplicaCount must carry the module inputs."
+  }
+}
+
 run "dns" {
   command = plan
 

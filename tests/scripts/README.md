@@ -169,10 +169,18 @@ topology or the optional single-main topology
 the rendered chart resources, and branches its main replica/HPA/strategy/PDB/
 leader-election checks accordingly; every other check applies to both.
 
+While the worker `ScaledObject` is paused (`n8n_worker_keda_pause = true`),
+the worker floor check is skipped. When it is paused at
+`n8n_worker_keda_paused_replica_count = 0`, the checks that need a running
+worker (worker application version, worker Redis connectivity, and the
+workflow execution round-trip, whose job would wait in Redis by design) are
+skipped too. The optional load test is skipped for any pause, since KEDA
+cannot scale while paused.
+
 ### Offline self-test
 
-`detect_topology()` and `check_deployment()` — the two functions the
-topology branching depends on — can be exercised without Azure credentials,
+`detect_topology()` and `check_deployment()` (the two functions the
+topology branching depends on) and `detect_worker_pause()` can be exercised without Azure credentials,
 a live cluster, or Terraform state:
 
 ```bash
@@ -181,13 +189,16 @@ SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
 
 This stubs `kubectl` with synthetic fixtures for intentional single-main,
 healthy multi-main, degraded multi-main with one ready pod of two desired,
-and invalid HPA/strategy/PDB combinations. It asserts the expected
+invalid HPA/strategy/PDB combinations, and worker `ScaledObject` pause
+annotations (unpaused, paused at the current count, paused at 0, paused at
+2). It asserts the expected
 topology/floor/pass-fail outcome for each and exits before the script's
 `Preflight` section (which requires `az login`). Missing or inconsistent
 topology safeguards fail the live smoke test rather than producing warnings.
 The self-test summary includes intentional failures from negative fixtures;
 its final exit code reports whether all fixtures behaved as expected. Run it
-after touching `detect_topology()`, `check_deployment()`, or their fixtures. This self-test (only) runs in CI on
+after touching `detect_topology()`, `check_deployment()`,
+`detect_worker_pause()`, or their fixtures. This self-test (only) runs in CI on
 every pull request; the live smoke test past it needs a real cluster and
 stays a manual, post-`apply` step — see "Smoke test" above.
 

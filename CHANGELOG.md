@@ -301,6 +301,27 @@ image instead of a floating tag.
   `TriggerAuthentication` reference (and no credential in trigger
   metadata), pods carry `N8N_WORKER_POOL_NAME`, and the mains carry
   `N8N_WORKER_POOLS_ENABLED`.
+- **`n8n_worker_keda_pause` and `n8n_worker_keda_paused_replica_count`**
+  (chart `keda.worker.pause` / `pausedReplicaCount`, n8n-hosting #177).
+  `pause = true` annotates the worker `ScaledObject` with
+  `autoscaling.keda.sh/paused` so workers hold their current count; a
+  `paused_replica_count` (0 included) adds `paused-replicas` and holds
+  workers at that count instead. Pause freezes scaling, not processing:
+  only a count of 0 leaves jobs waiting in Redis. A count set without `pause`
+  draws a plan-time warning (`check.worker_keda_paused_replica_count_requires_pause`)
+  since the chart ignores it, and either input on an `n8n_chart_version`
+  older than `1.13.0` draws another (`check.worker_keda_pause_requires_a_supported_chart`):
+  older charts ignore the key, and `1.12.0` overwrites the held count on
+  the next Helm upgrade. Pools declared in `n8n_worker_pools` are not
+  paused. The chart's matching
+  `keda.webhookProcessor.pause` is deliberately not exposed: this module
+  scales webhook processors with its own HPA (`scaling.tf`), so no
+  webhook `ScaledObject` exists for the annotation to land on.
+  `tests/scripts/smoke-test.sh` skips the worker-floor assertion while the
+  `ScaledObject` is paused, and, when paused at 0, also skips the checks
+  that need a running worker (worker version, worker Redis connectivity,
+  workflow execution); the load test is skipped for any pause. The new
+  `detect_worker_pause()` helper is covered by the offline self-test.
 
 ### Changed
 
@@ -312,8 +333,46 @@ image instead of a floating tag.
   replacement.
 - **`time` provider requirement bumped to `~> 0.14`** (was `~> 0.12`).
   Additive; no plan diff.
-- **Default `n8n_chart_version` bumped to `1.11.0`** (was `1.10.0`); see
-  "What moves on apply" above.
+- **Default `n8n_chart_version` bumped to `1.13.0`** (was `1.11.0`;
+  matches the AWS sibling). Two chart changes reach every pre-release
+  deployment on the first `helm upgrade`:
+  - **Worker `spec.replicas` is now KEDA-owned** (n8n-hosting #201). The
+    chart omits the field once a worker `ScaledObject` renders, which this
+    module's configuration always does. Helm's three-way merge removes the
+    field it used to manage, so the worker Deployment drops to 1 replica
+    until the KEDA-created HPA restores `minReplicas` (measured at about
+    5 s on a live `examples/small` upgrade from `1.11.0` with a floor of
+    2, during the same rollout that moved worker pods onto the new chart's
+    pod template). The reset always targets 1, so any deployment running
+    more than 1 worker at upgrade time (a higher floor, or KEDA scaled up
+    on load) terminates the surplus pods, and executions still running
+    after the worker's shutdown window can be interrupted; see
+    `docs/upgrading-n8n.md`. No change at a floor of 1 that has not scaled
+    above 1. After that, a Helm upgrade at the
+    floor no longer writes a static count back over KEDA's decision.
+    Webhook processors are unaffected: the module's own HPA is outside the
+    chart's view, so the chart keeps rendering `webhookProcessor.replicaCount`.
+  - **Main pods lose the task-runner sidecar** (n8n-hosting #179, shipped
+    in chart `1.12.0`). In queue mode n8n offloads manual executions to
+    workers and starts no broker on main, so the chart renders the sidecar,
+    its env, and the launcher ConfigMap mount on workers only. Main pods
+    roll once to drop the container; `n8n_task_runner_*` resources now
+    apply to workers alone, and `check.autoscaling_maxima_fit_aks_capacity`
+    stops adding the sidecar request to the main ceiling for the verified
+    upstream charts `1.12.0` and `1.13.0` (`local.n8n_chart_has_worker_only_runners`,
+    the same version-gated shape as `terraform-aws-n8n`; modeled peak
+    demand at the defaults falls from 16600m to 15400m). Any other
+    `n8n_chart_version`, including the `1.11.0`-based worker-pools preview
+    chart, keeps the conservative main-sidecar allowance.
+  Inert here: the chart's `image.tag` default moving from floating
+  `stable` to its appVersion (this module always sets `n8n_image_tag`),
+  and the `keda` block gaining a typed schema (this module's values
+  already pass it; `tests/scripts/check-n8n-chart.sh` renders every
+  fixture with schema validation on). `queueMode.workerGroups` is still
+  unreleased, so `n8n_worker_pools` callers stay on the `1.11.0`-based
+  preview chart and do not pick up either change until a new preview
+  build is cut. New `docs/upgrading-n8n.md` (the counterpart of the AWS
+  and GCP siblings' guide) carries the per-version upgrade notes.
 - CI toolchain currency: `TF_VERSION` `1.16.2` (was `1.15.1`),
   `TFLINT_VERSION` `v0.64.0` (was `v0.53.0`), pinned `CHECKOV_VERSION`
   `3.3.17` (was unpinned via `bridgecrewio/checkov-action@v12`'s own
