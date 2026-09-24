@@ -2,15 +2,16 @@
 
 Six scripts. `check-n8n-chart.sh` is offline and runs in CI on every
 pull request. `smoke-test.sh`'s topology-detection self-test
-(`SMOKE_TEST_SELF_TEST=1`) also runs offline in CI; the rest of
-`smoke-test.sh`, all of `verify-custom-image.sh`, `verify-worker-pools.sh`,
-and `preflight-region-check.sh` are manual verification scripts that need
-live Azure credentials, which a pull request check cannot provide (CI only
-syntax-checks and shellchecks the preflight script).
+(`SMOKE_TEST_SELF_TEST=1`) and `preflight-region-check.sh`'s input and
+quota self-test (`PREFLIGHT_SELF_TEST=1`) also run offline in CI; the rest
+of `smoke-test.sh`, all of `verify-custom-image.sh`, `verify-worker-pools.sh`,
+and the real checks in `preflight-region-check.sh` are manual verification
+scripts that need live Azure credentials, which a pull request check cannot
+provide.
 
 | Script | Use it when |
 |---|---|
-| [`preflight-region-check.sh`](#region-preflight) | Before the first `terraform apply` in a new region or subscription. Checks AKS zone support, PostgreSQL Flexible Server version/SKU availability, and (opt-in) Managed Redis capacity against your own plan. |
+| [`preflight-region-check.sh`](#region-preflight) | Before the first `terraform apply` in a new region or subscription. Checks AKS zone support, subscription vCPU quota headroom, PostgreSQL Flexible Server version/SKU availability, and (opt-in) Managed Redis capacity against your own plan. |
 | [`check-n8n-chart.sh`](#chart-rendering-check) | Any change to `n8n.tf`, chart-affecting variables, or the pinned `n8n_chart_version`. Runs offline in CI. |
 | [`check-redis-exporter.py`](#redis-exporter-outage-check) | Changes to exporter probes, timeouts, or the pinned image. Runs against a local hanging TCP peer in CI. |
 | [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. Its offline self-test runs in CI on every pull request. |
@@ -21,13 +22,14 @@ syntax-checks and shellchecks the preflight script).
 
 `preflight-region-check.sh` answers one question before a 15-30 minute
 apply: can this subscription actually get the managed services the module
-asks for in this region? Three failures observed in live runs only surface
+asks for in this region? Four failures observed in live runs only surface
 after the VNet, Key Vault, and Application Gateway already exist, and are
 region or subscription gaps rather than module bugs:
 
 | Failure | Check |
 |---|---|
 | AKS `AvailabilityZoneNotSupported` | `az vm list-skus` for the planned `aks_node_vm_size`: SKU offered, no location-level subscription restriction, every planned zone in the SKU's zone list (zone-level restrictions are subtracted first) |
+| `helm_release.n8n` times out; AKS autoscaler stuck in `Backoff` on `OperationNotAllowed` | `az vm list-usage` for the planned `aks_node_vm_size`'s VM family and the aggregate `cores` cap, against worst-case demand: the planned `max_count` of every node pool of that VM size, summed (the module's system and user pools each scale `aks_node_count_min..aks_node_count_max`, so `2 x aks_node_count_max` nodes). Fails when every AKS cluster and node pool change in the plan is a pure create. Warns otherwise (existing cluster, replace, new pool on an existing cluster), since `currentValue` may already count those nodes |
 | PostgreSQL Flexible Server `ParameterOutOfRange: 'Version' should be in: []` | `az postgres flexible-server list-skus`: at least one version offered, the planned `pg_version` among them, the planned `pg_sku_name` under its edition |
 | Azure Managed Redis `InsufficientCapacity` | Opt-in `--probe-redis` only: creates a throwaway cluster of the planned `redis_sku_name` in a tagged `n8n-preflight-*` resource group and deletes it. Azure has no capacity API, so the answer is valid only for the moment it runs |
 
@@ -60,14 +62,20 @@ terraform init
 ```
 
 With no flags it runs `terraform plan -refresh=false` in the current
-directory and reads the location, VM size, zones, PostgreSQL version/SKU,
-and Redis SKU from the planned resources, so the check matches what apply
+directory and reads the location, VM size, node pool `max_count` values,
+zones, PostgreSQL version/SKU, and Redis SKU from the planned resources, so the check matches what apply
 would request rather than the module defaults. A resource the
 configuration does not create (`create_aks`, `create_database`,
 `create_redis` = `false`) is absent from the plan and its check is skipped.
 
-Every value can be overridden (`--dir`, `--region`, `--vm-size`, `--zones`,
-`--pg-version`, `--pg-sku`, `--redis-sku`). `--region` alone skips the plan
+Every value can be overridden (`--dir`, `--region`, `--vm-size`,
+`--node-count-max`, `--zones`, `--pg-version`, `--pg-sku`, `--redis-sku`).
+`--node-count-max N` is the per-pool ceiling (`aks_node_count_max`) and must
+be an integer from 1 to 1000 (the AKS per-pool limit); the quota check then
+assumes `2 x N` nodes. Without a
+plan (`--region`), the script cannot tell whether the cluster already
+exists, so a quota shortfall is always reported as a failure, with a note
+that it can be a false positive for an existing cluster. `--region` alone skips the plan
 and checks the root module's defaults plus your flags, not the current
 root's `terraform.tfvars`; the script prints a note when it takes that
 path. `--help` lists the options.
@@ -78,13 +86,31 @@ plan contains managed resources in more than one region the script stops and
 asks for `--region`; data sources such as `data.azurerm_kubernetes_cluster.existing`
 are ignored when detecting the region.
 
-Exit code `0` when every check passes or is skipped, `1` on any failure,
-`2` on a usage error. After the probe, deletion of the `n8n-preflight-*`
+Exit code `0` when every check passes, warns, or is skipped (the result
+line says `PASS with warnings` when any `!` item printed), `1` on any
+failure, `2` on a usage error such as a `--node-count-max` or planned
+`max_count` that is not an integer from 1 to 1000. After the probe, deletion of the `n8n-preflight-*`
 resource group is *submitted* (`--no-wait`) and Azure completes it in the
 background; the script prints the submission result and fails with the
 manual `az group delete` command if the submission itself is rejected, so a
 billable probe cluster is never left behind silently. An abort mid-probe
 (Ctrl-C) triggers the same deletion from an EXIT trap.
+
+### Offline self-test
+
+```bash
+PREFLIGHT_SELF_TEST=1 tests/scripts/preflight-region-check.sh
+```
+
+This runs the bounded-integer validation, the plan readers
+(`plan_pool_maxes`, `plan_quota_mode`), and the quota evaluation
+(`check_quota`) against synthetic fixtures. The plan fixtures cover pool
+summing across child modules, an unknown `max_count`, and the create,
+no-op, update, replace, new-pool, multi-cluster, and deposed-object cases.
+The `az vm list-usage` fixtures cover within the limit, exactly at the
+limit, over the limit for a new cluster (failure) and an existing one
+(warning), a missing usage row, and a non-numeric usage row. It needs only `jq` and exits before any `az` or
+`terraform` call. CI and `openspec/init.sh` run it on every pull request.
 
 ## Chart-rendering check
 
