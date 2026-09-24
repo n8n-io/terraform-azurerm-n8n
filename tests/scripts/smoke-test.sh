@@ -22,7 +22,12 @@
 #       never inferred from the current main pod count.
 #   4.  ≥1 (single-main) or ≥2 (multi-main, or the configured floor)
 #       n8n-main pods Ready, ≥1 n8n-worker pod Ready, ≥2
-#       n8n-webhook-processor pods Ready.
+#       n8n-webhook-processor pods Ready. While the worker `ScaledObject`
+#       is paused (`n8n_worker_keda_pause`), the worker floor check is
+#       skipped; when it is paused at `paused-replicas: 0`, every check
+#       that needs a running worker (application version on workers,
+#       Redis connectivity, workflow execution) is skipped too, and the
+#       optional load test is skipped for any pause.
 #   5.  Application version: `n8n --version` agrees across main, worker,
 #       and webhook-processor pods (catches a half-finished rollout).
 #   6.  Leader election: multi-main expects `N8N_MULTI_MAIN_SETUP_ENABLED=true`
@@ -324,6 +329,32 @@ check_deployment() {
   fi
 }
 
+# ── Worker pause detection ───────────────────────────────────────────────────
+# n8n_worker_keda_pause annotates the chart's worker ScaledObject with
+# autoscaling.keda.sh/paused (and paused-replicas when a held count is set).
+# Sets WORKER_PAUSED ("true"/"false"), WORKER_PAUSED_REPLICAS (the held count,
+# empty when workers freeze at their current count), and WORKER_DRAINED
+# ("true" only when paused at 0, i.e. no worker is expected to be running and
+# queued jobs deliberately wait in Redis). Defined here for the same
+# self-test reason as detect_topology() above.
+detect_worker_pause() {
+  WORKER_PAUSED="false"
+  WORKER_PAUSED_REPLICAS=""
+  WORKER_DRAINED="false"
+
+  local paused
+  paused=$(kubectl get scaledobject n8n-worker -n "$NAMESPACE" \
+    -o jsonpath='{.metadata.annotations.autoscaling\.keda\.sh/paused}' 2>/dev/null || echo "")
+  [[ "$paused" == "true" ]] || return 0
+
+  WORKER_PAUSED="true"
+  WORKER_PAUSED_REPLICAS=$(kubectl get scaledobject n8n-worker -n "$NAMESPACE" \
+    -o jsonpath='{.metadata.annotations.autoscaling\.keda\.sh/paused-replicas}' 2>/dev/null || echo "")
+  if [[ "$WORKER_PAUSED_REPLICAS" == "0" ]]; then
+    WORKER_DRAINED="true"
+  fi
+}
+
 # Inspect captured history, not current leader uniqueness. Diagnostics take
 # precedence over role messages so a later recovery cannot hide a conflict.
 check_leader_logs() {
@@ -549,6 +580,31 @@ second pod conflict|1
 first read failure|2
 LEADER_READ_FIXTURES
 
+  echo ""
+  echo "== Self-test: worker pause detection =="
+  kubectl() {
+    if [[ "$1" == "get" && "$2" == "scaledobject" && "$3" == "n8n-worker" ]]; then
+      case "$*" in
+        *paused-replicas*) echo "$FIXTURE_PAUSED_REPLICAS" ;;
+        *paused*)          echo "$FIXTURE_PAUSED" ;;
+      esac
+      return 0
+    fi
+    return 1
+  }
+  while IFS='|' read -r fixture_name FIXTURE_PAUSED FIXTURE_PAUSED_REPLICAS expected; do
+    detect_worker_pause
+    assert_eq "$fixture_name (paused/held/drained)" "$expected" \
+      "$WORKER_PAUSED/$WORKER_PAUSED_REPLICAS/$WORKER_DRAINED"
+  done <<'PAUSE_FIXTURES'
+not paused|||false//false
+paused annotation false|false||false//false
+paused at current count|true||true//false
+paused at zero|true|0|true/0/true
+paused at two|true|2|true/2/false
+stray held count without pause|false|0|false//false
+PAUSE_FIXTURES
+
   echo "Self-test summary: $PASS passed, $FAIL failed (includes expected failures), $WARN warned"
   if [[ "$self_test_failures" -gt 0 ]]; then
     echo "SELF-TEST RESULT: FAIL"
@@ -719,12 +775,10 @@ header "Pod readiness"
 check_deployment "n8n-main"              "$MAIN_MIN"    "n8n-main"
 # n8n_worker_keda_pause annotates the ScaledObject; while paused the worker
 # count is whatever was held (possibly 0), so the floor assertion is moot.
-worker_paused=$(kubectl get scaledobject n8n-worker -n "$NAMESPACE" \
-  -o jsonpath='{.metadata.annotations.autoscaling\.keda\.sh/paused}' 2>/dev/null || echo "")
-if [[ "$worker_paused" == "true" ]]; then
-  held=$(kubectl get scaledobject n8n-worker -n "$NAMESPACE" \
-    -o jsonpath='{.metadata.annotations.autoscaling\.keda\.sh/paused-replicas}' 2>/dev/null || echo "")
-  skip "n8n-worker floor check: KEDA autoscaling is paused (n8n_worker_keda_pause = true, held count: ${held:-current})"
+# WORKER_DRAINED also gates the later worker-dependent checks.
+detect_worker_pause
+if [[ "$WORKER_PAUSED" == "true" ]]; then
+  skip "n8n-worker floor check: KEDA autoscaling is paused (n8n_worker_keda_pause = true, held count: ${WORKER_PAUSED_REPLICAS:-current})"
 else
   check_deployment "n8n-worker"          "$WORKER_MIN"  "n8n-worker"
 fi
@@ -746,7 +800,10 @@ for component in main worker webhook-processor; do
     --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 
-  if [[ -z "$pod" ]]; then
+  if [[ -z "$pod" && "$component" == "worker" && "$WORKER_DRAINED" == "true" ]]; then
+    skip "n8n-worker application version: workers are paused at 0 replicas (n8n_worker_keda_paused_replica_count = 0)"
+    continue
+  elif [[ -z "$pod" ]]; then
     warn "No Ready n8n-${component} pod available to check application version"
     continue
   fi
@@ -919,7 +976,9 @@ worker_pod=$(kubectl get pods -n "$NAMESPACE" \
   --field-selector=status.phase=Running \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 
-if [[ -z "$worker_pod" ]]; then
+if [[ -z "$worker_pod" && "$WORKER_DRAINED" == "true" ]]; then
+  skip "Worker Redis connectivity: workers are paused at 0 replicas (n8n_worker_keda_paused_replica_count = 0)"
+elif [[ -z "$worker_pod" ]]; then
   fail "No Ready n8n-worker pod available to probe Redis connectivity"
 else
   info "Using worker pod: $worker_pod"
@@ -1223,6 +1282,10 @@ header "Workflow execution via queue"
 
 if [[ -z "$N8N_API_KEY" ]]; then
   skip "Workflow execution test (set N8N_API_KEY to enable)"
+elif [[ "$WORKER_DRAINED" == "true" ]]; then
+  # No worker would consume the job: it would wait in Redis until autoscaling
+  # resumes and then run against the already-deleted test workflow.
+  skip "Workflow execution test: workers are paused at 0 replicas, so queued jobs wait in Redis by design (n8n_worker_keda_paused_replica_count = 0)"
 else
   webhook_path="smoke-test-$$"
 
@@ -1406,6 +1469,8 @@ if [[ "$LOAD_TEST" != "true" ]]; then
   skip "Load scaling test (set LOAD_TEST=true to enable)"
 elif [[ -z "$N8N_API_KEY" ]]; then
   skip "Load scaling test (requires N8N_API_KEY)"
+elif [[ "$WORKER_PAUSED" == "true" ]]; then
+  skip "Load scaling test: KEDA worker autoscaling is paused (n8n_worker_keda_pause = true), so it cannot scale"
 else
   SCALER_MODE=""
   if kubectl get scaledobject n8n-worker -n "$NAMESPACE" &>/dev/null; then

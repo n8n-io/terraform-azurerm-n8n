@@ -318,7 +318,10 @@ image instead of a floating tag.
   scales webhook processors with its own HPA (`scaling.tf`), so no
   webhook `ScaledObject` exists for the annotation to land on.
   `tests/scripts/smoke-test.sh` skips the worker-floor assertion while the
-  `ScaledObject` is paused.
+  `ScaledObject` is paused, and, when paused at 0, also skips the checks
+  that need a running worker (worker version, worker Redis connectivity,
+  workflow execution); the load test is skipped for any pause. The new
+  `detect_worker_pause()` helper is covered by the offline self-test.
 
 ### Changed
 
