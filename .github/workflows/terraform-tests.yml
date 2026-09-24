@@ -266,13 +266,16 @@ jobs:
         run: SMOKE_TEST_SELF_TEST=1 tests/scripts/smoke-test.sh
 
       # preflight-region-check.sh needs live Azure credentials for every real
-      # check, so CI only proves it parses and passes shellcheck. See
+      # check, so CI proves it parses, passes shellcheck, and that its input
+      # validation and quota evaluation behave against synthetic fixtures
+      # (PREFLIGHT_SELF_TEST=1 exits before any az/terraform call). See
       # tests/scripts/README.md#region-preflight.
-      - name: bash -n + shellcheck preflight-region-check.sh
+      - name: bash -n + shellcheck + self-test preflight-region-check.sh
         run: |
           bash -n tests/scripts/preflight-region-check.sh
           shellcheck -S warning tests/scripts/preflight-region-check.sh
           tests/scripts/preflight-region-check.sh --help >/dev/null
+          PREFLIGHT_SELF_TEST=1 tests/scripts/preflight-region-check.sh
 
       # Same for the scripts port-aws-050-enhancements added: real work
       # needs network or a live cluster, so CI proves syntax, shellcheck,

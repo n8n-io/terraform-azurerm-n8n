@@ -113,11 +113,17 @@ image instead of a floating tag.
   autoscaler is stuck in `Backoff` on `OperationNotAllowed`, unable to add a
   node either pool needs. Reads `az vm list-usage` for both the VM family
   (e.g. `standardDSv5Family`) and the aggregate `cores` cap against
-  worst-case demand of `aks_node_vm_size x 2 x aks_node_count_max` (the
-  system and user node pools each scale `0..aks_node_count_max`
-  independently). New `--node-count-max` flag, defaulting from the plan or
-  the root default of 6 like the other sizing flags. Advisory on an
-  existing cluster, since `currentValue` already counts its own nodes.
+  worst-case demand: the planned `max_count` of every node pool of that VM
+  size, summed (`2 x aks_node_count_max` with the module's system and user
+  pools, which each scale `aks_node_count_min..aks_node_count_max`). New
+  `--node-count-max` flag (per-pool ceiling, integer from 1 to 1000, root
+  default 6). A shortfall fails the run when every AKS cluster and node pool
+  change in the plan is a pure create, and is a warning (`RESULT: PASS with
+  warnings`) otherwise, since `currentValue` may already count those nodes.
+  An invalid `--node-count-max` or planned `max_count` is a usage error
+  (exit 2). A new
+  `PREFLIGHT_SELF_TEST=1` mode exercises the validation and quota logic
+  against synthetic fixtures and runs in CI and `openspec/init.sh`.
   `docs/troubleshooting.md` gained a fourth entry; the intro line on both it
   and `README.md` now says "four" instead of "three".
 - **Optional single-main queue mode** (`n8n_main_hpa_min_replicas = 1`): a

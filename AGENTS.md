@@ -1041,23 +1041,40 @@ Every value can be overridden (`--region`, `--vm-size`, `--node-count-max`,
 `--zones`, `--pg-version`, `--pg-sku`, `--redis-sku`); `--region` alone
 skips the plan. The vCPU quota check reads `az vm list-usage` for both the
 VM family (e.g. `standardDSv5Family`) and the aggregate `cores` cap against
-worst-case demand of `aks_node_vm_size` x `2 x aks_node_count_max` (system
-and user pool each scaling `0..aks_node_count_max` independently, aks.tf);
-it is advisory on an existing cluster, since `currentValue` already counts
-that cluster's own nodes toward the total. Azure has no capacity API for
+worst-case demand: the planned `max_count` of every node pool of that VM
+size, summed from the plan (`2 x aks_node_count_max` with the module's
+system and user pools, each scaling `aks_node_count_min..aks_node_count_max`
+independently, aks.tf); with `--node-count-max N` or `--region` it assumes
+`2 x N`. The shortfall is a hard failure only when every non-deposed
+`azurerm_kubernetes_cluster` and `azurerm_kubernetes_cluster_node_pool`
+entry in the plan's `resource_changes` is exactly `["create"]`
+(`plan_quota_mode`); anything else (`no-op`, `update`, replace, a new pool
+on an existing cluster, a second existing cluster) is a warning, because
+`currentValue` may already count those nodes. Without a plan it
+always fails, with a false-positive note. Every value that reaches bash
+arithmetic (`--node-count-max`, planned `max_count`, SKU vCPUs,
+`currentValue`/`limit`) is regex-validated first, with at most nine digits
+and 1000 nodes per pool: bash evaluates array subscripts inside `$((...))`,
+so an unchecked `a[$(cmd)]` would execute, an unset name under `set -u`
+aborted mid-report with exit 0 on macOS bash 3.2, and bash wraps silently on
+overflow. `PREFLIGHT_SELF_TEST=1` exercises that validation,
+`plan_pool_maxes`, `plan_quota_mode`, and `check_quota` against synthetic
+fixtures before any `az`/`terraform` call;
+its probes use `rc=0; <cond> || rc=1` so a failing condition is recorded
+instead of tripping `set -e`. Azure has no capacity API for
 Managed Redis, so only `--probe-redis` answers that question, and only for
 the moment it runs. It needs `jq` and Azure CLI `>= 2.75` (enforced by the
 script: older releases nest the PostgreSQL capability payload differently,
 and the on-demand `redisenterprise` extension declares the same floor).
 Like the smoke test it needs live credentials for every real check; CI runs
-`bash -n`, `shellcheck`, and `--help` against it, and `openspec/init.sh`
-does the same (`shellcheck` only when installed). The plan reader filters
+`bash -n`, `shellcheck`, `--help`, and `PREFLIGHT_SELF_TEST=1` against it,
+and `openspec/init.sh` does the same (`shellcheck` only when installed). The plan reader filters
 `.mode == "managed"` so `data.azurerm_kubernetes_cluster.existing` cannot
 hijack region detection, and refuses a plan spanning several regions. Note
 that `az aks list-vm-skus` does exist (in the `aks-preview` extension); the
 script uses the core-CLI `az vm list-skus` so it works without extensions,
 not because the AKS command is missing. A quota increase via `az quota
-update` is often auto-approved within a minute, but the autoscaler's own
+update` (part of the `quota` CLI extension) is often auto-approved within a minute, but the autoscaler's own
 `Backoff` on the failed scale-up (observed up to 10-15 min) still has to
 expire before a retry succeeds; retrying immediately after the quota
 change can still fail once more.
