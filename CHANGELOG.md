@@ -305,10 +305,15 @@ image instead of a floating tag.
   (chart `keda.worker.pause` / `pausedReplicaCount`, n8n-hosting #177).
   `pause = true` annotates the worker `ScaledObject` with
   `autoscaling.keda.sh/paused` so workers hold their current count; a
-  `paused_replica_count` (0 included) adds `paused-replicas` and drains
-  to that count while jobs wait in Redis. A count set without `pause`
+  `paused_replica_count` (0 included) adds `paused-replicas` and holds
+  workers at that count instead. Pause freezes scaling, not processing:
+  only a count of 0 leaves jobs waiting in Redis. A count set without `pause`
   draws a plan-time warning (`check.worker_keda_paused_replica_count_requires_pause`)
-  since the chart ignores it. The chart's matching
+  since the chart ignores it, and either input on an `n8n_chart_version`
+  older than `1.13.0` draws another (`check.worker_keda_pause_requires_a_supported_chart`):
+  older charts ignore the key, and `1.12.0` overwrites the held count on
+  the next Helm upgrade. Pools declared in `n8n_worker_pools` are not
+  paused. The chart's matching
   `keda.webhookProcessor.pause` is deliberately not exposed: this module
   scales webhook processors with its own HPA (`scaling.tf`), so no
   webhook `ScaledObject` exists for the annotation to land on.
@@ -325,9 +330,9 @@ image instead of a floating tag.
   replacement.
 - **`time` provider requirement bumped to `~> 0.14`** (was `~> 0.12`).
   Additive; no plan diff.
-- **Default `n8n_chart_version` bumped to `1.13.0`** (was `1.11.0`; the
-  AWS sibling pins `1.12.0`, so this module now leads). Two chart changes
-  reach every deployment on the first `helm upgrade`:
+- **Default `n8n_chart_version` bumped to `1.13.0`** (was `1.11.0`;
+  matches the AWS sibling). Two chart changes reach every pre-release
+  deployment on the first `helm upgrade`:
   - **Worker `spec.replicas` is now KEDA-owned** (n8n-hosting #201). The
     chart omits the field once a worker `ScaledObject` renders, which this
     module's configuration always does. Helm's three-way merge removes the
@@ -335,8 +340,12 @@ image instead of a floating tag.
     until the KEDA-created HPA restores `minReplicas` (measured at about
     5 s on a live `examples/small` upgrade from `1.11.0` with a floor of
     2, during the same rollout that moved worker pods onto the new chart's
-    pod template). Invisible at the default `n8n_worker_keda_min_replicas = 1`; a
-    one-time dip for higher floors. After that, a Helm upgrade at the
+    pod template). The reset always targets 1, so any deployment running
+    more than 1 worker at upgrade time (a higher floor, or KEDA scaled up
+    on load) terminates the surplus pods, and executions still running
+    after the worker's shutdown window can be interrupted; see
+    `docs/upgrading-n8n.md`. No change at a floor of 1 that has not scaled
+    above 1. After that, a Helm upgrade at the
     floor no longer writes a static count back over KEDA's decision.
     Webhook processors are unaffected: the module's own HPA is outside the
     chart's view, so the chart keeps rendering `webhookProcessor.replicaCount`.

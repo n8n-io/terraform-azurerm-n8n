@@ -571,9 +571,8 @@ arithmetic, not on top of it unaccounted for.
 
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`)
 
-`n8n_chart_version` defaults to `1.13.0`, deliberately ahead of the AWS
-sibling's `1.12.0`; the "follows the AWS sibling's chart line" wording is
-gone from the variable description. Run `tests/scripts/chart-values-diff.sh
+`n8n_chart_version` defaults to `1.13.0`, matching the AWS sibling after
+`terraform-aws-n8n` #145. Run `tests/scripts/chart-values-diff.sh
 <candidate>` before any future bump, but also diff `templates/` directly:
 the values diff for 1.11.0 to 1.13.0 showed only the pause keys and the
 `image.tag` default, while the template diff carried the two changes that
@@ -601,8 +600,14 @@ hardcodes the OCI repository; the `1.11.0`-based worker-pools preview
 chart therefore still counts the main sidecar), and the launcher-config
 assertions in `check-n8n-chart.sh` expect no sidecar on main. `keda.worker.pause` /
 `pausedReplicaCount` are exposed as `n8n_worker_keda_pause` /
-`n8n_worker_keda_paused_replica_count`; the chart's webhook-processor pause
-is intentionally not exposed because no webhook `ScaledObject` exists here
+`n8n_worker_keda_paused_replica_count`, with
+`check.worker_keda_pause_requires_a_supported_chart` warning on any chart
+older than `1.13.0` (`local.n8n_worker_keda_pause_supported` in
+`scaling.tf`, a numeric major.minor floor on the prerelease-stripped
+version core, so the `1.11.0`-based worker-pools preview warns). AWS pairs
+it with a worker-floor-of-0 check; Azure needs none because
+`n8n_worker_keda_min_replicas >= 1` is validated. The chart's
+webhook-processor pause is intentionally not exposed because no webhook `ScaledObject` exists here
 for the annotation to land on. The typed `keda` schema (#202) types
 `pausedReplicaCount` as `["integer", "null"]` and `authenticationRef.name`
 as a plain string, so rendering `null` and `""` from Terraform is fine; the

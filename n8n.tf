@@ -737,6 +737,22 @@ check "worker_keda_paused_replica_count_requires_pause" {
   }
 }
 
+# Pause is only reliable from chart 1.13.0 (local.n8n_worker_keda_pause_supported
+# in scaling.tf). A chart older than 1.12.0, including the 1.11.0-based
+# worker-pools preview, does not read keda.worker.pause at all, so the pause
+# silently never takes effect and workers keep consuming jobs. Chart 1.12.0
+# reads it but still renders the worker's spec.replicas on every upgrade, so
+# any later apply that changes the release while paused writes the floor back
+# over KEDA's held count. No companion worker-floor check is needed (unlike
+# terraform-aws-n8n): n8n_worker_keda_min_replicas is validated to >= 1, so the
+# worker ScaledObject always renders.
+check "worker_keda_pause_requires_a_supported_chart" {
+  assert {
+    condition     = (var.n8n_worker_keda_pause || var.n8n_worker_keda_paused_replica_count != null) ? local.n8n_worker_keda_pause_supported : true
+    error_message = "n8n_worker_keda_pause or n8n_worker_keda_paused_replica_count is set, but n8n_chart_version predates 1.13.0. Charts older than 1.12.0 (including the 1.11.0-based worker-pools preview) do not read keda.worker.pause at all, so workers keep consuming jobs. Chart 1.12.0 reads it but still sets the worker Deployment's spec.replicas on every Helm upgrade, so a later apply while paused can write the replica floor back over the held count. Use n8n_chart_version 1.13.0 or newer, or clear these inputs."
+  }
+}
+
 check "custom_extensions_path_requires_a_source" {
   assert {
     condition = var.n8n_custom_extensions_path != null ? (

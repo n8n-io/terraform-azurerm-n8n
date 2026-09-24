@@ -995,7 +995,7 @@ variable "keda_chart_version" {
 }
 
 variable "n8n_chart_version" {
-  description = "n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default 1.13.0 is ahead of the AWS sibling's 1.12.0 pin. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner and the first upgrade dips the worker count to 1 until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount exist (chart #177; see n8n_worker_keda_pause). Inert here: the chart's image.tag default moving from a floating stable tag to its appVersion (this module always sets n8n_image_tag) and the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject)."
+  description = "n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default 1.13.0 matches the AWS sibling's pin. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner, and the first upgrade from an older chart resets the worker count to 1, terminating any surplus worker pods, until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount are usable (added in chart 1.12.0 by #177, reliable only from 1.13.0; see n8n_worker_keda_pause). Inert here: the chart's image.tag default moving from a floating stable tag to its appVersion (this module always sets n8n_image_tag) and the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject)."
   type        = string
   default     = "1.13.0"
 
@@ -1637,7 +1637,7 @@ variable "n8n_webhook_hpa_scale_up_stabilization_window_seconds" {
 }
 
 variable "n8n_worker_keda_min_replicas" {
-  description = "Minimum worker replicas for KEDA and the Helm deployment floor. The default of 1 keeps one queue consumer warm when Redis has no waiting jobs."
+  description = "Minimum worker replicas for the KEDA ScaledObject. On chart 1.13.0 and later the chart leaves the worker Deployment's spec.replicas to KEDA, so this sets only the autoscaler floor; older charts also render it as spec.replicas on every Helm upgrade. The default of 1 keeps one queue consumer warm when Redis has no waiting jobs."
   type        = number
   default     = 1
   nullable    = false
@@ -1666,14 +1666,14 @@ variable "n8n_worker_keda_max_replicas" {
 }
 
 variable "n8n_worker_keda_pause" {
-  description = "Pause KEDA autoscaling of the chart's worker Deployment (sets autoscaling.keda.sh/paused on the worker ScaledObject). While paused, workers hold their current replica count, or n8n_worker_keda_paused_replica_count when that is set. Use for maintenance windows and migrations; queued jobs wait in Redis until autoscaling resumes. Webhook processors have no equivalent here because this module scales them with its own HPA (scaling.tf), not a KEDA ScaledObject. tests/scripts/smoke-test.sh skips the worker-floor assertion while this is true."
+  description = "Pause KEDA autoscaling of the chart's worker Deployment (sets autoscaling.keda.sh/paused on the worker ScaledObject). While paused, workers hold their current replica count, or n8n_worker_keda_paused_replica_count when that is set. Use for maintenance windows and migrations. Pause freezes scaling, not processing: held workers keep consuming jobs, and jobs only wait in Redis without default-worker consumers once n8n_worker_keda_paused_replica_count = 0 has reconciled and the workers have terminated. Applies to the chart's default worker Deployment only: n8n_worker_pools pools have their own ScaledObjects and keep scaling on their own queues. Requires n8n_chart_version 1.13.0 or later; a plan-time warning fires otherwise, because older charts ignore the key or overwrite the held count on the next Helm upgrade. Webhook processors have no equivalent here because this module scales them with its own HPA (scaling.tf), not a KEDA ScaledObject. tests/scripts/smoke-test.sh skips the worker-floor assertion while this is true."
   type        = bool
   default     = false
   nullable    = false
 }
 
 variable "n8n_worker_keda_paused_replica_count" {
-  description = "Replica count the worker Deployment holds while n8n_worker_keda_pause is true (sets autoscaling.keda.sh/paused-replicas). 0 scales workers to zero, for example to drain the queue before a migration. Null freezes workers at whatever count they have when paused. Ignored, with a plan-time warning, when n8n_worker_keda_pause is false."
+  description = "Replica count the worker Deployment holds while n8n_worker_keda_pause is true (sets autoscaling.keda.sh/paused-replicas). 0 scales workers to zero, for example to stop consuming jobs while they wait in Redis ahead of a migration. Null freezes workers at whatever count they have when paused. Ignored, with a plan-time warning, when n8n_worker_keda_pause is false."
   type        = number
   default     = null
 

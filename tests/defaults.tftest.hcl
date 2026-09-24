@@ -3766,6 +3766,74 @@ run "warns_when_paused_worker_replica_count_is_inert" {
   expect_failures = [check.worker_keda_paused_replica_count_requires_pause]
 }
 
+# keda.worker.pause is silently ignored by charts older than 1.12.0, and 1.12.0
+# still renders the worker's spec.replicas, overriding a held count on the
+# next Helm upgrade. The worker-pools preview (1.11.0 line) must warn despite
+# its prerelease suffix.
+run "warns_when_worker_pause_uses_the_worker_pools_preview_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_version     = "1.11.0-preview.workerpools.1"
+    n8n_worker_keda_pause = true
+  }
+
+  expect_failures = [check.worker_keda_pause_requires_a_supported_chart]
+}
+
+run "warns_when_worker_pause_uses_chart_1_12_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version     = "1.12.0"
+    n8n_worker_keda_pause = true
+  }
+
+  expect_failures = [check.worker_keda_pause_requires_a_supported_chart]
+}
+
+run "allows_worker_pause_on_supported_charts" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 0
+  }
+
+  assert {
+    condition     = local.n8n_worker_keda_pause_supported
+    error_message = "The default chart 1.13.0 must count as pause-capable."
+  }
+}
+
+run "allows_worker_pause_on_a_1_13_preview_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_version     = "1.13.0-preview.1"
+    n8n_worker_keda_pause = true
+  }
+
+  assert {
+    condition     = local.n8n_worker_keda_pause_supported
+    error_message = "A 1.13.x prerelease must count as pause-capable; only the version core is compared."
+  }
+}
+
+run "allows_worker_pause_on_a_later_major_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_version     = "2.0.0"
+    n8n_worker_keda_pause = true
+  }
+
+  assert {
+    condition     = local.n8n_worker_keda_pause_supported
+    error_message = "A later major chart must count as pause-capable (numeric compare, not string compare)."
+  }
+}
+
 run "rejects_invalid_autoscaler_tuning_values" {
   command = plan
 

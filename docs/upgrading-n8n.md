@@ -23,8 +23,11 @@ larger-blast-radius change of the two.
 
 ## Moving from chart 1.11.0 to 1.13.0
 
-Chart `1.12.0` was never this module's default; a deployment on `1.11.0`
-takes both releases in one step. `tests/scripts/chart-values-diff.sh 1.13.0`
+This module has not been released with a `1.11.0` default, so this section
+only applies to pre-release deployments (for example qualification stacks)
+created before the bump, or to callers who pinned `n8n_chart_version` to an
+older chart and now move to `1.13.0`. Chart `1.12.0` was never this
+module's default; a deployment on `1.11.0` takes both releases in one step. `tests/scripts/chart-values-diff.sh 1.13.0`
 shows only the new KEDA pause keys and the `image.tag` default; the two
 changes that matter are in `templates/`, which is why the offline
 `tests/scripts/check-n8n-chart.sh` renders the real chart rather than
@@ -36,25 +39,46 @@ diffing values.
 chart bump. The AWS and GCP siblings, whose `n8n_image_tag` defaults to
 null, have to pin before upgrading; this module does not.
 
-**Worker pods lose their explicit `replicas` field on this upgrade, once.**
+**The first upgrade resets the worker count to 1, once.**
 Chart `1.13.0` stops setting `spec.replicas` on the worker Deployment
 wherever an autoscaler already owns the count (n8n-hosting #201), which is
 true for every deployment from this module: `keda.enabled` is always on,
 the worker `ScaledObject` always has two Redis queue-depth triggers, and
 `n8n_worker_keda_min_replicas` is validated to at least 1. Because Helm
 *removes* the field rather than changing it, Kubernetes applies its default
-of 1 on that one `helm upgrade`, and the HPA that KEDA manages behind the
-`ScaledObject` (`kubectl get hpa keda-hpa-n8n-worker -n <namespace>`)
-restores `minReplicas` on its next reconciliation. This is HPA-driven, not
-bounded by `keda.worker.pollingInterval`, which only sets how often KEDA
-refreshes the external metric. Measured on a live `examples/small` upgrade
-with a floor of 2: `2 -> 1 -> 2` in about 5 seconds, during the same
-rollout that moved worker pods onto the new pod template. Invisible at the
-default floor of 1. After the upgrade a Helm apply at the floor no longer
-writes a static count back over KEDA's decision, which is the point of the
-upstream fix. If the deployment cannot tolerate even a short dip, upgrade in
-a quiet window; raising the floor beforehand does not avoid it, because the
-HPA only reacts after the drop.
+of 1 on that one `helm upgrade`. The target is always 1, not the configured
+floor, and not the count KEDA had scaled to under load:
+
+- Whenever the worker Deployment runs more than 1 replica at upgrade time,
+  Kubernetes starts terminating the surplus pods. That includes a
+  deployment sitting exactly at a floor above 1 (`examples/medium` runs a
+  floor of 4, `examples/large` a floor of 20) and one KEDA has scaled up
+  on queue depth.
+- A terminated worker stops taking new jobs and waits for its running
+  executions, but only up to its shutdown window: the chart's
+  `redis.worker.timeout` (30 seconds by default, rendered as
+  `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` and not exposed by this module), bounded
+  by `n8n_termination_grace_period`. Executions still running after that
+  can be interrupted.
+- The HPA that KEDA manages behind the `ScaledObject`
+  (`kubectl get hpa keda-hpa-n8n-worker -n <namespace>`) then restores the
+  floor, and scales above it as queue demand requires. This is HPA-driven,
+  not bounded by `keda.worker.pollingInterval`, which only sets how often
+  KEDA refreshes the external metric. Measured on a live `examples/small`
+  upgrade with a floor of 2: `2 -> 1 -> 2` in about 5 seconds, during the
+  same rollout that moved worker pods onto the new pod template. Larger
+  floors were not measured.
+- A deployment at the default floor of 1 that has not scaled above 1 sees
+  no change.
+
+Raising the floor beforehand does not help, because the reset goes to 1
+either way. For a deployment that runs more than 1 worker, upgrade in a
+low-traffic window, pause or reduce incoming work and let running
+executions finish before you apply, then confirm the worker count is back
+at the floor (`kubectl get deploy n8n-worker -n <namespace>`) and check the
+n8n execution list for interrupted runs. After the upgrade a Helm apply at
+the floor no longer writes a static count back over KEDA's decision, which
+is the point of the upstream fix.
 
 **Main pods lose the task-runner sidecar.** From chart `1.12.0`
 (n8n-hosting #179) the sidecar, its env, and the launcher ConfigMap mount
@@ -79,7 +103,13 @@ chart's KEDA/HPA model (`keda.webhookProcessor.enabled` and
 `n8n_worker_keda_paused_replica_count` expose the chart's
 `keda.worker.pause` / `pausedReplicaCount` (n8n-hosting #177): pause holds
 workers at their current count for a maintenance window, and a count of 0
-drains them to zero while jobs wait in Redis. The chart's matching
+scales them to zero while jobs wait in Redis. Pause applies to the
+default worker Deployment only; `n8n_worker_pools` pools keep scaling on
+their own queues. It needs `n8n_chart_version` `1.13.0` or later, and
+`check.worker_keda_pause_requires_a_supported_chart` warns otherwise:
+charts before `1.12.0` (including the `1.11.0`-based worker-pools preview)
+ignore the key, and `1.12.0` still writes the worker's `spec.replicas` on
+every Helm upgrade, overwriting the held count. The chart's matching
 `keda.webhookProcessor.pause` is not exposed, because no webhook
 `ScaledObject` exists here for the annotation to act on.
 
