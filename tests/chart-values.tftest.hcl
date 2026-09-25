@@ -121,6 +121,7 @@ run "worker_timing" {
     n8n_queue_worker_lock_duration    = 90000
     n8n_queue_worker_lock_renew_time  = 15000
     n8n_queue_worker_stalled_interval = 45000
+    n8n_graceful_shutdown_timeout     = 45
   }
 }
 

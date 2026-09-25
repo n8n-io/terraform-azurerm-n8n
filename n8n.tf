@@ -321,9 +321,15 @@ resource "helm_release" "n8n" {
           key  = local.redis_password_secret_key
         }
       } : {},
-      # Bull worker timing overrides (section 4). Empty when every input is
-      # null, so the chart's own redis.worker defaults (60000/10000/30000 ms)
-      # apply unchanged.
+      # Bull worker timing overrides (section 4) plus the graceful shutdown
+      # timeout (redis.worker.timeout -> N8N_GRACEFUL_SHUTDOWN_TIMEOUT).
+      # Empty when every input is null, so the chart's own redis.worker
+      # defaults (60000/10000/30000 ms / 30s) apply unchanged. These names
+      # are NOT safe for n8n_extra_env/n8n_worker_extra_env: the chart
+      # renders N8N_GRACEFUL_SHUTDOWN_TIMEOUT's ConfigMap entry
+      # unconditionally and extraEnv is appended after it, so a caller
+      # duplicate would silently win over the chart's real value with no
+      # warning (see the reservation in local.n8n_managed_env_names).
       length(local.n8n_queue_worker_settings) == 0 ? {} : {
         worker = local.n8n_queue_worker_settings
       },

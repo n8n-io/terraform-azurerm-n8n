@@ -1956,6 +1956,23 @@ run "rejects_reserved_url_environment_names_in_extra_env" {
   expect_failures = [var.n8n_extra_env]
 }
 
+# Regression guard: chart 1.13.0 renders N8N_GRACEFUL_SHUTDOWN_TIMEOUT from
+# redis.worker.timeout unconditionally on every n8n container (see the
+# comment on this name in local.n8n_managed_env_names), so an extra_env
+# duplicate would silently win over the chart's real value with no plan- or
+# apply-time warning if this name were not reserved.
+run "extra_env_rejects_graceful_shutdown_timeout_name" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_GRACEFUL_SHUTDOWN_TIMEOUT", value = "120" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
 # ── Execution-save policy controls (port-aws-040-enhancements section 5) ────
 
 run "execution_save_policy_defaults" {
@@ -2933,6 +2950,16 @@ run "worker_extra_env_rejects_invalid_identifier" {
     n8n_worker_extra_env = [
       { name = "1_BAD_NAME", value = "x" },
     ]
+  }
+
+  expect_failures = [var.n8n_worker_extra_env]
+}
+
+run "worker_extra_env_rejects_graceful_shutdown_timeout_name" {
+  command = plan
+
+  variables {
+    n8n_worker_extra_env = [{ name = "N8N_GRACEFUL_SHUTDOWN_TIMEOUT", value = "120" }]
   }
 
   expect_failures = [var.n8n_worker_extra_env]
@@ -5912,6 +5939,124 @@ run "rejects_queue_worker_stalled_interval_zero" {
   }
 
   expect_failures = [var.n8n_queue_worker_stalled_interval]
+}
+
+# ── Graceful shutdown timeout (redis.worker.timeout) ─────────────────────────
+# N8N_GRACEFUL_SHUTDOWN_TIMEOUT has no per-setting `{{- if }}` guard in the
+# chart, unlike the three QUEUE_WORKER_* settings above, so its isolation
+# test only needs to confirm the local carries the right key.
+run "queue_worker_graceful_shutdown_timeout_alone_emits_only_its_key" {
+  command = plan
+
+  variables {
+    n8n_graceful_shutdown_timeout = 45
+  }
+
+  assert {
+    condition     = jsonencode(local.n8n_queue_worker_settings) == jsonencode({ timeout = 45 })
+    error_message = "local.n8n_queue_worker_settings must carry only timeout when n8n_graceful_shutdown_timeout is the only variable set, so the chart keeps its own lockDuration, lockRenewTime and stalledInterval defaults."
+  }
+}
+
+run "queue_worker_settings_assemble_all_four_values" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration    = 180000
+    n8n_queue_worker_lock_renew_time  = 15000
+    n8n_queue_worker_stalled_interval = 45000
+    n8n_graceful_shutdown_timeout     = 45
+  }
+
+  assert {
+    condition = jsonencode(local.n8n_queue_worker_settings) == jsonencode({
+      lockDuration    = 180000
+      lockRenewTime   = 15000
+      stalledInterval = 45000
+      timeout         = 45
+    })
+    error_message = "local.n8n_queue_worker_settings must assemble all four values into the chart's redis.worker map when all four variables are set."
+  }
+}
+
+run "queue_worker_graceful_shutdown_timeout_rejects_below_1" {
+  command = plan
+
+  variables {
+    n8n_graceful_shutdown_timeout = 0
+  }
+
+  expect_failures = [var.n8n_graceful_shutdown_timeout]
+}
+
+run "queue_worker_graceful_shutdown_timeout_rejects_fractional_value" {
+  command = plan
+
+  variables {
+    n8n_graceful_shutdown_timeout = 45.5
+  }
+
+  expect_failures = [var.n8n_graceful_shutdown_timeout]
+}
+
+# The pod-level ceiling: n8n_graceful_shutdown_timeout (or its 30s default)
+# plus n8n_prestop_sleep must fit under n8n_termination_grace_period, or
+# Kubernetes SIGKILLs the pod before n8n's own shutdown window ends.
+run "graceful_shutdown_timeout_rejects_when_it_plus_prestop_sleep_exceeds_grace_period" {
+  command = plan
+
+  variables {
+    # Defaults: n8n_prestop_sleep = 10, n8n_termination_grace_period = 60.
+    # 55 + 10 = 65, over the 60s ceiling.
+    n8n_graceful_shutdown_timeout = 55
+  }
+
+  expect_failures = [var.n8n_graceful_shutdown_timeout]
+}
+
+run "graceful_shutdown_timeout_rejects_when_it_plus_prestop_sleep_equals_grace_period" {
+  command = plan
+
+  variables {
+    # 50 + the default 10s prestop sleep exactly equals the default 60s
+    # grace period. The check requires a strict gap (<), not just meeting
+    # the ceiling: Kubernetes starts the terminationGracePeriodSeconds
+    # countdown when it invokes preStop, not after preStop finishes, so a
+    # sum equal to the ceiling leaves n8n's own shutdown handler no margin
+    # between preStop finishing and SIGKILL.
+    n8n_graceful_shutdown_timeout = 50
+  }
+
+  expect_failures = [var.n8n_graceful_shutdown_timeout]
+}
+
+run "graceful_shutdown_timeout_accepts_when_it_plus_prestop_sleep_is_strictly_below_grace_period" {
+  command = plan
+
+  variables {
+    # 49 + the default 10s prestop sleep leaves a 1s margin under the
+    # default 60s grace period.
+    n8n_graceful_shutdown_timeout = 49
+  }
+
+  assert {
+    condition     = jsonencode(local.n8n_queue_worker_settings) == jsonencode({ timeout = 49 })
+    error_message = "n8n_graceful_shutdown_timeout should accept, and local.n8n_queue_worker_settings should carry, a value whose sum with n8n_prestop_sleep is strictly below n8n_termination_grace_period."
+  }
+}
+
+run "graceful_shutdown_timeout_null_default_still_counts_toward_grace_period_ceiling" {
+  command = plan
+
+  variables {
+    # n8n_graceful_shutdown_timeout is left null, so the validation's
+    # coalesce() falls back to the chart's 30s default: 30 + 31 = 61, over
+    # the default 60s grace period. Proves the check uses the chart's real
+    # default rather than treating null as "no timeout to account for."
+    n8n_prestop_sleep = 31
+  }
+
+  expect_failures = [var.n8n_graceful_shutdown_timeout]
 }
 
 # ── Optional application heap ceiling (section 6) ───────────────────────────

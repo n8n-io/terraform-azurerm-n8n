@@ -288,12 +288,18 @@ locals {
 
   # Bull worker timing (port-aws-040-enhancements section 4): one inner map
   # with only non-null keys, merged into the chart's redis.worker block in
-  # n8n.tf. A shallow merge of three separate worker maps would lose values,
-  # so this local composes them together up front.
+  # n8n.tf. A shallow merge of separate worker maps would lose values, so
+  # this local composes them together up front. n8n_graceful_shutdown_timeout
+  # (timeout key) has no per-setting `{{- if }}` guard in the chart, unlike
+  # the three QUEUE_WORKER_* settings: templates/configmap.yaml renders
+  # N8N_GRACEFUL_SHUTDOWN_TIMEOUT unconditionally, so omitting this key when
+  # the variable is null does not disable anything, Helm just falls back to
+  # the chart's own values.yaml default (30s) for redis.worker.timeout.
   n8n_queue_worker_settings = merge(
     var.n8n_queue_worker_lock_duration == null ? {} : { lockDuration = var.n8n_queue_worker_lock_duration },
     var.n8n_queue_worker_lock_renew_time == null ? {} : { lockRenewTime = var.n8n_queue_worker_lock_renew_time },
     var.n8n_queue_worker_stalled_interval == null ? {} : { stalledInterval = var.n8n_queue_worker_stalled_interval },
+    var.n8n_graceful_shutdown_timeout == null ? {} : { timeout = var.n8n_graceful_shutdown_timeout },
   )
 
   # The chart appends config.extraEnv after its own environment variables, and
