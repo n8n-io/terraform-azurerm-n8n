@@ -16,7 +16,7 @@ env:
   # examples to pin computed-at-apply attributes to plan-known synthetic
   # values under mock_provider). Bumped from 1.9.8 to track the version
   # the AGENTS.md combined-test-suite wall-clock note was measured on.
-  TF_VERSION: "1.16.2"
+  TF_VERSION: "1.16.4"
   TFLINT_VERSION: "v0.64.0"
   # checkov results are version-dependent, so this gate pins one version
   # rather than tracking latest. tests/scripts/check-checkov.sh reads this
@@ -24,7 +24,7 @@ env:
   # makes this line the single source of truth for both. Bumping it is a
   # deliberate change: expect a new release to report findings that need
   # triaging in the same commit.
-  CHECKOV_VERSION: "3.3.17"
+  CHECKOV_VERSION: "3.3.20"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   # markdownlint results are version-dependent like checkov's; pinning here

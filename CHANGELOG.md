@@ -42,6 +42,16 @@ resource types already noted in `AGENTS.md`. Enabling
 `redis_exporter_enabled` for the first time now pulls a digest-pinned
 image instead of a floating tag.
 
+### Changed
+
+- CI Terraform pin `1.16.2` to `1.16.4` and Checkov `3.3.17` to `3.3.20`,
+  porting `terraform-aws-n8n` #150/#153. The Terraform requirement remains
+  `>= 1.9`. Checkov `3.3.20`'s only change is a plan-parser fix for
+  `forget`-action resources, so it drew no new findings against this repo
+  (verified locally: pass 1 reports the same 182 passed / 174 failed / 40
+  skipped on both `3.3.17` and `3.3.20`). These toolchain updates do not
+  change infrastructure defaults.
+
 ### Fixed
 
 - **Editor test-mode routing through the managed Ingress.** AGIC renders
