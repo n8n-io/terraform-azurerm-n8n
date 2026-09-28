@@ -343,21 +343,22 @@ image instead of a floating tag.
   workflow execution); the load test is skipped for any pause. The new
   `detect_worker_pause()` helper is covered by the offline self-test.
 - **`n8n_graceful_shutdown_timeout`** (chart `redis.worker.timeout`, renders
-  `N8N_GRACEFUL_SHUTDOWN_TIMEOUT`). Seconds n8n gives in-flight executions
-  to finish once it receives SIGTERM, before it exits on its own rather
-  than waiting for Kubernetes to force-kill it. Must go through this input
-  rather than `n8n_extra_env` / `n8n_worker_extra_env`: chart `1.13.0`
-  renders this ConfigMap key unconditionally on every n8n container, and
-  `config.extraEnv` is appended after it, so a caller duplicate would not
-  fail the deployment, Kubernetes silently keeps the caller's value with no
-  warning (see **Fixed** below). Validated against
-  `n8n_termination_grace_period` and `n8n_prestop_sleep`: this value (or
-  the chart's 30s default, if left null) plus the prestop sleep must leave
-  a strict margin under the termination grace period, or Kubernetes
-  SIGKILLs the pod before n8n finishes shutting down. Left `null`, the
-  module sends no override and the chart keeps its own 30s default, so
-  existing releases see no Helm values change from this addition. Matches
-  `terraform-aws-n8n` PR #148.
+  `N8N_GRACEFUL_SHUTDOWN_TIMEOUT`). Seconds n8n waits for in-flight
+  executions to finish after SIGTERM before it exits on its own. This is
+  the only supported way to change the value: the chart renders this
+  ConfigMap key on every n8n container, so `n8n_extra_env`,
+  `n8n_worker_extra_env`, and worker pool `extra_env` already reject the
+  name at plan time (unchanged since `0.1.0`). An explicit value plus
+  `n8n_prestop_sleep` must stay strictly below
+  `n8n_termination_grace_period`, or validation fails, because Kubernetes
+  would SIGKILL the pod before n8n finishes shutting down. Left `null`, the
+  module sends no override, the chart keeps its own 30s default, and
+  existing releases see no Helm values change. In that case the same rule
+  applied to the 30s default is only a warning, the new
+  `graceful_shutdown_fits_grace_period` check, so configurations that
+  planned before still plan. Ported from `terraform-aws-n8n` PR #148,
+  without its custom-chart-repository gate (this module hardcodes the
+  upstream chart repository).
 
 ### Changed
 

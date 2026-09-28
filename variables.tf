@@ -1753,7 +1753,7 @@ variable "n8n_queue_worker_stalled_interval" {
 }
 
 variable "n8n_graceful_shutdown_timeout" {
-  description = "Seconds n8n gives in-flight executions to finish once it receives SIGTERM, before it exits on its own rather than waiting for Kubernetes to force-kill it. Maps to the chart's redis.worker.timeout value (N8N_GRACEFUL_SHUTDOWN_TIMEOUT on every n8n container); must go through this chart value rather than config.extraEnv or n8n_worker_extra_env: chart 1.13.0's ConfigMap entry for this key (templates/configmap.yaml, gated only on queueMode.enabled, which this module always sets) renders unconditionally, and extraEnv is appended after it in every deployment template, so a caller duplicate does not fail the deployment, Kubernetes silently keeps the last of the two same-named entries. That would replace the chart's real value with whatever the caller wrote, with no plan- or apply-time warning, which would make this variable's own validation meaningless. Unlike the QUEUE_WORKER_* settings, this key has no per-setting {{- if }} guard in the chart, so leaving this null does not disable anything: Helm just keeps rendering the chart's own values.yaml default of 30s, identical to today's output. n8n_termination_grace_period is a hard ceiling on top of this: Kubernetes force-kills the pod terminationGracePeriodSeconds after SIGTERM no matter what n8n or the preStop hook are still doing inside it, so this value plus n8n_prestop_sleep must leave a strict margin under that ceiling, or n8n's own shutdown window gets cut short by SIGKILL before it can finish."
+  description = "Seconds n8n gives in-flight executions to finish after it receives SIGTERM, before it exits on its own. Maps to the chart's redis.worker.timeout value (N8N_GRACEFUL_SHUTDOWN_TIMEOUT on every main, worker, and webhook-processor container). Null (default) sends no override, and the chart keeps rendering its own default of 30 seconds. Set the value here: n8n_extra_env, n8n_worker_extra_env, and a worker pool's extra_env all reject this name at plan time, because the chart always renders its own entry for it and a caller duplicate would silently replace that entry. n8n_termination_grace_period is a hard ceiling. Kubernetes starts that countdown when termination begins: the preStop hook (n8n_prestop_sleep) runs inside it, and SIGTERM follows the hook. So this value plus n8n_prestop_sleep must stay strictly below n8n_termination_grace_period, or SIGKILL cuts n8n's shutdown short. An explicit value that breaks this rule fails validation. When this input is null, the same rule applied to the chart's default only raises a warning (check.graceful_shutdown_fits_grace_period), so existing configurations keep planning."
   type        = number
   default     = null
 
@@ -1767,9 +1767,13 @@ variable "n8n_graceful_shutdown_timeout" {
     error_message = "n8n_graceful_shutdown_timeout must be a whole number of seconds, so this value is rejected at plan time. The chart's values.schema.json declares redis.worker.timeout as {\"type\": \"integer\"}, so a fractional value that slipped past this check would only fail later, during Helm schema validation at apply time."
   }
 
+  # Explicit values only. The null case (chart default) is a warning in
+  # check.graceful_shutdown_fits_grace_period (n8n.tf): making it a hard error
+  # would fail configurations that planned before this input existed, such as
+  # n8n_prestop_sleep = 30 with the default 60-second grace period.
   validation {
-    condition     = coalesce(var.n8n_graceful_shutdown_timeout, 30) + var.n8n_prestop_sleep < var.n8n_termination_grace_period
-    error_message = "n8n_graceful_shutdown_timeout (or the chart's 30s default, if this is left null) plus n8n_prestop_sleep must leave a strict margin under n8n_termination_grace_period, not just meet it. Kubernetes starts the terminationGracePeriodSeconds countdown when it invokes preStop, not after preStop finishes, so a sum equal to the ceiling leaves n8n's own shutdown handler no margin between preStop finishing and SIGKILL."
+    condition     = var.n8n_graceful_shutdown_timeout == null ? true : var.n8n_graceful_shutdown_timeout + var.n8n_prestop_sleep < var.n8n_termination_grace_period
+    error_message = "n8n_graceful_shutdown_timeout plus n8n_prestop_sleep must stay strictly below n8n_termination_grace_period. Kubernetes starts the terminationGracePeriodSeconds countdown when it invokes preStop, not after preStop finishes, so a sum equal to the ceiling leaves n8n's own shutdown handler no margin before SIGKILL."
   }
 }
 

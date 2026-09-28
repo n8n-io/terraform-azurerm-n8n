@@ -302,6 +302,14 @@ locals {
     var.n8n_graceful_shutdown_timeout == null ? {} : { timeout = var.n8n_graceful_shutdown_timeout },
   )
 
+  # The chart's values.yaml default for redis.worker.timeout, in seconds.
+  # Verified for charts 1.11.0 (the worker-pools preview base) and 1.13.0.
+  # Used only by check.graceful_shutdown_fits_grace_period (n8n.tf) when
+  # n8n_graceful_shutdown_timeout is null. tests/scripts/check-n8n-chart.sh
+  # renders the pinned chart and fails if its default drifts from this value,
+  # so update both together on a chart bump.
+  n8n_chart_default_graceful_shutdown_timeout = 30
+
   # The chart appends config.extraEnv after its own environment variables, and
   # Kubernetes resolves duplicates last-wins. Reserve every current module and
   # chart-owned connection, identity, storage, license, runner, and topology

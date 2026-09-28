@@ -5789,7 +5789,12 @@ run "omits_queue_worker_settings_by_default" {
 
   assert {
     condition     = length(local.n8n_queue_worker_settings) == 0
-    error_message = "local.n8n_queue_worker_settings must be empty when all three worker timing inputs are null."
+    error_message = "local.n8n_queue_worker_settings must be empty when all four worker timing inputs are null."
+  }
+
+  assert {
+    condition     = var.n8n_graceful_shutdown_timeout == null
+    error_message = "n8n_graceful_shutdown_timeout must default to null so the chart keeps its own default (30s)."
   }
 }
 
@@ -5999,9 +6004,10 @@ run "queue_worker_graceful_shutdown_timeout_rejects_fractional_value" {
   expect_failures = [var.n8n_graceful_shutdown_timeout]
 }
 
-# The pod-level ceiling: n8n_graceful_shutdown_timeout (or its 30s default)
-# plus n8n_prestop_sleep must fit under n8n_termination_grace_period, or
-# Kubernetes SIGKILLs the pod before n8n's own shutdown window ends.
+# The pod-level ceiling: an explicit n8n_graceful_shutdown_timeout plus
+# n8n_prestop_sleep must stay strictly below n8n_termination_grace_period, or
+# Kubernetes SIGKILLs the pod before n8n's own shutdown window ends. These
+# failures are reported against n8n_graceful_shutdown_timeout.
 run "graceful_shutdown_timeout_rejects_when_it_plus_prestop_sleep_exceeds_grace_period" {
   command = plan
 
@@ -6045,18 +6051,93 @@ run "graceful_shutdown_timeout_accepts_when_it_plus_prestop_sleep_is_strictly_be
   }
 }
 
-run "graceful_shutdown_timeout_null_default_still_counts_toward_grace_period_ceiling" {
+# With the input left null, the same rule is only a warning
+# (check.graceful_shutdown_fits_grace_period), so configurations that planned
+# before this input existed still plan.
+run "graceful_shutdown_timeout_null_default_warns_when_it_does_not_fit" {
   command = plan
 
   variables {
-    # n8n_graceful_shutdown_timeout is left null, so the validation's
-    # coalesce() falls back to the chart's 30s default: 30 + 31 = 61, over
-    # the default 60s grace period. Proves the check uses the chart's real
-    # default rather than treating null as "no timeout to account for."
+    # The check falls back to the chart's 30s default: 30 + 31 = 61, over the
+    # default 60s grace period. Proves the check accounts for the chart's real
+    # default rather than treating null as "no timeout", and that it reports
+    # through the check (a warning) rather than the variable's validation.
     n8n_prestop_sleep = 31
   }
 
-  expect_failures = [var.n8n_graceful_shutdown_timeout]
+  expect_failures = [check.graceful_shutdown_fits_grace_period]
+}
+
+run "graceful_shutdown_timeout_null_default_warns_at_the_exact_ceiling" {
+  command = plan
+
+  variables {
+    # 30 + 30 = 60 equals the default grace period. This planned cleanly before
+    # n8n_graceful_shutdown_timeout existed, so it must stay a warning.
+    n8n_prestop_sleep = 30
+  }
+
+  expect_failures = [check.graceful_shutdown_fits_grace_period]
+}
+
+run "graceful_shutdown_timeout_null_default_is_silent_when_it_fits" {
+  command = plan
+
+  # Module defaults: 30 + 10 < 60. No expect_failures, so the run fails if
+  # either the check or the validation fires.
+  assert {
+    condition     = var.n8n_graceful_shutdown_timeout == null && local.n8n_chart_default_graceful_shutdown_timeout == 30
+    error_message = "With module defaults, n8n_graceful_shutdown_timeout must stay null and the check must compare against the chart's 30s default."
+  }
+}
+
+run "graceful_shutdown_timeout_follows_a_raised_grace_period" {
+  command = plan
+
+  variables {
+    # 100 + 10 = 110 < 120. Would fail against the default 60s ceiling, so
+    # this catches a ceiling hardcoded instead of read from
+    # n8n_termination_grace_period.
+    n8n_termination_grace_period  = 120
+    n8n_graceful_shutdown_timeout = 100
+  }
+
+  assert {
+    condition     = jsonencode(local.n8n_queue_worker_settings) == jsonencode({ timeout = 100 })
+    error_message = "An n8n_graceful_shutdown_timeout that fits under a raised n8n_termination_grace_period must plan cleanly and reach local.n8n_queue_worker_settings."
+  }
+}
+
+run "graceful_shutdown_timeout_null_default_follows_a_raised_grace_period" {
+  command = plan
+
+  variables {
+    # 30 + 60 = 90 < 120. Would warn against the default 60s ceiling, so no
+    # expect_failures here proves the check reads the raised grace period.
+    n8n_termination_grace_period = 120
+    n8n_prestop_sleep            = 60
+  }
+
+  assert {
+    condition     = var.n8n_graceful_shutdown_timeout == null
+    error_message = "With n8n_graceful_shutdown_timeout unset and a raised grace period that fits the chart default, the plan must not warn."
+  }
+}
+
+run "graceful_shutdown_timeout_explicit_value_does_not_trigger_the_null_default_check" {
+  command = plan
+
+  variables {
+    # A 31s prestop would make the chart default warn, but an explicit 20 fits
+    # (20 + 31 = 51 < 60), so neither the validation nor the check fires.
+    n8n_prestop_sleep             = 31
+    n8n_graceful_shutdown_timeout = 20
+  }
+
+  assert {
+    condition     = jsonencode(local.n8n_queue_worker_settings) == jsonencode({ timeout = 20 })
+    error_message = "An explicit n8n_graceful_shutdown_timeout that fits must plan cleanly and reach local.n8n_queue_worker_settings, even when the chart default would not fit."
+  }
 }
 
 # ── Optional application heap ceiling (section 6) ───────────────────────────
@@ -7433,6 +7514,24 @@ run "worker_pools_reject_extra_env_overriding_a_module_managed_variable" {
     n8n_worker_pools = [{
       name      = "gpu"
       extra_env = [{ name = "N8N_ENCRYPTION_KEY", value = "nope" }]
+    }]
+  }
+
+  expect_failures = [var.n8n_worker_pools]
+}
+
+# Same guard as extra_env_rejects_graceful_shutdown_timeout_name, on the
+# per-pool input. The pool validation reads the same
+# local.n8n_managed_env_names, so this pins that it keeps doing so.
+run "worker_pools_reject_extra_env_setting_graceful_shutdown_timeout" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0-preview.workerpools.1"
+    n8n_image_tag     = "2.39.0"
+    n8n_worker_pools = [{
+      name      = "gpu"
+      extra_env = [{ name = "N8N_GRACEFUL_SHUTDOWN_TIMEOUT", value = "120" }]
     }]
   }
 

@@ -396,9 +396,17 @@ jq -e '
   .data.QUEUE_WORKER_LOCK_DURATION == "60000"
   and .data.QUEUE_WORKER_LOCK_RENEW_TIME == "10000"
   and .data.QUEUE_WORKER_STALLED_INTERVAL == "30000"
-  and .data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT == "30"
 ' "$tmp/multi-main-configmap.json" >/dev/null \
-  || { echo "FAIL: the default fixture (all four worker timing inputs null) must retain the chart's own pinned defaults (60000/10000/30000 ms / 30s) unchanged" >&2; exit 1; }
+  || { echo "FAIL: the default fixture (all worker timing inputs null) must retain the chart's own pinned defaults (60000/10000/30000 ms) unchanged" >&2; exit 1; }
+
+# check.graceful_shutdown_fits_grace_period compares against
+# local.n8n_chart_default_graceful_shutdown_timeout when the input is null, so
+# the rendered chart default must equal that local. A chart bump that moves
+# the default fails here until the local is updated.
+expected_shutdown_default=$(console <<< 'local.n8n_chart_default_graceful_shutdown_timeout')
+jq -e --arg expected "$expected_shutdown_default" '.data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT == $expected' \
+  "$tmp/multi-main-configmap.json" >/dev/null \
+  || { echo "FAIL: chart ${chart_version} renders N8N_GRACEFUL_SHUTDOWN_TIMEOUT=$(jq -r '.data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT' "$tmp/multi-main-configmap.json") by default, but local.n8n_chart_default_graceful_shutdown_timeout is ${expected_shutdown_default}; update the local" >&2; exit 1; }
 
 jq -e '.data.QUEUE_WORKER_MAX_STALLED_COUNT == "1"' "$tmp/worker-timing-configmap.json" >/dev/null \
   || { echo "FAIL: the chart's own QUEUE_WORKER_MAX_STALLED_COUNT default must remain untouched (this module exposes no such input)" >&2; exit 1; }
