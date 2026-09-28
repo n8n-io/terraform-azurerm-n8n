@@ -3,7 +3,15 @@
 # outputs.tf must sit under a "# ── Section ──" banner comment (see AGENTS.md,
 # "Clear documentation"). Catches two drift patterns:
 #
-#   1. A block appended with no banner above it at all.
+#   1. A block that precedes every recognized banner in the file (there is
+#      no banner anywhere above it yet). Once at least one banner has been
+#      seen, every later block reads as "covered" by whichever banner came
+#      last, even one appended at true end-of-file with no new banner of
+#      its own: distinguishing "correctly filed under this banner" from
+#      "just happened to land after it" needs the semantic judgment call
+#      the next paragraph already disclaims, not something this positional
+#      check can soundly infer. This still guarantees the one thing it
+#      claims: the file can never rot to having no sections at all.
 #   2. A banner-like comment that doesn't match the established format
 #      (wrong dashes, missing padding, typo'd style).
 #

@@ -933,14 +933,17 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
 - Inline comments in `.tf` files use the `# ── Section ──` banner style.
   Match it when adding new sections. `scripts/check-variable-banners.sh`
   (`task banners`, local-only for now, not yet wired into CI) fails if a
-  `variable`/`output` block in `variables.tf`/`outputs.tf` has no banner
-  above it, or if a banner comment doesn't match the established
-  `# ── Name ──...──` format. It can't judge whether a variable is filed
-  under the *right* banner, only that the convention itself holds. The
-  check also pins the exact banner names and order (the script's own
-  `VARIABLE_BANNERS`/`OUTPUT_BANNERS` arrays), so adding, renaming, or
-  reordering a banner requires updating that list in the same PR, or
-  `task banners` fails with a found-vs-expected diff.
+  `variable`/`output` block in `variables.tf`/`outputs.tf` precedes every
+  recognized banner in the file (i.e. sits before the first one), or if a
+  banner comment doesn't match the established `# ── Name ──...──` format.
+  Once at least one banner exists, everything after it reads as "covered"
+  by whichever banner came last, even a stray block appended at file end
+  with no banner of its own: it can't judge whether a variable is filed
+  under the *right* banner, only that the file never rots to no sections
+  at all. The check also pins the exact banner names and order (the
+  script's own `VARIABLE_BANNERS`/`OUTPUT_BANNERS` arrays), so adding,
+  renaming, or reordering a banner requires updating that list in the
+  same PR, or `task banners` fails with a found-vs-expected diff.
 - The `kubectl_manifest.keda_trigger_authentication` defer-rendered manifest
   carries a comment block above the resource documenting the failure mode
   prevented and a link to the relevant troubleshooting doc.
