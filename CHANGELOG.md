@@ -9,7 +9,7 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [0.1.0] - 2026-09-28
 
-Initial public release of `terraform-azurerm-n8n`: a single resource-bearing
+Initial release of `terraform-azurerm-n8n`: a single resource-bearing
 root module that deploys a production-grade, multi-main [n8n](https://n8n.io)
 Enterprise installation on Microsoft Azure. The module's shape mirrors its
 [`terraform-aws-n8n`](https://github.com/n8n-io/terraform-aws-n8n) sibling —
