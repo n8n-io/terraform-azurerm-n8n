@@ -74,15 +74,40 @@ tasks:
         cmd: cd examples/{{.EXAMPLE}} && terraform test -verbose
 
   chart:
-    desc: Render and check the pinned n8n chart against this module's config-value contract (requires Helm and jq).
+    desc: >-
+      Render and check the pinned n8n chart against this module's config-value
+      contract, then run the Redis exporter outage regression (requires Helm,
+      jq, Go, and Python 3; matches the chart-check CI job in full).
     deps: [init]
     cmds:
       - ./tests/scripts/check-n8n-chart.sh
+      - |
+        GOBIN="$(mktemp -d)"
+        trap 'rm -rf "$GOBIN"' EXIT
+        GOBIN="$GOBIN" go install github.com/oliver006/redis_exporter@v1.90.0
+        python3 tests/scripts/check-redis-exporter.py "$GOBIN/redis_exporter"
 
   smoke-test-self-check:
-    desc: Offline self-test of smoke-test.sh's topology-detection logic against synthetic kubectl fixtures (no live cluster, no Azure credentials; matches the CI job).
+    desc: >-
+      Offline self-test of smoke-test.sh's topology-detection logic, plus
+      syntax/shellcheck/self-test coverage for preflight-region-check.sh and
+      the other tests/scripts/*.sh added since 0.4.0 (no live cluster, no
+      Azure credentials; matches the smoke-test-self-check CI job in full).
     cmds:
+      - bash -n tests/scripts/smoke-test.sh
       - SMOKE_TEST_SELF_TEST=1 ./tests/scripts/smoke-test.sh
+      - bash -n tests/scripts/preflight-region-check.sh
+      - shellcheck -S warning tests/scripts/preflight-region-check.sh
+      - ./tests/scripts/preflight-region-check.sh --help >/dev/null
+      - PREFLIGHT_SELF_TEST=1 ./tests/scripts/preflight-region-check.sh
+      - for:
+          - tests/scripts/chart-values-diff.sh
+          - tests/scripts/verify-worker-pools.sh
+          - tests/scripts/check-version-drift.sh
+          - tests/scripts/check-checkov.sh
+          - scripts/check-example-parity.sh
+        cmd: bash -n {{.ITEM}} && shellcheck -S warning {{.ITEM}}
+      - ./tests/scripts/chart-values-diff.sh --help >/dev/null
 
   chart-diff:
     desc: >-
