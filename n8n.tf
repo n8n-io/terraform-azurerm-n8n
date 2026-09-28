@@ -321,9 +321,15 @@ resource "helm_release" "n8n" {
           key  = local.redis_password_secret_key
         }
       } : {},
-      # Bull worker timing overrides (section 4). Empty when every input is
-      # null, so the chart's own redis.worker defaults (60000/10000/30000 ms)
-      # apply unchanged.
+      # Bull worker timing overrides (section 4) plus the graceful shutdown
+      # timeout (redis.worker.timeout -> N8N_GRACEFUL_SHUTDOWN_TIMEOUT).
+      # Empty when every input is null, so the chart's own redis.worker
+      # defaults (60000/10000/30000 ms / 30s) apply unchanged. The chart
+      # renders N8N_GRACEFUL_SHUTDOWN_TIMEOUT's ConfigMap entry
+      # unconditionally and extraEnv is appended after it, so a caller
+      # duplicate would silently win over the chart's value. Every extra_env
+      # input rejects the name at plan time for that reason (see the
+      # reservation in local.n8n_managed_env_names).
       length(local.n8n_queue_worker_settings) == 0 ? {} : {
         worker = local.n8n_queue_worker_settings
       },
@@ -750,6 +756,20 @@ check "worker_keda_pause_requires_a_supported_chart" {
   assert {
     condition     = (var.n8n_worker_keda_pause || var.n8n_worker_keda_paused_replica_count != null) ? local.n8n_worker_keda_pause_supported : true
     error_message = "n8n_worker_keda_pause or n8n_worker_keda_paused_replica_count is set, but n8n_chart_version predates 1.13.0. Charts older than 1.12.0 (including the 1.11.0-based worker-pools preview) do not read keda.worker.pause at all, so workers keep consuming jobs. Chart 1.12.0 reads it but still sets the worker Deployment's spec.replicas on every Helm upgrade, so a later apply while paused can write the replica floor back over the held count. Use n8n_chart_version 1.13.0 or newer, or clear these inputs."
+  }
+}
+
+# Warning half of the shutdown-window rule. An explicit
+# n8n_graceful_shutdown_timeout that does not fit is a hard validation error on
+# that variable. Left null, the chart still renders its own default, which must
+# fit the same way, but this was never checked before that input existed, so a
+# hard error here would break configurations that already plan. The chart
+# repository is hardcoded to the upstream OCI registry, so unlike
+# terraform-aws-n8n no custom-repository gate is needed.
+check "graceful_shutdown_fits_grace_period" {
+  assert {
+    condition     = var.n8n_graceful_shutdown_timeout != null || local.n8n_chart_default_graceful_shutdown_timeout + var.n8n_prestop_sleep < var.n8n_termination_grace_period
+    error_message = "n8n_graceful_shutdown_timeout is unset, so n8n uses the chart's default shutdown timeout of ${local.n8n_chart_default_graceful_shutdown_timeout}s. That plus n8n_prestop_sleep (${var.n8n_prestop_sleep}s) does not stay below n8n_termination_grace_period (${var.n8n_termination_grace_period}s), so Kubernetes can SIGKILL a pod before n8n finishes shutting down and interrupt running executions. Set n8n_graceful_shutdown_timeout to a value that fits, lower n8n_prestop_sleep, or raise n8n_termination_grace_period."
   }
 }
 

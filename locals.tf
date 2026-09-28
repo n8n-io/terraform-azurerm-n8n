@@ -288,13 +288,27 @@ locals {
 
   # Bull worker timing (port-aws-040-enhancements section 4): one inner map
   # with only non-null keys, merged into the chart's redis.worker block in
-  # n8n.tf. A shallow merge of three separate worker maps would lose values,
-  # so this local composes them together up front.
+  # n8n.tf. A shallow merge of separate worker maps would lose values, so
+  # this local composes them together up front. n8n_graceful_shutdown_timeout
+  # (timeout key) has no per-setting `{{- if }}` guard in the chart, unlike
+  # the three QUEUE_WORKER_* settings: templates/configmap.yaml renders
+  # N8N_GRACEFUL_SHUTDOWN_TIMEOUT unconditionally, so omitting this key when
+  # the variable is null does not disable anything, Helm just falls back to
+  # the chart's own values.yaml default (30s) for redis.worker.timeout.
   n8n_queue_worker_settings = merge(
     var.n8n_queue_worker_lock_duration == null ? {} : { lockDuration = var.n8n_queue_worker_lock_duration },
     var.n8n_queue_worker_lock_renew_time == null ? {} : { lockRenewTime = var.n8n_queue_worker_lock_renew_time },
     var.n8n_queue_worker_stalled_interval == null ? {} : { stalledInterval = var.n8n_queue_worker_stalled_interval },
+    var.n8n_graceful_shutdown_timeout == null ? {} : { timeout = var.n8n_graceful_shutdown_timeout },
   )
+
+  # The chart's values.yaml default for redis.worker.timeout, in seconds.
+  # Verified for charts 1.11.0 (the worker-pools preview base) and 1.13.0.
+  # Used only by check.graceful_shutdown_fits_grace_period (n8n.tf) when
+  # n8n_graceful_shutdown_timeout is null. tests/scripts/check-n8n-chart.sh
+  # renders the pinned chart and fails if its default drifts from this value,
+  # so update both together on a chart bump.
+  n8n_chart_default_graceful_shutdown_timeout = 30
 
   # The chart appends config.extraEnv after its own environment variables, and
   # Kubernetes resolves duplicates last-wins. Reserve every current module and

@@ -372,12 +372,13 @@ done
 
 echo "PASS: PostgreSQL connection/ping timing renders on all three application pod families and is omitted by default"
 
-echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval) =="
+echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval/graceful shutdown timeout) =="
 
 jq -e '
   .data.QUEUE_WORKER_LOCK_DURATION == "90000"
   and .data.QUEUE_WORKER_LOCK_RENEW_TIME == "15000"
   and .data.QUEUE_WORKER_STALLED_INTERVAL == "45000"
+  and .data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT == "45"
 ' "$tmp/worker-timing-configmap.json" >/dev/null \
   || { echo "FAIL: the chart ConfigMap is missing one or more Bull worker timing overrides" >&2; exit 1; }
 
@@ -386,6 +387,7 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
     ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_LOCK_DURATION")] | length == 1)
     and ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_LOCK_RENEW_TIME")] | length == 1)
     and ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_STALLED_INTERVAL")] | length == 1)
+    and ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_GRACEFUL_SHUTDOWN_TIMEOUT")] | length == 1)
   ' "$tmp/worker-timing-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} is missing one or more Bull worker timing ConfigMap references" >&2; exit 1; }
 done
@@ -395,7 +397,16 @@ jq -e '
   and .data.QUEUE_WORKER_LOCK_RENEW_TIME == "10000"
   and .data.QUEUE_WORKER_STALLED_INTERVAL == "30000"
 ' "$tmp/multi-main-configmap.json" >/dev/null \
-  || { echo "FAIL: the default fixture (all three worker timing inputs null) must retain the chart's own pinned defaults (60000/10000/30000 ms) unchanged" >&2; exit 1; }
+  || { echo "FAIL: the default fixture (all worker timing inputs null) must retain the chart's own pinned defaults (60000/10000/30000 ms) unchanged" >&2; exit 1; }
+
+# check.graceful_shutdown_fits_grace_period compares against
+# local.n8n_chart_default_graceful_shutdown_timeout when the input is null, so
+# the rendered chart default must equal that local. A chart bump that moves
+# the default fails here until the local is updated.
+expected_shutdown_default=$(console <<< 'local.n8n_chart_default_graceful_shutdown_timeout')
+jq -e --arg expected "$expected_shutdown_default" '.data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT == $expected' \
+  "$tmp/multi-main-configmap.json" >/dev/null \
+  || { echo "FAIL: chart ${chart_version} renders N8N_GRACEFUL_SHUTDOWN_TIMEOUT=$(jq -r '.data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT' "$tmp/multi-main-configmap.json") by default, but local.n8n_chart_default_graceful_shutdown_timeout is ${expected_shutdown_default}; update the local" >&2; exit 1; }
 
 jq -e '.data.QUEUE_WORKER_MAX_STALLED_COUNT == "1"' "$tmp/worker-timing-configmap.json" >/dev/null \
   || { echo "FAIL: the chart's own QUEUE_WORKER_MAX_STALLED_COUNT default must remain untouched (this module exposes no such input)" >&2; exit 1; }

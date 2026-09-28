@@ -57,9 +57,17 @@ floor, and not the count KEDA had scaled to under load:
 - A terminated worker stops taking new jobs and waits for its running
   executions, but only up to its shutdown window: the chart's
   `redis.worker.timeout` (30 seconds by default, rendered as
-  `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` and not exposed by this module), bounded
-  by `n8n_termination_grace_period`. Executions still running after that
-  can be interrupted.
+  `N8N_GRACEFUL_SHUTDOWN_TIMEOUT`); `n8n_graceful_shutdown_timeout`
+  overrides it. Setting the value through `n8n_extra_env`,
+  `n8n_worker_extra_env`, or a worker pool's `extra_env` is rejected at
+  plan time: the chart always renders it as a ConfigMap reference and
+  `extraEnv` is appended after it, so a second entry with the same name
+  would silently replace the chart's value. The pod is also bounded by
+  `n8n_termination_grace_period`: the timeout plus `n8n_prestop_sleep`
+  must stay below it. An explicit `n8n_graceful_shutdown_timeout` that does
+  not fit fails validation; with the input unset, a chart default that does
+  not fit only raises a plan-time warning. Executions still running after
+  that can be interrupted.
 - The HPA that KEDA manages behind the `ScaledObject`
   (`kubectl get hpa keda-hpa-n8n-worker -n <namespace>`) then restores the
   floor, and scales above it as queue demand requires. This is HPA-driven,
