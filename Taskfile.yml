@@ -10,7 +10,7 @@ version: "3"
 vars:
   # Must stay in lockstep with the `target:` matrix lists in
   # .github/workflows/terraform-tests.yml (validate, test, tflint all
-  # enumerate the same 8-example set; docs matches too). An example this
+  # enumerate the same 9-example set; docs matches too). An example this
   # wrapper never visits is, in practice, an example nobody validated
   # before pushing.
   EXAMPLES: small medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
@@ -18,6 +18,12 @@ vars:
   # (matching the CI matrix) but not by docs: their READMEs are hand-written,
   # with no <!-- BEGIN_TF_DOCS --> block for terraform-docs to check.
   SUBMODULES: modules/controllers modules/tls-letsencrypt modules/tls-self-signed
+# tflint reads TFLINT_CONFIG_FILE before falling back to ./.tflint.hcl in the
+# current directory, so every submodule/example cell below reuses the root
+# ruleset instead of silently finding no config, matching how CI pins it
+# (.github/workflows/terraform-tests.yml).
+env:
+  TFLINT_CONFIG_FILE: "{{.ROOT_DIR}}/.tflint.hcl"
 
 tasks:
   init:
@@ -69,19 +75,27 @@ tasks:
 
   chart:
     desc: Render and check the pinned n8n chart against this module's config-value contract (requires Helm and jq).
+    deps: [init]
     cmds:
       - ./tests/scripts/check-n8n-chart.sh
+
+  smoke-test-self-check:
+    desc: Offline self-test of smoke-test.sh's topology-detection logic against synthetic kubectl fixtures (no live cluster, no Azure credentials; matches the CI job).
+    cmds:
+      - SMOKE_TEST_SELF_TEST=1 ./tests/scripts/smoke-test.sh
 
   chart-diff:
     desc: >-
       Diff the pinned n8n chart's values.yaml against a candidate version
       (requires Helm). Run before moving n8n_chart_version's default, e.g.
       task chart-diff CANDIDATE=1.14.0
+    requires:
+      vars: [CANDIDATE]
     cmds:
       - ./tests/scripts/chart-values-diff.sh "{{.CANDIDATE}}"
 
   version-drift:
-    desc: Report every version pin that has fallen behind upstream (see docs/versioning.md). Never fails; matches the non-blocking CI job; requires curl and jq.
+    desc: Report every version pin that has fallen behind upstream (see docs/versioning.md). Never fails; matches the non-blocking CI job; requires curl and python3.
     cmds:
       - ./tests/scripts/check-version-drift.sh
 
@@ -152,18 +166,20 @@ tasks:
 
   ci:
     desc: >-
-      Run the full local loop (fmt, validate, test, chart, lint, example-parity,
-      docs, markdown) plus banners, which CI does not gate on. Mirrors every
-      CI job except checkov, which is a hard-fail gate in CI but needs a
-      pinned checkov install the other tasks do not: run `task checkov`
-      separately once you have it.
+      Run the full local loop (fmt, validate, test, chart, smoke-test-self-check,
+      lint, example-parity, docs, markdown, version-drift) plus banners, which
+      CI does not gate on. Mirrors every CI job except checkov, which is a
+      hard-fail gate in CI but needs a pinned checkov install the other tasks
+      do not: run `task checkov` separately once you have it.
     cmds:
       - task: fmt
       - task: validate
       - task: test
       - task: chart
+      - task: smoke-test-self-check
       - task: lint
       - task: example-parity
       - task: docs
       - task: markdown
+      - task: version-drift
       - task: banners

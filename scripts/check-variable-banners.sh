@@ -22,16 +22,27 @@ set -euo pipefail
 # The banner regexes below match the multibyte "─" (U+2500) used in
 # variables.tf/outputs.tf. Bash's [[ =~ ]] only resolves that against file
 # content under a UTF-8 locale; a C/POSIX locale (the default in minimal
-# shells and containers, and whatever LC_ALL/LANG a CI image sets) makes
-# every real banner fail the strict-format check. Leave an already-UTF-8
-# locale alone; otherwise force C.UTF-8, the most widely available UTF-8
-# locale, via LC_ALL since it -- not a scoped LC_CTYPE -- is what a
-# non-UTF-8 LC_ALL in the environment would otherwise override.
-effective_locale="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
-case "$effective_locale" in
-  *.[Uu][Tt][Ff]-8 | *.[Uu][Tt][Ff]8) ;;
-  *) export LC_ALL=C.UTF-8 ;;
-esac
+# shells and containers) makes every real banner fail the strict-format
+# check. Don't trust the *name* of LC_ALL/LC_CTYPE/LANG: an env var can read
+# "en_US.UTF-8" while the underlying locale was never generated on this
+# machine (common in minimal containers), in which case glibc silently
+# stays in "C" despite the variable's name, and a name-only check would
+# wrongly "preserve" a locale that never actually activated. Probe real
+# multibyte matching behavior instead: if the current environment can't
+# match "─" as a single character, try C.UTF-8 (the most widely available
+# generated UTF-8 locale); if neither works, fall through and let the
+# strict-format check fail loudly with a clear cause below, rather than
+# silently misreporting every banner as malformed.
+utf8_locale_usable() {
+  "$BASH" -c '[[ "─" =~ ^.$ ]]' 2>/dev/null
+}
+if ! utf8_locale_usable; then
+  if LC_ALL=C.UTF-8 utf8_locale_usable; then
+    export LC_ALL=C.UTF-8
+  else
+    echo "check-variable-banners: no usable UTF-8 locale found (current environment and C.UTF-8 both fail to match a multibyte character); banner matching may report false failures below" >&2
+  fi
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -60,6 +71,7 @@ for file in "${FILES[@]}"; do
   lineno=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     lineno=$((lineno + 1))
+    line="${line%$'\r'}"
 
     if [[ "$line" =~ $BANNER_LOOSE_RE ]]; then
       if [[ ! "$line" =~ $BANNER_STRICT_RE ]]; then
@@ -95,13 +107,15 @@ for file in "${FILES[@]}"; do
   fi
   if [[ "$banners_match" != true ]]; then
     echo "$file: section banners are missing, renamed, or out of order" >&2
+    echo "  found    (${#banners[@]}): $(printf '%s | ' "${banners[@]}")" >&2
+    echo "  expected (${#expected[@]}): $(printf '%s | ' "${expected[@]}")" >&2
     fail=1
   fi
 done
 
 if [[ "$fail" -ne 0 ]]; then
   echo >&2
-  echo "See AGENTS.md, 'Clear documentation' > variable/output banners, for the convention and current section list." >&2
+  echo "See AGENTS.md, 'Clear documentation' > variable/output banners, for the convention; see this script's VARIABLE_BANNERS/OUTPUT_BANNERS arrays for the current section list." >&2
   exit 1
 fi
 

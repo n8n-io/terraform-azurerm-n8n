@@ -936,7 +936,11 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   `variable`/`output` block in `variables.tf`/`outputs.tf` has no banner
   above it, or if a banner comment doesn't match the established
   `# ── Name ──...──` format. It can't judge whether a variable is filed
-  under the *right* banner, only that the convention itself holds.
+  under the *right* banner, only that the convention itself holds. The
+  check also pins the exact banner names and order (the script's own
+  `VARIABLE_BANNERS`/`OUTPUT_BANNERS` arrays), so adding, renaming, or
+  reordering a banner requires updating that list in the same PR, or
+  `task banners` fails with a found-vs-expected diff.
 - The `kubectl_manifest.keda_trigger_authentication` defer-rendered manifest
   carries a comment block above the resource documenting the failure mode
   prevented and a link to the relevant troubleshooting doc.
