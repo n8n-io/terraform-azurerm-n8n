@@ -42,7 +42,7 @@ of the root module when a caller supplies an existing certificate — a lighter
 
 ```hcl
 module "tls_letsencrypt" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-letsencrypt?ref=v0.1.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-letsencrypt?ref=0.1.0"
 
   acme_email                   = "ops@example.com"
   domain_name                  = "n8n.example.com"
@@ -56,7 +56,7 @@ module "tls_letsencrypt" {
 
 # Wire into the root module:
 module "n8n" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=v0.1.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=0.1.0"
 
   app_gateway_tls_cert_secret_id = module.tls_letsencrypt.app_gateway_tls_cert_secret_id
 

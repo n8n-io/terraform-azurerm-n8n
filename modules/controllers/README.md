@@ -54,7 +54,7 @@ direction.
 
 ```hcl
 module "controllers" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/controllers?ref=v0.1.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/controllers?ref=0.1.0"
 
   install_keda   = true
   keda_namespace = "keda"

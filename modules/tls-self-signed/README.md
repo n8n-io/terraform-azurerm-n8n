@@ -36,7 +36,7 @@ contacts an external CA.
 
 ```hcl
 module "tls_self_signed" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-self-signed?ref=v0.1.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n//modules/tls-self-signed?ref=0.1.0"
 
   domain_name          = "n8n.example.com"
   key_vault_id         = azurerm_key_vault.shared.id
@@ -49,7 +49,7 @@ module "tls_self_signed" {
 
 # Wire into the root module:
 module "n8n" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=v0.1.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=0.1.0"
 
   app_gateway_tls_cert_secret_id = module.tls_self_signed.app_gateway_tls_cert_secret_id
 
