@@ -719,9 +719,12 @@ concern, and one deliberate nested call to the directly composable
 | `tests/scripts/preflight-region-check.sh` | Pre-`apply` region/subscription capability check (AKS SKU zones, subscription vCPU quota headroom, PostgreSQL Flexible Server versions/SKU, optional Managed Redis capacity probe); reads region, sizing, and SKUs from the caller's own `terraform plan`. |
 | `docs/`                           | Long-form supplementary docs (upgrading n8n and the chart, troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
 | `README.md`                       | Human entry point — architecture, prerequisites, usage, and the auto-generated Reference block. |
+| `CONTRIBUTORS`                    | Contributors to this module, in order of first contribution, with maintainer/contributor role. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |
 | `.copywrite.hcl`                  | Enforces the `# Copyright n8n GmbH 2025` / `# SPDX-License-Identifier: MIT` header on every `.tf`. |
 | `.github/workflows/`              | CI: fmt, validate, test, tflint, checkov, terraform-docs.   |
+| `.github/CODEOWNERS`              | Default reviewers for PRs.                                  |
+| `Taskfile.yml`                    | Optional convenience wrapper (`task ci`) around the local dev loop below; CI does not depend on it. |
 | `openspec/`                       | OpenSpec change artifacts (proposal, design, delta specs, tasks) for in-flight and recently shipped changes. Intentionally tracked — this file references them — and ships in release tags as contributor documentation. |
 | `.agents/skills/`                 | Vendored agent skills used by AI contributors working in this repo. Intentionally tracked; inert for module consumers. Loop-runner state (`progress.txt`, `skills-lock.json`, `logs/`) is gitignored and must never be committed. |
 
@@ -928,7 +931,12 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   `docs/versioning.md`, and `docs/deletion-safety.md` cover operator-facing
   concerns that don't belong inline in `README.md`.
 - Inline comments in `.tf` files use the `# ── Section ──` banner style.
-  Match it when adding new sections.
+  Match it when adding new sections. `scripts/check-variable-banners.sh`
+  (`task banners`, local-only for now, not yet wired into CI) fails if a
+  `variable`/`output` block in `variables.tf`/`outputs.tf` has no banner
+  above it, or if a banner comment doesn't match the established
+  `# ── Name ──...──` format. It can't judge whether a variable is filed
+  under the *right* banner, only that the convention itself holds.
 - The `kubectl_manifest.keda_trigger_authentication` defer-rendered manifest
   carries a comment block above the resource documenting the failure mode
   prevented and a link to the relevant troubleshooting doc.
