@@ -47,9 +47,8 @@ module "tls_self_signed" {
   friendly_name_prefix = "n8nlab"
   common_tags          = { Environment = "lab" }
 
-  # Optional. Defaults to 8760 (1 year). Rounded down to whole months
-  # (730 hours each), so use 730 or more.
-  # validity_period_hours = 2190  # 3 months
+  # Optional. Whole months, 1 to 120. Defaults to 12.
+  # validity_in_months = 3
 }
 
 # Wire into the root module:
@@ -66,12 +65,9 @@ module "n8n" {
 
 ## Validity and renewal
 
-Key Vault's certificate policy takes a validity in whole months. The
-submodule converts `validity_period_hours` with
-`floor(validity_period_hours / 730)`, so the default 8760 hours becomes 12
-months. A value below 730 rounds down to 0 months, which the variable's
-current validation (24 to 87600 hours) does not reject. Use 730 hours or
-more.
+Key Vault's certificate policy takes a validity in whole months, and
+`validity_in_months` is passed to it unchanged. The variable accepts whole
+numbers from 1 to 120 (10 years); anything else fails at plan.
 
 Key Vault's `AutoRenew` lifetime action issues a new certificate version
 once 80% of the validity window has elapsed (about 73 days before expiry on

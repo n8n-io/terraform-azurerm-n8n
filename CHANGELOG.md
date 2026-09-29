@@ -7,6 +7,17 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
+  with `validity_in_months` (whole number, 1 to 120, default 12), matching
+  the Key Vault certificate policy's own unit. The old input was converted
+  with `floor(hours / 730)`, so values below 730 planned as
+  `validity_in_months = 0` and others were silently rounded down (e.g.
+  `1000` to 1 month). Migrate by dividing by 730: the old default
+  `validity_period_hours = 8760` is `validity_in_months = 12`
+  ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
+
 ## [0.1.0] - 2026-09-29
 
 Initial release of `terraform-azurerm-n8n`: a single resource-bearing

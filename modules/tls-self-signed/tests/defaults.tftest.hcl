@@ -54,14 +54,13 @@ run "submodule_plans_clean_with_defaults" {
     error_message = "azurerm_key_vault_certificate.self_signed certificate_policy.x509_certificate_properties.subject_alternative_names.dns_names must contain var.domain_name"
   }
 
-  # Validity window tracks `var.validity_period_hours` (default 8760 = 1y),
-  # converted to integer months for KV's `validity_in_months` policy field
-  # (730 hours ≈ 1 month). A regression here (e.g. accidentally hard-coded
-  # back to a literal) would silently ignore the operator's renewal-cadence
-  # preference.
+  # Validity window tracks `var.validity_in_months` (default 12), passed
+  # straight through to KV's `validity_in_months` policy field. A
+  # regression here (e.g. accidentally hard-coded back to a literal) would
+  # silently ignore the operator's renewal-cadence preference.
   assert {
-    condition     = azurerm_key_vault_certificate.self_signed.certificate_policy[0].x509_certificate_properties[0].validity_in_months == floor(var.validity_period_hours / 730)
-    error_message = "azurerm_key_vault_certificate.self_signed.certificate_policy.x509_certificate_properties.validity_in_months must equal floor(var.validity_period_hours / 730)"
+    condition     = azurerm_key_vault_certificate.self_signed.certificate_policy[0].x509_certificate_properties[0].validity_in_months == var.validity_in_months
+    error_message = "azurerm_key_vault_certificate.self_signed.certificate_policy.x509_certificate_properties.validity_in_months must equal var.validity_in_months"
   }
 
   # KV stores the cert as an unencrypted PFX (PKCS#12) — required so
@@ -177,14 +176,40 @@ run "rejects_invalid_friendly_name_prefix" {
   ]
 }
 
-run "rejects_validity_period_below_floor" {
+run "accepts_one_month_validity" {
   command = plan
 
   variables {
-    validity_period_hours = 1
+    validity_in_months = 1
+  }
+
+  assert {
+    condition     = azurerm_key_vault_certificate.self_signed.certificate_policy[0].x509_certificate_properties[0].validity_in_months == 1
+    error_message = "validity_in_months = 1 must reach the certificate policy unchanged"
+  }
+}
+
+run "rejects_zero_month_validity" {
+  command = plan
+
+  variables {
+    validity_in_months = 0
   }
 
   expect_failures = [
-    var.validity_period_hours,
+    var.validity_in_months,
+  ]
+}
+
+# Key Vault takes whole months; a fraction would otherwise be truncated.
+run "rejects_fractional_month_validity" {
+  command = plan
+
+  variables {
+    validity_in_months = 1.5
+  }
+
+  expect_failures = [
+    var.validity_in_months,
   ]
 }

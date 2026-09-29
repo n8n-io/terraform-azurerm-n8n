@@ -63,7 +63,7 @@ listener's `ssl_certificate` completes.
 
 The self-signed cert is generated inside Key Vault by its `Self` issuer
 (`azurerm_key_vault_certificate.self_signed`) and valid for
-`floor(var.validity_period_hours / 730)` months (default 12). Key Vault's
+`var.validity_in_months` months (default 12). Key Vault's
 `AutoRenew` lifetime action issues a new version once 80% of the validity
 window has elapsed.
 

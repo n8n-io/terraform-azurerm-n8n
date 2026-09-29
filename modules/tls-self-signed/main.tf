@@ -70,7 +70,7 @@ resource "azurerm_key_vault_certificate" "self_signed" {
 
     x509_certificate_properties {
       subject            = "CN=${var.domain_name}"
-      validity_in_months = floor(var.validity_period_hours / 730)
+      validity_in_months = var.validity_in_months
 
       # serverAuth EKU — required for AGW listener termination.
       extended_key_usage = ["1.3.6.1.5.5.7.3.1"]

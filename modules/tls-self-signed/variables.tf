@@ -6,7 +6,7 @@
 #   - the FQDN the cert is issued for (`domain_name`),
 #   - the Key Vault to import the generated PEM into (`key_vault_id`),
 #   - the standard naming/tagging pair (`friendly_name_prefix`, `common_tags`),
-#   - the cert validity window (`validity_period_hours`, default 1 year).
+#   - the cert validity window (`validity_in_months`, default 12).
 #
 # Provider configuration (subscription, auth shape for azurerm) is the
 # caller's responsibility — see the README in this directory.
@@ -60,13 +60,13 @@ variable "common_tags" {
   # per-resource tag-count limits are enforced by the platform at apply.
 }
 
-variable "validity_period_hours" {
-  description = "Lifetime of the self-signed certificate, in hours. Defaults to 8760 (1 year). Key Vault takes whole months, so the value is converted with floor(validity_period_hours / 730); use 730 or more, since a smaller value rounds down to 0 months. Key Vault's AutoRenew lifetime action issues a new certificate version once 80% of the validity window has elapsed; the App Gateway listener picks up the new versioned URI on the next terraform apply. Self-signed mode is intended for lab / internal-only use; production deployments should use the sibling `modules/tls-letsencrypt/` submodule or pass an existing Key Vault certificate's Secret URI to the root module's app_gateway_tls_cert_secret_id."
+variable "validity_in_months" {
+  description = "Lifetime of the self-signed certificate, in whole months (1 to 120). Defaults to 12. Passed straight to the Key Vault certificate policy's validity_in_months, which only accepts whole months. Key Vault's AutoRenew lifetime action issues a new certificate version once 80% of the validity window has elapsed; the App Gateway listener picks up the new versioned URI on the next terraform apply. Self-signed mode is intended for lab / internal-only use; production deployments should use the sibling `modules/tls-letsencrypt/` submodule or pass an existing Key Vault certificate's Secret URI to the root module's app_gateway_tls_cert_secret_id."
   type        = number
-  default     = 8760
+  default     = 12
 
   validation {
-    condition     = var.validity_period_hours >= 24 && var.validity_period_hours <= 87600
-    error_message = "validity_period_hours must be between 24 (1 day) and 87600 (10 years)."
+    condition     = var.validity_in_months >= 1 && var.validity_in_months <= 120 && floor(var.validity_in_months) == var.validity_in_months
+    error_message = "validity_in_months must be a whole number between 1 and 120 (10 years); Key Vault's certificate policy takes validity in whole months."
   }
 }
