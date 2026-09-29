@@ -416,7 +416,9 @@ image instead of a floating tag.
   floating tag), `azure/setup-helm` pinned to `v4.3.0`.
 - CI toolchain further bumped: `TF_VERSION` `1.16.2` to `1.16.4` and
   `CHECKOV_VERSION` `3.3.17` to `3.3.20`, porting `terraform-aws-n8n`
-  #152/#153. The Terraform requirement remains `>= 1.9`. Checkov
+  #153 (`terraform-aws-n8n` #152 does not apply: this module's
+  `tests/scripts/smoke-test.sh` has no single-instance path to remove).
+  The Terraform requirement remains `>= 1.9`. Checkov
   `3.3.20`'s only change is a plan-parser fix for `forget`-action
   resources, so it drew no new findings against this repo (verified
   locally: pass 1 reports the same 182 passed / 174 failed / 40 skipped
