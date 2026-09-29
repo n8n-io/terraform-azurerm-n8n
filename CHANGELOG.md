@@ -7,17 +7,17 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-09-28
+## [0.1.0] - 2026-09-29
 
 Initial release of `terraform-azurerm-n8n`: a single resource-bearing
 root module that deploys a production-grade, multi-main [n8n](https://n8n.io)
 Enterprise installation on Microsoft Azure. The module's shape mirrors its
 [`terraform-aws-n8n`](https://github.com/n8n-io/terraform-aws-n8n) sibling —
 one root, `versions.tf`/`variables.tf`/`locals.tf`/`outputs.tf` plus one file
-per concern, no nested `module` calls.
+per concern, and one deliberate nested call to `modules/controllers` (KEDA).
 
 Ports the applicable parts of `terraform-aws-n8n` 0.4.0 onto this module's
-existing Azure foundation (see `openspec/changes/port-aws-040-enhancements/`
+existing Azure foundation (see `openspec/changes/archive/2026-09-14-port-aws-040-enhancements/`
 for the full per-item applicability assessment and source evidence). Ported
 as Azure adaptations, not copied AWS semantics: `db_apply_immediately` and
 other AWS maintenance-window controls are excluded (Flexible Server and
@@ -25,9 +25,9 @@ Managed Redis have no equivalent argument); AWS sizing values, load-test
 measurements, and TPS/pool-sizing rules of thumb are excluded (Azure keeps
 its own example sizing and pool-size guidance); the legacy AWS Redis TLS
 input name is not introduced (Azure already uses `redis_external_tls_enabled`
-against Managed Redis's always-on TLS). Every input below defaults to
-preserve existing behavior; none of this release's tuning is applied
-automatically.
+against Managed Redis's always-on TLS). Every tuning input below defaults
+to the n8n or chart behavior it overrides, so none of it changes a
+deployment unless set.
 
 Also ports the applicable parts of `terraform-aws-n8n` 0.5.0 onto this
 module (see `openspec/changes/port-aws-050-enhancements/` for the full
@@ -39,17 +39,29 @@ metrics-server; AKS ships one as a managed addon), the RDS
 tracked separately), and `docs/istio-ingress.md` (`examples/split-ingress`
 already documents the `create_ingress = false` contract).
 
-**What moves on apply** for a caller who changes nothing but the module
-source pin: `helm_release.n8n` plans an in-place `version` change
-(`1.10.0` → `1.11.0`); the chart's only two functional changes at that
-bump (a KEDA `listName` default and an ingress-webhook `/mcp/` route) are
-both inert here (this module sets `listName` explicitly, and
-`ingress.enabled` defaults `false` and is never set by this module). The
-`kubernetes` provider bump (`~> 2.0` → `~> 3.0`) plans no resource changes,
-only the existing cosmetic "Deprecated Resource" warnings on unversioned
-resource types already noted in `AGENTS.md`. Enabling
-`redis_exporter_enabled` for the first time now pulls a digest-pinned
-image instead of a floating tag.
+**Note for pre-release test deployments.** No earlier version of this
+module was ever tagged. The `Fixed`, `Changed`, and `Security` sections
+below describe differences from earlier untagged commits, for stacks (for
+example qualification runs) created from one of those commits. A new
+installation of `0.1.0` can skip them. See
+[`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md) for the chart upgrade
+and
+[`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#upgrading-a-pre-release-deployment)
+for the resource-address changes from the modularity refactor.
+
+**Live qualification.** The offline test matrix (mocked `terraform test`,
+chart rendering, static analysis) does not prove live Azure behavior. Three
+disposable live runs back this release, each on one region and SKU set and
+none a release guarantee:
+[`2026-09-16`](./docs/qualification-runs/2026-09-16-pr4-pr4cm-germanywestcentral.md)
+(`examples/small` and `examples/customer-managed-everything`, chart `1.10.0`),
+[`2026-09-22`](./docs/qualification-runs/2026-09-22-pr6-swedencentral.md)
+(`examples/worker-pools` on the preview chart), and
+[`2026-09-23`](./docs/qualification-runs/2026-09-23-chart-1.13.0-swedencentral.md)
+(the chart `1.11.0` to `1.13.0` upgrade on `examples/small`). No run covered
+this exact release commit end to end. Run
+[`docs/manual-azure-qualification.md`](./docs/manual-azure-qualification.md)
+in your own subscription before relying on the one-apply lifecycle.
 
 ### Fixed
 
@@ -77,12 +89,13 @@ image instead of a floating tag.
   corrected too. Callers who rotated out-of-band with
   `az network application-gateway ssl-cert update` should expect one plan
   that repoints the listener at the Terraform-declared URI.
-- **`n8n_image_pull_secrets` accepted Secret names Kubernetes would reject.**
-  Each entry was bounded to 253 characters total but not to 63 characters
-  per dot-separated label, the actual Kubernetes DNS-1123 subdomain rule.
-  Values that were always going to fail at apply now fail at plan.
-  `examples/split-ingress`'s `webhook_subdomain` gets the same 63-character
-  bound folded into its existing single-label validation.
+- **`n8n_image_pull_secrets` entries are now also capped at 63 characters
+  per dot-separated label**, on top of the existing 253-character total.
+  This module-side limit is stricter than the Kubernetes API's own
+  Secret-name check, which caps only the total length.
+  `examples/split-ingress`'s `webhook_subdomain`, a DNS host label, gets
+  the same 63-character bound folded into its existing single-label
+  validation, matching the DNS label limit.
 - **`pg_backup_retention_days` failed on an explicit `null`** instead of
   falling back to its default of 7 (missing `nullable = false`).
 - **checkov never evaluated the disabled-by-default Redis exporter.**
@@ -130,14 +143,31 @@ image instead of a floating tag.
   support and OpenTelemetry/log-streaming observability.
 - A main HPA, a webhook HPA, and worker KEDA floors/ceilings tied to Helm
   replica counts, plus an advisory AKS capacity diagnostic.
-- `examples/small`, `examples/medium`, `examples/large`, and
-  `examples/split-ingress`.
+- **Customer-managed infrastructure.** Non-nullable ownership switches
+  `create_aks`, `create_blob_storage`, `create_namespace`, `install_keda`,
+  and `n8n_webhook_hpa_enabled`, each defaulting to module-managed. For
+  AKS, Blob, and KEDA, turning the switch off also requires the documented
+  `existing_*` references and `existing_*_prerequisites_confirmed`
+  attestation (KEDA needs only the attestation). Caller-managed
+  Kubernetes Secret references (`n8n_license_key_secret_ref`,
+  `n8n_encryption_key_secret_ref`, `postgres_password_secret_ref`,
+  `redis_password_secret_ref`) are mutually exclusive with their literal
+  counterparts, and the module never reads their values. See
+  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md).
+- `modules/controllers/`: the KEDA namespace and Helm release as a directly
+  composable submodule, called by the root behind `install_keda`.
+- `examples/small`, `examples/medium`, `examples/large`,
+  `examples/split-ingress`, and the four caller-owned-layer examples
+  `examples/customer-managed-cluster`, `examples/customer-managed-redis`,
+  `examples/customer-managed-storage`, and
+  `examples/customer-managed-everything`.
 - `modules/tls-letsencrypt/` and `modules/tls-self-signed/` TLS helper
   submodules.
 - `docs/redis.md`, `docs/data-storage.md`, `docs/observability.md`,
   `docs/azure-key-vault-external-secrets.md`, `docs/post-deployment.md`,
   `docs/troubleshooting.md`, `docs/destroy-cleanup.md`,
-  `docs/tls-rotation.md`.
+  `docs/tls-rotation.md`, `docs/customer-managed-infrastructure.md`,
+  `docs/topology-maintenance.md`, and `docs/upgrading-n8n.md`.
 - **`tests/scripts/preflight-region-check.sh`**: a pre-`apply` check for the
   three region/subscription gaps that otherwise surface 10-20 minutes into a
   live apply: AKS `AvailabilityZoneNotSupported` (VM SKU not offered or
@@ -211,10 +241,11 @@ image instead of a floating tag.
   (main, worker, webhook processor). Rejects a caller-supplied `NODE_OPTIONS`
   in `n8n_extra_env` only while this input is active.
 - `n8n_task_runner_custom_config`: references a caller-managed ConfigMap
-  mounted read-only at `/etc/n8n-task-runners.json` on the main and worker
-  task-runner sidecars via `taskRunners.customConfig`. The module never
-  reads or hashes the ConfigMap's contents; rotate it and manually restart
-  both deployments.
+  mounted read-only at `/etc/n8n-task-runners.json` on the task-runner
+  sidecars via `taskRunners.customConfig`. With the default chart `1.13.0`
+  only workers carry that sidecar (see the chart bump under `Changed`). The
+  module never reads or hashes the ConfigMap's contents; rotate it and
+  manually restart the affected deployments.
 - `n8n_dns_config`: optional pod `dnsConfig` (nameservers, search domains,
   options) applied identically to main, worker, and webhook-processor pods,
   validated against Kubernetes' supported DNS-config contract. Leaves
@@ -239,8 +270,8 @@ image instead of a floating tag.
   for editor identity. Azure already emitted and reserved `N8N_WEBHOOK_URL`;
   this release does not add the deprecated `WEBHOOK_URL` alias.
 - A main-replica-floor passthrough (`n8n_main_hpa_min_replicas`) surfaced in
-  all eight examples (`small`, `medium`, `large`, `split-ingress`, and the
-  four `customer-managed-*` roots), defaulting to each example's existing
+  all nine examples (`small`, `medium`, `large`, `split-ingress`,
+  `worker-pools`, and the four `customer-managed-*` roots), defaulting to each example's existing
   floor (2, except medium's 3 and large's 6).
 - `tests/scripts/check-n8n-chart.sh`: an offline Helm chart-rendering
   regression check with no Azure/Kubernetes-credential dependency, wired
@@ -352,9 +383,11 @@ image instead of a floating tag.
   survives a later scale-down. Documented on the input and in the example.
 
 - `examples/worker-pools/` (EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE):
-  topology variant of `small` running three pools beside the default
+  topology variant of `small` that documents three pools beside the default
   worker deployment, sized so `aks_node_count_max` clears their combined
-  ceiling. `n8n_chart_version` is a required input there, since the module
+  ceiling. The pools are not wired into `module "n8n"` by default: a plain
+  apply creates none until the `n8n_worker_pools` line in `main.tf` is
+  uncommented. `n8n_chart_version` is a required input there, since the module
   default renders no pools, and its README documents the official
   preview-build path and the private-mirror fallback plus an end-to-end
   routing test. Covered by `scripts/check-example-parity.sh`, whose
@@ -396,7 +429,7 @@ image instead of a floating tag.
   the only supported way to change the value: the chart renders this
   ConfigMap key on every n8n container, so `n8n_extra_env`,
   `n8n_worker_extra_env`, and worker pool `extra_env` already reject the
-  name at plan time (unchanged since `0.1.0`). An explicit value plus
+  name at plan time. An explicit value plus
   `n8n_prestop_sleep` must stay strictly below
   `n8n_termination_grace_period`, or validation fails, because Kubernetes
   would SIGKILL the pod before n8n finishes shutting down. Left `null`, the
@@ -411,8 +444,8 @@ image instead of a floating tag.
 ### Changed
 
 - **`kubernetes` provider requirement bumped to `~> 3.0`** (was `~> 2.0`),
-  across all 12 `versions.tf` files (root, `modules/controllers`, all
-  eight examples). Verified live-plan-shape-safe against `examples/small`
+  across all 11 `versions.tf` files that declare it (root,
+  `modules/controllers`, and all nine examples). Verified live-plan-shape-safe against `examples/small`
   under mocked providers: only the two known cosmetic "Deprecated
   Resource" warnings on unversioned resource types, no resource
   replacement.

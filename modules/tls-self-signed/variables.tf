@@ -61,7 +61,7 @@ variable "common_tags" {
 }
 
 variable "validity_period_hours" {
-  description = "Lifetime of the self-signed certificate, in hours. Defaults to 8760 (1 year). The cert auto-renews via Terraform when `early_renewal_hours` (30 days) before expiry — re-running terraform apply within that window regenerates the key + cert and re-imports them into Key Vault. Self-signed mode is intended for lab / internal-only use; production deployments should use the sibling `modules/tls-letsencrypt/` submodule or the BYO `custom_pfx` path on the root module."
+  description = "Lifetime of the self-signed certificate, in hours. Defaults to 8760 (1 year). Key Vault takes whole months, so the value is converted with floor(validity_period_hours / 730); use 730 or more, since a smaller value rounds down to 0 months. Key Vault's AutoRenew lifetime action issues a new certificate version once 80% of the validity window has elapsed; the App Gateway listener picks up the new versioned URI on the next terraform apply. Self-signed mode is intended for lab / internal-only use; production deployments should use the sibling `modules/tls-letsencrypt/` submodule or pass an existing Key Vault certificate's Secret URI to the root module's app_gateway_tls_cert_secret_id."
   type        = number
   default     = 8760
 

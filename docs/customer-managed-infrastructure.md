@@ -336,41 +336,63 @@ planned for a future parity pass without one:
 
 ## Upgrading a pre-release deployment
 
-This modularity change is a **pre-release, state-breaking refactor**. Every
-newly gated resource (AKS, its node pool, and the API warm-up gate behind
-`create_aks`; the storage account, container, private DNS, VNet link,
-private endpoint, and lifecycle policy behind `create_blob_storage`; the n8n
-namespace behind `create_namespace`; the webhook HPA behind
-`n8n_webhook_hpa_enabled`) moved from an unindexed resource address to a
-`[0]`-indexed one, and KEDA's namespace and Helm release moved under
-`module.controllers`. **No `moved` blocks are provided**, and none should be
-added for this change — the repository has not yet cut its first release, so
-there is no published state-compatibility guarantee to preserve.
+This modularity change is a **pre-release refactor that changes resource
+addresses**. It landed before the first tagged release (`0.1.0`), so it ships
+no `moved` blocks. The address changes fall into two groups, which behave
+differently on upgrade:
+
+- **Resources that gained `count` stay put.** AKS, its node pool, and the API
+  warm-up gate (behind `create_aks`); the storage account, container, private
+  DNS zone, VNet link, private endpoint, and lifecycle policy (behind
+  `create_blob_storage`); the n8n namespace (behind `create_namespace`); and
+  the webhook HPA (behind `n8n_webhook_hpa_enabled`) moved from an unindexed
+  address to `[0]`. When `count` is added to an existing resource, Terraform
+  automatically moves the existing object to instance `0`, so these
+  resources are not recreated because of the address change alone.
+- **KEDA moved into a submodule.** KEDA's namespace and Helm release moved
+  from `kubernetes_namespace.keda` and `helm_release.keda` to
+  `module.controllers.kubernetes_namespace.keda[0]` and
+  `module.controllers.helm_release.keda[0]`. Terraform does not infer moves
+  across module boundaries, so without intervention the plan destroys the old
+  KEDA installation and creates a new one.
 
 Before upgrading a pre-release test deployment past this change:
 
-1. **Review the plan carefully.** `terraform plan` on an existing pre-release
-   state will very likely propose destroying and recreating the AKS cluster,
-   the Blob storage account and container, the n8n namespace, and the KEDA
-   namespace/release, because their resource addresses changed.
-2. **Back up the n8n encryption key** —
-   `terraform output -raw n8n_encryption_key` — before destroying anything.
-   Losing it makes every credential already stored in n8n's database
-   permanently unrecoverable.
-3. **Back up durable data.** PostgreSQL and Blob-stored binary/execution data
-   do not survive the resources above being destroyed and recreated. Take a
-   database backup and, if using Azure execution/binary storage, back up the
-   container's contents before applying.
-4. **Recreate rather than migrate.** There is no supported in-place migration
-   path for this change. Apply against a fresh AKS cluster and fresh Blob
-   storage, then restore the PostgreSQL backup and reuse the backed-up
-   encryption key on the new deployment.
-5. **Roll back by returning to the previous commit** and recreating the
-   affected infrastructure from the backed-up encryption key and durable
-   data. There is no state-address rollback automation.
+1. **Review the plan carefully.** Confirm that the `[0]` resources above show
+   as moves, not replacements. A replacement there has a different cause,
+   such as another changed argument, and needs its own review.
+2. **Move the KEDA state instead of recreating it.** Run the equivalent of
+   the following from your root, adjusting the `module.n8n` prefix to your
+   own module call name, then re-run `terraform plan`:
 
-This state-breaking behavior is acceptable only because the module has not
-cut `0.1.0` yet. After the first tagged release, a change of this shape must
-follow the module's normal state-compatibility policy — `moved` blocks or an
-equivalent no-op upgrade path — instead of relying on caller-side
+   ```bash
+   terraform state mv 'module.n8n.kubernetes_namespace.keda' \
+     'module.n8n.module.controllers.kubernetes_namespace.keda[0]'
+   terraform state mv 'module.n8n.helm_release.keda' \
+     'module.n8n.module.controllers.helm_release.keda[0]'
+   ```
+
+   If you let the plan destroy and recreate KEDA instead, expect worker
+   autoscaling to stop while KEDA is absent. Removing the KEDA release can
+   also remove its CRDs and the `ScaledObject` and `TriggerAuthentication`
+   resources that use them. Check that they exist again after the apply.
+3. **Back up the n8n encryption key** with
+   `terraform output -raw n8n_encryption_key` before applying. Losing it
+   makes every credential already stored in n8n's database permanently
+   unrecoverable.
+4. **Back up durable data.** Take a PostgreSQL backup and, if you use Azure
+   execution or binary storage, back up the container's contents. You need
+   both if the plan replaces the database or the storage account for any
+   reason.
+5. **Recreate if the plan is not clean.** If the plan still replaces AKS,
+   Blob storage, or the database after the steps above and you cannot
+   explain why, apply against a fresh deployment instead. Restore the
+   PostgreSQL backup and reuse the backed-up encryption key.
+6. **Roll back by returning to the previous commit.** There is no
+   state-address rollback automation. Moving state back needs the reverse
+   `terraform state mv` commands.
+
+From `0.1.0` onward, a change that moves resource addresses must follow the
+module's normal state-compatibility policy (`moved` blocks or an equivalent
+no-op upgrade path) instead of relying on caller-side state moves or
 backup/recreate.

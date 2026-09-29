@@ -1110,7 +1110,7 @@ variable "n8n_image_pull_secrets" {
 
   validation {
     condition     = alltrue([for name in var.n8n_image_pull_secrets : alltrue([for label in split(".", name) : length(label) <= 63])])
-    error_message = "Every dot-separated label in an n8n_image_pull_secrets entry must be 63 characters or fewer (Kubernetes DNS-1123 subdomain rule)."
+    error_message = "Every dot-separated label in an n8n_image_pull_secrets entry must be 63 characters or fewer. This module-side limit is stricter than the Kubernetes API's own Secret-name check, which caps only the total length at 253 characters."
   }
 
   validation {
@@ -2034,13 +2034,14 @@ variable "n8n_task_runner_custom_config" {
     image's default n8n-task-runners.json). config_map_name is the
     ConfigMap's name in the effective n8n namespace; config_map_key defaults
     to "n8n-task-runners.json". The selected key replaces
-    /etc/n8n-task-runners.json in the main and worker task-runner sidecars
-    using a file subPath. Webhook processors have no task-runner sidecar and
-    are unaffected. The module neither creates nor reads the ConfigMap, so
+    /etc/n8n-task-runners.json in the worker task-runner sidecars using a
+    file subPath. Main pods carry that sidecar only on charts older than
+    1.12.0, and webhook processors never do. The module neither creates nor reads the ConfigMap, so
     its contents never enter this module's Helm values or state, and Helm
     does not roll pods when only the ConfigMap's payload changes: derive the
     complete file from the matching n8nio/runners image tag and manually
-    restart n8n-main and n8n-worker after every rotation. Requires
+    restart the worker deployments (and n8n-main on charts older than
+    1.12.0) after every rotation. Requires
     n8n_task_runners_enabled = true. Null keeps the runner image's own
     default configuration file.
   EOT

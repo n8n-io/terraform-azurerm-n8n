@@ -28,9 +28,10 @@ examples, and the version-history framing ahead of the module's first public
 release (`0.1.0`) — see [`CHANGELOG.md`](./CHANGELOG.md). The "What this repo
 is" / "File layout" sections below describe the current shape.
 
-## `add-customer-managed-modularity` in progress
+## `add-customer-managed-modularity` (archived, shipped in 0.1.0)
 
-This change (`openspec/changes/add-customer-managed-modularity/`) is adding
+This change (archived at
+`openspec/changes/archive/2026-08-12-add-customer-managed-modularity/`) added
 caller-managed AKS, Blob storage, namespace, KEDA, webhook HPA, and Kubernetes
 Secret ownership. Its section 1 established the input contract convention every
 later section follows: a non-nullable `create_*`/`install_*` switch defaults to
@@ -214,8 +215,9 @@ the caller's own cluster resource or data source, never against
 `module.n8n.aks_kube_config`, when `create_aks = false`), the excluded
 AWS-only capabilities (keyless n8n Azure Key Vault external secrets, IAM
 permission boundaries, AWS KMS controls, RDS snapshot restoration, EBS CSI
-ownership), and the pre-release state-breaking upgrade boundary (no `moved`
-blocks; back up the encryption key and durable data; recreate). Root
+ownership), and the pre-release upgrade boundary (no `moved` blocks; `count`
+additions move to `[0]` implicitly, the KEDA move into `module.controllers`
+needs `terraform state mv`; back up the encryption key and durable data). Root
 `README.md` gained a "Customer-managed infrastructure" section that
 summarizes the same convention and links that doc, and the Blob-storage row
 of the managed-service-topologies table now shows the `create_blob_storage =
@@ -258,9 +260,10 @@ local a test still asserts on. All four new provider-lock refreshes
 tracked, unlike every pre-existing root/example/submodule lock file, which
 already carried all three platforms.
 
-## `port-aws-040-enhancements` in progress
+## `port-aws-040-enhancements` (archived, shipped in 0.1.0)
 
-This change (`openspec/changes/port-aws-040-enhancements/`) ports the
+This change (archived at
+`openspec/changes/archive/2026-09-14-port-aws-040-enhancements/`) ported the
 applicable parts of `terraform-aws-n8n` 0.4.0 (single-main queue mode,
 PostgreSQL/Bull/execution-save runtime tuning, a V8 heap ceiling,
 caller-managed task-runner launcher configuration, pod DNS, an optional
@@ -711,7 +714,7 @@ concern, and one deliberate nested call to the directly composable
 | `controllers.tf`, `keda.tf`, `n8n.tf` | KEDA + namespace + Secrets + n8n Helm release + post-install settle gate. |
 | `scaling.tf`                      | Webhook-processor HPA and the advisory AKS capacity diagnostic. |
 | `ingress.tf`, `keyvault.tf`, `dns.tf` | Conditional Application Gateway + AGIC + NSG + Kubernetes Ingress, Key Vault role assignment, public/private Azure DNS A-records. |
-| `modules/tls-self-signed/`        | Lab-grade self-signed cert issued via `tls_self_signed_cert` and imported into a caller-owned Key Vault. |
+| `modules/tls-self-signed/`        | Lab-grade self-signed cert issued inside a caller-owned Key Vault by its `Self` issuer (`azurerm_key_vault_certificate`). |
 | `modules/tls-letsencrypt/`        | Production-grade Let's Encrypt cert issued via `vancluever/acme` (DNS-01, with subject alternative names) and imported into a caller-owned Key Vault. |
 | `examples/small/`, `examples/medium/`, `examples/large/` | End-to-end sizing examples with caller-owned Azure foundations, a Key Vault certificate helper, and one root `module "n8n"` call. |
 | `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |
