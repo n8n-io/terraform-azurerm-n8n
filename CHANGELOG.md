@@ -417,7 +417,9 @@ image instead of a floating tag.
 - CI toolchain further bumped: `TF_VERSION` `1.16.2` to `1.16.4` and
   `CHECKOV_VERSION` `3.3.17` to `3.3.20`, porting `terraform-aws-n8n`
   #153 (`terraform-aws-n8n` #152 does not apply: this module's
-  `tests/scripts/smoke-test.sh` has no single-instance path to remove).
+  `tests/scripts/smoke-test.sh` derives topology from rendered resources
+  and has no legacy `DEPLOY_MODE` or standalone SQLite branch to remove;
+  single-main queue mode is unaffected).
   The Terraform requirement remains `>= 1.9`. Checkov
   `3.3.20`'s only change is a plan-parser fix for `forget`-action
   resources, so it drew no new findings against this repo (verified
