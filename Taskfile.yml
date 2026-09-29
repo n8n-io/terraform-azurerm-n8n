@@ -1,0 +1,213 @@
+# https://taskfile.dev
+#
+# Wraps the local validation loop documented in AGENTS.md so contributors
+# don't need to hand-type the module-root + submodule + per-example matrix.
+# CI runs the same underlying commands directly (see
+# .github/workflows/terraform-tests.yml); this file is a convenience
+# wrapper, not a CI dependency.
+version: "3"
+
+vars:
+  # Must stay in lockstep with the `target:` matrix lists in
+  # .github/workflows/terraform-tests.yml (validate, test, tflint all
+  # enumerate the same 9-example set; docs matches too). An example this
+  # wrapper never visits is, in practice, an example nobody validated
+  # before pushing.
+  EXAMPLES: small medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
+  # The two TLS helpers and modules/controllers. Covered by validate/test/lint
+  # (matching the CI matrix) but not by docs: their READMEs are hand-written,
+  # with no <!-- BEGIN_TF_DOCS --> block for terraform-docs to check.
+  SUBMODULES: modules/controllers modules/tls-letsencrypt modules/tls-self-signed
+# tflint reads TFLINT_CONFIG_FILE before falling back to ./.tflint.hcl in the
+# current directory, so every submodule/example cell below reuses the root
+# ruleset instead of silently finding no config, matching how CI pins it
+# (.github/workflows/terraform-tests.yml).
+env:
+  TFLINT_CONFIG_FILE: "{{.ROOT_DIR}}/.tflint.hcl"
+
+tasks:
+  init:
+    internal: true
+    run: once
+    cmds:
+      - terraform init -backend=false
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd {{.SUBMODULE}} && terraform init -backend=false
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform init -backend=false
+
+  fmt:
+    desc: Check Terraform formatting across the module, submodules, and all examples.
+    cmds:
+      - terraform fmt -check -recursive
+
+  validate:
+    desc: terraform init + validate for the module root, both TLS submodules, modules/controllers, and every example.
+    deps: [init]
+    cmds:
+      - terraform validate
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd {{.SUBMODULE}} && terraform validate
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform validate
+
+  test:
+    desc: terraform test (plan-time, mocked providers) for the module root, both TLS submodules, modules/controllers, and every example.
+    deps: [init]
+    cmds:
+      - terraform test -verbose
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd {{.SUBMODULE}} && terraform test -verbose
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform test -verbose
+
+  chart:
+    desc: >-
+      Render and check the pinned n8n chart against this module's config-value
+      contract, then run the Redis exporter outage regression (requires Helm,
+      jq, Go, and Python 3; matches the chart-check CI job in full).
+    deps: [init]
+    cmds:
+      - ./tests/scripts/check-n8n-chart.sh
+      - |
+        GOBIN="$(mktemp -d)"
+        trap 'rm -rf "$GOBIN"' EXIT
+        GOBIN="$GOBIN" go install github.com/oliver006/redis_exporter@v1.90.0
+        python3 tests/scripts/check-redis-exporter.py "$GOBIN/redis_exporter"
+
+  smoke-test-self-check:
+    desc: >-
+      Offline self-test of smoke-test.sh's topology-detection logic, plus
+      syntax/shellcheck/self-test coverage for preflight-region-check.sh and
+      the other tests/scripts/*.sh added since 0.4.0 (requires shellcheck;
+      no live cluster, no Azure credentials; matches the
+      smoke-test-self-check CI job in full).
+    cmds:
+      - bash -n tests/scripts/smoke-test.sh
+      - SMOKE_TEST_SELF_TEST=1 ./tests/scripts/smoke-test.sh
+      - bash -n tests/scripts/preflight-region-check.sh
+      - shellcheck -S warning tests/scripts/preflight-region-check.sh
+      - ./tests/scripts/preflight-region-check.sh --help >/dev/null
+      - PREFLIGHT_SELF_TEST=1 ./tests/scripts/preflight-region-check.sh
+      - for:
+          - tests/scripts/chart-values-diff.sh
+          - tests/scripts/verify-worker-pools.sh
+          - tests/scripts/check-version-drift.sh
+          - tests/scripts/check-checkov.sh
+          - scripts/check-example-parity.sh
+          - scripts/check-variable-banners.sh
+        cmd: bash -n {{.ITEM}} && shellcheck -S warning {{.ITEM}}
+      - ./tests/scripts/chart-values-diff.sh --help >/dev/null
+
+  chart-diff:
+    desc: >-
+      Diff the pinned n8n chart's values.yaml against a candidate version
+      (requires Helm). Run before moving n8n_chart_version's default, e.g.
+      task chart-diff CANDIDATE=1.14.0
+    requires:
+      vars: [CANDIDATE]
+    cmds:
+      - ./tests/scripts/chart-values-diff.sh "{{.CANDIDATE}}"
+
+  version-drift:
+    desc: Report every version pin that has fallen behind upstream (see docs/versioning.md). Report-only like the non-blocking CI job, so a failure (including a missing curl or python3) is printed but never stops task ci.
+    cmds:
+      - cmd: ./tests/scripts/check-version-drift.sh
+        ignore_error: true
+
+  lint:
+    desc: tflint for the module root, both TLS submodules, modules/controllers, and every example.
+    deps: [init]
+    cmds:
+      - tflint --init
+      - tflint --format compact
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd {{.SUBMODULE}} && tflint --init && tflint --format compact
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && tflint --init && tflint --format compact
+
+  checkov:
+    desc: >-
+      Static analysis, the same invocation CI runs (tests/scripts/check-checkov.sh
+      is not a local imitation of the checkov job — the job calls this exact
+      script). Requires checkov at the version CI pins (CHECKOV_VERSION in
+      .github/workflows/terraform-tests.yml). Install with
+      `uv tool install checkov==<pinned version>` or
+      `pipx install --force checkov==<pinned version>`.
+    cmds:
+      - ./tests/scripts/check-checkov.sh
+
+  banners:
+    desc: >-
+      Check every variable/output block in variables.tf and outputs.tf sits under
+      a "# ── Section ──" banner (see AGENTS.md, "Clear documentation"). Local-only
+      for now, not yet a CI-gated check.
+    cmds:
+      - ./scripts/check-variable-banners.sh
+
+  example-parity:
+    desc: >-
+      Diff the variable names every example's variables.tf declares against
+      examples/small for undeclared drift (CI-gated: see the example-parity
+      job in .github/workflows/terraform-tests.yml).
+    cmds:
+      - ./scripts/check-example-parity.sh
+
+  docs:
+    desc: Check README.md is not stale relative to variables.tf/outputs.tf (module root and every example; TLS submodules and modules/controllers are hand-written, not generated).
+    cmds:
+      - terraform-docs --output-check .
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform-docs --output-check .
+
+  docs-generate:
+    desc: Regenerate README.md from variables.tf/outputs.tf (module root and every example).
+    cmds:
+      - terraform-docs .
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform-docs .
+
+  markdown:
+    desc: markdownlint against README.md, AGENTS.md, docs/*.md, and every example/submodule README.md (CI-gated via the markdown job; see .markdownlint.yml).
+    cmds:
+      - markdownlint --config .markdownlint.yml README.md AGENTS.md 'docs/**/*.md' 'examples/**/README.md' 'modules/**/README.md'
+
+  ci:
+    desc: >-
+      Run the full local loop (fmt, validate, test, chart, smoke-test-self-check,
+      lint, example-parity, docs, markdown, version-drift) plus banners, which
+      CI does not gate on. Mirrors every CI job except checkov, which needs a
+      pinned checkov install the other tasks do not: run `task checkov`
+      separately once you have it.
+    cmds:
+      - task: fmt
+      - task: validate
+      - task: test
+      - task: chart
+      - task: smoke-test-self-check
+      - task: lint
+      - task: example-parity
+      - task: docs
+      - task: markdown
+      - task: version-drift
+      - task: banners
