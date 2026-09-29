@@ -15,7 +15,8 @@ doesn't need.
 This module used a two-tier composition (`modules/infra/` +
 `modules/workload/`, no resources at the root) during internal development. The
 `align-azure-with-aws-capabilities`
-change (`openspec/changes/align-azure-with-aws-capabilities/`) flattened that
+change (archived at
+`openspec/changes/archive/2026-08-12-align-azure-with-aws-capabilities/`) flattened that
 back into **one resource-bearing root module**, matching `terraform-aws-n8n`'s
 shape, and ported the AWS sibling's PostgreSQL/Redis external-endpoint modes,
 Azure Blob storage, full n8n runtime controls, autoscaling, ingress patterns,
@@ -43,12 +44,12 @@ while the switch stays `true`. Caller-managed Kubernetes Secret references use
 typed `object({ name = string, key = string })` variables that are mutually
 exclusive with their literal/generated credential counterpart. Section 1 also
 added `local.effective_*` selector locals (AKS cluster/resource group, Blob
-account/container/ID/endpoint) whose module-managed branch still points at the
-currently-unconditional resources — sections 2 and 6 gate those resources
-behind `count` and update the selector locals to index into them. Until those
-sections land, `tflint`'s `terraform_unused_declarations` rule flags the new
-switches/locals as unused; this is expected mid-change and is resolved by the
-sections that consume them, not by this section. Section 2 gated the AKS
+account/container/ID/endpoint) whose module-managed branch pointed at the
+then-unconditional resources until sections 2 and 6 gated those resources
+behind `count` and updated the selector locals to index into them. Until those
+sections landed, `tflint`'s `terraform_unused_declarations` rule flagged the
+new switches/locals as unused; the sections that consume them resolved
+that. Section 2 gated the AKS
 cluster, node pool, API warm-up gate, and AGIC-dependent identities behind
 `create_aks`, added the `data.azurerm_kubernetes_cluster.existing` lookup and
 its `effective_aks_*` locals, and required `create_ingress = false` whenever
@@ -78,12 +79,13 @@ assert directly on `module.<name>.<output>` (e.g.
 `module.controllers.keda_release_name`), which is cleaner than reaching into
 the submodule's resource addresses from the root's own test suite. The
 submodule's README and inputs/outputs tables are hand-maintained (matching
-the existing `modules/tls-letsencrypt/` and `modules/tls-self-signed/`
-pattern) because the `terraform-docs` CI matrix does not cover submodules
-yet — section 9.1 adds `modules/controllers` (and the two TLS helpers) to
-that matrix and to `openspec/init.sh`; don't add it earlier without also
-wiring the generated-docs check, or the hand-written tables can drift
-unnoticed.
+the `modules/tls-letsencrypt/` and `modules/tls-self-signed/` pattern): none
+of the three submodules has a `<!-- BEGIN_TF_DOCS -->` block, and all three
+are intentionally absent from the `terraform-docs` CI matrix. Section 9.1
+added `modules/controllers` to the `validate`, `test`, and `tflint` matrices
+and to `openspec/init.sh` (see "Offline verification" below). Update the
+hand-written tables in the same change as any submodule input or output, since
+no generated-docs check catches drift.
 
 **Storage and workload integration.** Root `storage.tf` owns the private
 Azure Blob container, its private endpoint, and private DNS zone — Blob is
@@ -122,8 +124,8 @@ live Azure lifecycle behavior — track cold create, no-op apply, Helm-only
 update, AKS credential rotation, partial-apply recovery, AKS replacement
 (known to fail at plan time because the caller's Kubernetes-side providers
 are configured from `aks_kube_config`; see `docs/troubleshooting.md`),
-normal destroy, and unavailable-API recovery per `openspec/changes/
-align-azure-with-aws-capabilities/tasks.md` section 17.4 before treating the
+normal destroy, and unavailable-API recovery per `openspec/changes/archive/
+2026-08-12-align-azure-with-aws-capabilities/tasks.md` section 17.4 before treating the
 one-apply contract as a release guarantee for a given release.
 
 **Runtime controls.** Root `n8n.tf` owns the chart-native resource, execution,
@@ -473,7 +475,7 @@ applicable parts of `terraform-aws-n8n` 0.5.0 onto this module; most of it
 (the `n8n_credentials_overwrite_secret_ref` conflict check extended to pool
 `extra_env`, the two new reserved names in `local.n8n_managed_env_names`,
 and the pool-CPU accounting folded into `scaling.tf`'s capacity model) is
-narrow enough that `CHANGELOG.md`'s Unreleased entry is the fuller record.
+narrow enough that `CHANGELOG.md`'s `0.1.0` entry is the fuller record.
 The headline addition is `n8n_worker_pools` (new `worker-pools.tf`),
 **EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE**, tracking two upstream
 features that are themselves alpha: n8n's own worker pools, and the chart
