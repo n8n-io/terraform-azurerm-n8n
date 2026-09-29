@@ -283,7 +283,8 @@ jobs:
       - name: bash -n + shellcheck new scripts
         run: |
           for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-pools.sh \
-            tests/scripts/check-version-drift.sh tests/scripts/check-checkov.sh scripts/check-example-parity.sh; do
+            tests/scripts/check-version-drift.sh tests/scripts/check-checkov.sh scripts/check-example-parity.sh \
+            scripts/check-variable-banners.sh; do
             bash -n "$script"
             shellcheck -S warning "$script"
           done

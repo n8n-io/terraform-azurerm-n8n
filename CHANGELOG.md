@@ -426,6 +426,12 @@ image instead of a floating tag.
   locally: pass 1 reports the same 182 passed / 174 failed / 40 skipped
   on both `3.3.17` and `3.3.20`). These toolchain updates do not change
   infrastructure defaults.
+- Contributor tooling, mirroring `terraform-aws-n8n` #82 and #115:
+  `.github/CODEOWNERS`, `CONTRIBUTORS`, an optional `Taskfile.yml` wrapper
+  (`task ci`) around the local validation loop, and
+  `scripts/check-variable-banners.sh` (`task banners`, local-only) for the
+  `# ── Section ──` banner convention in `variables.tf` and `outputs.tf`.
+  No module behavior changes.
 - `n8n_extra_env` and `n8n_worker_extra_env` now reject
   `N8N_WORKER_POOLS_ENABLED` and `N8N_WORKER_POOL_NAME`, which
   `n8n_worker_pools` owns. A caller who was setting either through the

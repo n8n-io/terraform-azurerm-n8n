@@ -115,7 +115,13 @@ for file in "${FILES[@]}"; do
   fi
   if [[ "$banners_match" != true ]]; then
     echo "$file: section banners are missing, renamed, or out of order" >&2
-    echo "  found    (${#banners[@]}): $(printf '%s | ' "${banners[@]}")" >&2
+    # Guard the empty case: "${banners[@]}" on an empty array trips set -u
+    # on bash < 4.4 (including macOS /bin/bash 3.2).
+    if [[ "${#banners[@]}" -eq 0 ]]; then
+      echo "  found    (0): (none)" >&2
+    else
+      echo "  found    (${#banners[@]}): $(printf '%s | ' "${banners[@]}")" >&2
+    fi
     echo "  expected (${#expected[@]}): $(printf '%s | ' "${expected[@]}")" >&2
     fail=1
   fi

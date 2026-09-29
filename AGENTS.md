@@ -725,6 +725,7 @@ concern, and one deliberate nested call to the directly composable
 | `.github/workflows/`              | CI: fmt, validate, test, tflint, checkov, terraform-docs.   |
 | `.github/CODEOWNERS`              | Default reviewers for PRs.                                  |
 | `Taskfile.yml`                    | Optional convenience wrapper (`task ci`) around the local dev loop below; CI does not depend on it. |
+| `scripts/`                        | Repo-convention checks: `check-example-parity.sh` (CI-gated) and `check-variable-banners.sh` (local-only, `task banners`). |
 | `openspec/`                       | OpenSpec change artifacts (proposal, design, delta specs, tasks) for in-flight and recently shipped changes. Intentionally tracked — this file references them — and ships in release tags as contributor documentation. |
 | `.agents/skills/`                 | Vendored agent skills used by AI contributors working in this repo. Intentionally tracked; inert for module consumers. Loop-runner state (`progress.txt`, `skills-lock.json`, `logs/`) is gitignored and must never be committed. |
 
@@ -932,7 +933,8 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   concerns that don't belong inline in `README.md`.
 - Inline comments in `.tf` files use the `# ── Section ──` banner style.
   Match it when adding new sections. `scripts/check-variable-banners.sh`
-  (`task banners`, local-only for now, not yet wired into CI) fails if a
+  (`task banners`; the banner check itself is local-only for now, while CI
+  only runs `bash -n` and `shellcheck` on the script) fails if a
   `variable`/`output` block in `variables.tf`/`outputs.tf` precedes every
   recognized banner in the file (i.e. sits before the first one), or if a
   banner comment doesn't match the established `# ── Name ──...──` format.
@@ -1005,6 +1007,10 @@ terraform-docs examples/customer-managed-everything
 `./openspec/init.sh` runs the offline subset of this loop (fmt, init, validate,
 test) across the root, all three submodules, and all eight examples in one
 command — safe to run repeatedly, no Azure credentials required.
+
+`task ci` (see `Taskfile.yml`) runs the full local loop across every CI
+target, including the chart check, lint, docs, and markdown checks; run
+`task checkov` separately once the pinned checkov is installed.
 
 After running any `terraform init`, clean up `.terraform/` before committing
 — it is gitignored and `init` will recreate it. `.terraform.lock.hcl` is the

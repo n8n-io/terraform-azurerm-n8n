@@ -91,8 +91,9 @@ tasks:
     desc: >-
       Offline self-test of smoke-test.sh's topology-detection logic, plus
       syntax/shellcheck/self-test coverage for preflight-region-check.sh and
-      the other tests/scripts/*.sh added since 0.4.0 (no live cluster, no
-      Azure credentials; matches the smoke-test-self-check CI job in full).
+      the other tests/scripts/*.sh added since 0.4.0 (requires shellcheck;
+      no live cluster, no Azure credentials; matches the
+      smoke-test-self-check CI job in full).
     cmds:
       - bash -n tests/scripts/smoke-test.sh
       - SMOKE_TEST_SELF_TEST=1 ./tests/scripts/smoke-test.sh
@@ -106,6 +107,7 @@ tasks:
           - tests/scripts/check-version-drift.sh
           - tests/scripts/check-checkov.sh
           - scripts/check-example-parity.sh
+          - scripts/check-variable-banners.sh
         cmd: bash -n {{.ITEM}} && shellcheck -S warning {{.ITEM}}
       - ./tests/scripts/chart-values-diff.sh --help >/dev/null
 
@@ -120,9 +122,10 @@ tasks:
       - ./tests/scripts/chart-values-diff.sh "{{.CANDIDATE}}"
 
   version-drift:
-    desc: Report every version pin that has fallen behind upstream (see docs/versioning.md). Never fails; matches the non-blocking CI job; requires curl and python3.
+    desc: Report every version pin that has fallen behind upstream (see docs/versioning.md). Report-only like the non-blocking CI job, so a failure (including a missing curl or python3) is printed but never stops task ci.
     cmds:
-      - ./tests/scripts/check-version-drift.sh
+      - cmd: ./tests/scripts/check-version-drift.sh
+        ignore_error: true
 
   lint:
     desc: tflint for the module root, both TLS submodules, modules/controllers, and every example.
@@ -193,9 +196,9 @@ tasks:
     desc: >-
       Run the full local loop (fmt, validate, test, chart, smoke-test-self-check,
       lint, example-parity, docs, markdown, version-drift) plus banners, which
-      CI does not gate on. Mirrors every CI job except checkov, which is a
-      hard-fail gate in CI but needs a pinned checkov install the other tasks
-      do not: run `task checkov` separately once you have it.
+      CI does not gate on. Mirrors every CI job except checkov, which needs a
+      pinned checkov install the other tasks do not: run `task checkov`
+      separately once you have it.
     cmds:
       - task: fmt
       - task: validate
