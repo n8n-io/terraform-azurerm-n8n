@@ -14,8 +14,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   the Key Vault certificate policy's own unit. The old input was converted
   with `floor(hours / 730)`, so values below 730 planned as
   `validity_in_months = 0` and others were silently rounded down (e.g.
-  `1000` to 1 month). Migrate by dividing by 730: the old default
-  `validity_period_hours = 8760` is `validity_in_months = 12`
+  `1000` to 1 month). To keep the lifetime an existing value produced,
+  set `validity_in_months = floor(validity_period_hours / 730)` (the old
+  default 8760 is 12; 1000 is 1). A value below 730 hours produced 0
+  months, so replace it with at least 1
   ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
 
 ## [0.1.0] - 2026-09-29

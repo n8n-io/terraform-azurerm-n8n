@@ -213,3 +213,28 @@ run "rejects_fractional_month_validity" {
     var.validity_in_months,
   ]
 }
+
+run "accepts_ten_year_validity" {
+  command = plan
+
+  variables {
+    validity_in_months = 120
+  }
+
+  assert {
+    condition     = azurerm_key_vault_certificate.self_signed.certificate_policy[0].x509_certificate_properties[0].validity_in_months == 120
+    error_message = "validity_in_months = 120 must reach the certificate policy unchanged"
+  }
+}
+
+run "rejects_validity_above_ten_years" {
+  command = plan
+
+  variables {
+    validity_in_months = 121
+  }
+
+  expect_failures = [
+    var.validity_in_months,
+  ]
+}
