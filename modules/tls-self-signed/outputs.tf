@@ -9,7 +9,7 @@
 # `tls-letsencrypt` sibling are interchangeable behind that single contract.
 
 output "app_gateway_tls_cert_secret_id" {
-  description = "Versioned Key Vault Secret URI for the imported self-signed PEM bundle. Pass this to the root module's `app_gateway_tls_cert_secret_id` input (US-012). Sensitive because it embeds the certificate's secret-version segment, which a holder of read access to the vault can use to fetch the private key."
+  description = "Versioned Key Vault Secret URI for the self-signed certificate Key Vault issued (PFX). Pass this to the root module's `app_gateway_tls_cert_secret_id` input (US-012). Sensitive because it embeds the certificate's secret-version segment, which a holder of read access to the vault can use to fetch the private key."
   value       = azurerm_key_vault_certificate.self_signed.secret_id
   sensitive   = true
 }

@@ -15,7 +15,8 @@ doesn't need.
 This module used a two-tier composition (`modules/infra/` +
 `modules/workload/`, no resources at the root) during internal development. The
 `align-azure-with-aws-capabilities`
-change (`openspec/changes/align-azure-with-aws-capabilities/`) flattened that
+change (archived at
+`openspec/changes/archive/2026-08-12-align-azure-with-aws-capabilities/`) flattened that
 back into **one resource-bearing root module**, matching `terraform-aws-n8n`'s
 shape, and ported the AWS sibling's PostgreSQL/Redis external-endpoint modes,
 Azure Blob storage, full n8n runtime controls, autoscaling, ingress patterns,
@@ -28,9 +29,10 @@ examples, and the version-history framing ahead of the module's first public
 release (`0.1.0`) — see [`CHANGELOG.md`](./CHANGELOG.md). The "What this repo
 is" / "File layout" sections below describe the current shape.
 
-## `add-customer-managed-modularity` in progress
+## `add-customer-managed-modularity` (archived, shipped in 0.1.0)
 
-This change (`openspec/changes/add-customer-managed-modularity/`) is adding
+This change (archived at
+`openspec/changes/archive/2026-08-12-add-customer-managed-modularity/`) added
 caller-managed AKS, Blob storage, namespace, KEDA, webhook HPA, and Kubernetes
 Secret ownership. Its section 1 established the input contract convention every
 later section follows: a non-nullable `create_*`/`install_*` switch defaults to
@@ -42,12 +44,12 @@ while the switch stays `true`. Caller-managed Kubernetes Secret references use
 typed `object({ name = string, key = string })` variables that are mutually
 exclusive with their literal/generated credential counterpart. Section 1 also
 added `local.effective_*` selector locals (AKS cluster/resource group, Blob
-account/container/ID/endpoint) whose module-managed branch still points at the
-currently-unconditional resources — sections 2 and 6 gate those resources
-behind `count` and update the selector locals to index into them. Until those
-sections land, `tflint`'s `terraform_unused_declarations` rule flags the new
-switches/locals as unused; this is expected mid-change and is resolved by the
-sections that consume them, not by this section. Section 2 gated the AKS
+account/container/ID/endpoint) whose module-managed branch pointed at the
+then-unconditional resources until sections 2 and 6 gated those resources
+behind `count` and updated the selector locals to index into them. Until those
+sections landed, `tflint`'s `terraform_unused_declarations` rule flagged the
+new switches/locals as unused; the sections that consume them resolved
+that. Section 2 gated the AKS
 cluster, node pool, API warm-up gate, and AGIC-dependent identities behind
 `create_aks`, added the `data.azurerm_kubernetes_cluster.existing` lookup and
 its `effective_aks_*` locals, and required `create_ingress = false` whenever
@@ -77,12 +79,13 @@ assert directly on `module.<name>.<output>` (e.g.
 `module.controllers.keda_release_name`), which is cleaner than reaching into
 the submodule's resource addresses from the root's own test suite. The
 submodule's README and inputs/outputs tables are hand-maintained (matching
-the existing `modules/tls-letsencrypt/` and `modules/tls-self-signed/`
-pattern) because the `terraform-docs` CI matrix does not cover submodules
-yet — section 9.1 adds `modules/controllers` (and the two TLS helpers) to
-that matrix and to `openspec/init.sh`; don't add it earlier without also
-wiring the generated-docs check, or the hand-written tables can drift
-unnoticed.
+the `modules/tls-letsencrypt/` and `modules/tls-self-signed/` pattern): none
+of the three submodules has a `<!-- BEGIN_TF_DOCS -->` block, and all three
+are intentionally absent from the `terraform-docs` CI matrix. Section 9.1
+added `modules/controllers` to the `validate`, `test`, and `tflint` matrices
+and to `openspec/init.sh` (see "Offline verification" below). Update the
+hand-written tables in the same change as any submodule input or output, since
+no generated-docs check catches drift.
 
 **Storage and workload integration.** Root `storage.tf` owns the private
 Azure Blob container, its private endpoint, and private DNS zone — Blob is
@@ -121,8 +124,8 @@ live Azure lifecycle behavior — track cold create, no-op apply, Helm-only
 update, AKS credential rotation, partial-apply recovery, AKS replacement
 (known to fail at plan time because the caller's Kubernetes-side providers
 are configured from `aks_kube_config`; see `docs/troubleshooting.md`),
-normal destroy, and unavailable-API recovery per `openspec/changes/
-align-azure-with-aws-capabilities/tasks.md` section 17.4 before treating the
+normal destroy, and unavailable-API recovery per `openspec/changes/archive/
+2026-08-12-align-azure-with-aws-capabilities/tasks.md` section 17.4 before treating the
 one-apply contract as a release guarantee for a given release.
 
 **Runtime controls.** Root `n8n.tf` owns the chart-native resource, execution,
@@ -214,8 +217,9 @@ the caller's own cluster resource or data source, never against
 `module.n8n.aks_kube_config`, when `create_aks = false`), the excluded
 AWS-only capabilities (keyless n8n Azure Key Vault external secrets, IAM
 permission boundaries, AWS KMS controls, RDS snapshot restoration, EBS CSI
-ownership), and the pre-release state-breaking upgrade boundary (no `moved`
-blocks; back up the encryption key and durable data; recreate). Root
+ownership), and the pre-release upgrade boundary (no `moved` blocks; `count`
+additions move to `[0]` implicitly, the KEDA move into `module.controllers`
+needs `terraform state mv`; back up the encryption key and durable data). Root
 `README.md` gained a "Customer-managed infrastructure" section that
 summarizes the same convention and links that doc, and the Blob-storage row
 of the managed-service-topologies table now shows the `create_blob_storage =
@@ -258,9 +262,10 @@ local a test still asserts on. All four new provider-lock refreshes
 tracked, unlike every pre-existing root/example/submodule lock file, which
 already carried all three platforms.
 
-## `port-aws-040-enhancements` in progress
+## `port-aws-040-enhancements` (archived, shipped in 0.1.0)
 
-This change (`openspec/changes/port-aws-040-enhancements/`) ports the
+This change (archived at
+`openspec/changes/archive/2026-09-14-port-aws-040-enhancements/`) ported the
 applicable parts of `terraform-aws-n8n` 0.4.0 (single-main queue mode,
 PostgreSQL/Bull/execution-save runtime tuning, a V8 heap ceiling,
 caller-managed task-runner launcher configuration, pod DNS, an optional
@@ -470,7 +475,7 @@ applicable parts of `terraform-aws-n8n` 0.5.0 onto this module; most of it
 (the `n8n_credentials_overwrite_secret_ref` conflict check extended to pool
 `extra_env`, the two new reserved names in `local.n8n_managed_env_names`,
 and the pool-CPU accounting folded into `scaling.tf`'s capacity model) is
-narrow enough that `CHANGELOG.md`'s Unreleased entry is the fuller record.
+narrow enough that `CHANGELOG.md`'s `0.1.0` entry is the fuller record.
 The headline addition is `n8n_worker_pools` (new `worker-pools.tf`),
 **EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE**, tracking two upstream
 features that are themselves alpha: n8n's own worker pools, and the chart
@@ -711,7 +716,7 @@ concern, and one deliberate nested call to the directly composable
 | `controllers.tf`, `keda.tf`, `n8n.tf` | KEDA + namespace + Secrets + n8n Helm release + post-install settle gate. |
 | `scaling.tf`                      | Webhook-processor HPA and the advisory AKS capacity diagnostic. |
 | `ingress.tf`, `keyvault.tf`, `dns.tf` | Conditional Application Gateway + AGIC + NSG + Kubernetes Ingress, Key Vault role assignment, public/private Azure DNS A-records. |
-| `modules/tls-self-signed/`        | Lab-grade self-signed cert issued via `tls_self_signed_cert` and imported into a caller-owned Key Vault. |
+| `modules/tls-self-signed/`        | Lab-grade self-signed cert issued inside a caller-owned Key Vault by its `Self` issuer (`azurerm_key_vault_certificate`). |
 | `modules/tls-letsencrypt/`        | Production-grade Let's Encrypt cert issued via `vancluever/acme` (DNS-01, with subject alternative names) and imported into a caller-owned Key Vault. |
 | `examples/small/`, `examples/medium/`, `examples/large/` | End-to-end sizing examples with caller-owned Azure foundations, a Key Vault certificate helper, and one root `module "n8n"` call. |
 | `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |

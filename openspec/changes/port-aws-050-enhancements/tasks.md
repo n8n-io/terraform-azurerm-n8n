@@ -210,6 +210,8 @@ hand-edit generated blocks. Every new input gets a `validation` block or a
   pools).
 - [x] 7.9 Document in `README.md` (`## Worker pools (early alpha)`),
   `CHANGELOG.md`, `AGENTS.md`, and `examples/worker-pools/README.md`.
-- [ ] 7.10 Live: run `tests/scripts/verify-worker-pools.sh` against a full
+- [x] 7.10 Live: run `tests/scripts/verify-worker-pools.sh` against a full
   `examples/worker-pools` apply (the first live run was torn down on a
-  subscription vCPU quota before the verifier ran).
+  subscription vCPU quota before the verifier ran). Passed on the second
+  run, see `docs/qualification-runs/2026-09-22-pr6-swedencentral.md`,
+  "Worker pools verifier".
