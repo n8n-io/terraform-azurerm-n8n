@@ -41,21 +41,27 @@ differ between them.
   encrypted one.
 
 Both inputs feed `local.postgres_connection.ssl_mode` (`database.tf`), which
-the n8n Helm chart's `database.ssl.enabled` /
-`database.ssl.rejectUnauthorized` values derive from
-(`DB_POSTGRESDB_SSL_ENABLED` / `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` on
-main, worker, and webhook-processor pods).
+the n8n Helm chart's `database.ssl.enabled` / `database.ssl.rejectUnauthorized`
+values derive from. The pinned n8n Helm chart (`1.13.0`) renders
+`database.ssl.enabled` into a ConfigMap key named `DB_POSTGRESDB_SSL`, but
+n8n only reads `DB_POSTGRESDB_SSL_ENABLED`
+([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
+upstream) — the chart's own value alone leaves the connection plaintext
+regardless of the selected mode. The module works around this by also
+setting `DB_POSTGRESDB_SSL_ENABLED` directly through `config.extraEnv`
+(`locals.tf`'s `n8n_postgres_ssl_enabled_env`) whenever the effective
+`ssl_mode` is not `disable`, independent of chart version.
 
 ## Supplying a CA bundle for `verify-ca` / `verify-full`
 
 `verify-ca` and `verify-full` both require n8n to trust the certificate
 authority that signed the server's certificate. Set `postgres_ssl_ca_pem` to
-a PEM-encoded CA bundle to have the module render it into a Kubernetes
-ConfigMap, mount it read-only on every main, worker, and webhook-processor
-pod at `/etc/n8n/postgres-ssl-ca/ca.pem`, and set
-`DB_POSTGRESDB_SSL_CA_FILE` to that path. This applies to both the managed
-and external paths — a caller pointing at an external server behind the same
-CA hierarchy can use it too.
+a PEM-encoded CA bundle to pass it straight through to the chart's native
+`database.ssl.ca` value, which the chart renders into its own ConfigMap and
+injects as `DB_POSTGRESDB_SSL_CA` on every main, worker, and
+webhook-processor pod. This applies to both the managed and external paths —
+a caller pointing at an external server behind the same CA hierarchy can use
+it too.
 
 ```hcl
 postgres_managed_ssl_mode = "verify-full"
@@ -78,8 +84,7 @@ bundled trust store being current.
 An advisory (non-blocking) `check` in `database.tf`
 (`postgres_ssl_ca_requires_verify_mode`) warns if `postgres_ssl_ca_pem` is
 set while the effective `ssl_mode` is `disable`, `allow`, or `prefer`: the
-ConfigMap and mount still render, but n8n never reads the file in those
-modes.
+chart still receives the value, but n8n never reads it in those modes.
 
 ## Azure's CA rotation
 
@@ -101,8 +106,8 @@ changes what n8n's application containers send as connection parameters —
 it does not recreate the PostgreSQL server itself, and a Helm-only rollout
 applies the new value on the next pod restart. There is no queue-draining or
 downtime requirement for this change specifically. If you add
-`postgres_ssl_ca_pem` at the same time, the new ConfigMap and volume mount
-also land as a rolling pod update.
+`postgres_ssl_ca_pem` at the same time, the new chart-rendered ConfigMap
+entry also lands as a rolling pod update.
 
 The one failure mode to check before switching to `verify-full`: confirm the
 CA bundle you supply (or the pod image's default trust store) actually

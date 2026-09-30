@@ -48,13 +48,12 @@ locals {
   # Namespace names and chart-rendered service coordinates stay centralized so
   # Kubernetes resources, KEDA manifests, outputs, and caller-owned ingress can
   # share one contract.
-  n8n_namespace                       = var.n8n_namespace
-  keda_namespace                      = var.keda_namespace
-  n8n_redis_secret_name               = "n8n-redis-secret"
-  n8n_task_runners_secret_name        = "n8n-task-runners-secret"
-  n8n_postgres_ssl_ca_config_map_name = "n8n-postgres-ssl-ca"
-  n8n_redis_keda_auth_name            = "n8n-redis-keda-auth"
-  n8n_service_port                    = 5678
+  n8n_namespace                = var.n8n_namespace
+  keda_namespace               = var.keda_namespace
+  n8n_redis_secret_name        = "n8n-redis-secret"
+  n8n_task_runners_secret_name = "n8n-task-runners-secret"
+  n8n_redis_keda_auth_name     = "n8n-redis-keda-auth"
+  n8n_service_port             = 5678
 
   # ── Main topology selection ──────────────────────────────────────────────
   # n8n_main_hpa_min_replicas is the only topology selector (design.md
@@ -207,14 +206,6 @@ locals {
         }
       },
     ],
-    var.postgres_ssl_ca_pem == null ? [] : [
-      {
-        name = "postgres-ssl-ca"
-        configMap = {
-          name = local.n8n_postgres_ssl_ca_config_map_name
-        }
-      },
-    ],
   )
 
   n8n_extra_volume_mounts = concat(
@@ -235,13 +226,6 @@ locals {
         readOnly  = true
       },
     ],
-    var.postgres_ssl_ca_pem == null ? [] : [
-      {
-        name      = "postgres-ssl-ca"
-        mountPath = "/etc/n8n/postgres-ssl-ca"
-        readOnly  = true
-      },
-    ],
   )
 
   # CREDENTIALS_OVERWRITE_DATA_FILE is deliberately absent from
@@ -257,15 +241,17 @@ locals {
     },
   ]
 
-  # DB_POSTGRESDB_SSL_CA_FILE is deliberately absent from
-  # local.n8n_managed_env_names below: the "DB_" prefix already reserves it
-  # (and every other DB_POSTGRESDB_* name) in n8n_extra_env, so no separate
-  # entry is needed there. Null (no CA supplied) contributes no entry and no
-  # ConfigMap/volume/mount is rendered above either.
-  n8n_postgres_ssl_ca_env = var.postgres_ssl_ca_pem == null ? [] : [
+  # n8n reads DB_POSTGRESDB_SSL_ENABLED, not the chart-rendered
+  # DB_POSTGRESDB_SSL ConfigMap key (n8n-io/n8n-hosting#175 upstream), so the
+  # chart's database.ssl.enabled alone leaves the connection plaintext.
+  # Setting this directly whenever the effective ssl_mode is not "disable"
+  # fixes that regardless of chart version. DB_POSTGRESDB_SSL_ENABLED is
+  # deliberately absent from local.n8n_managed_env_names below: the "DB_"
+  # prefix already reserves it in n8n_extra_env.
+  n8n_postgres_ssl_enabled_env = local.postgres_connection.ssl_mode == "disable" ? [] : [
     {
-      name  = "DB_POSTGRESDB_SSL_CA_FILE"
-      value = "/etc/n8n/postgres-ssl-ca/ca.pem"
+      name  = "DB_POSTGRESDB_SSL_ENABLED"
+      value = "true"
     },
   ]
 

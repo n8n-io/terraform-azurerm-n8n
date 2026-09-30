@@ -93,16 +93,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   the server certificate. Default stays `require`, so existing deployments
   see no plan diff.
 - `postgres_ssl_ca_pem` accepts a PEM-encoded CA bundle for either the
-  managed or external PostgreSQL path. When set, the module renders it into
-  a ConfigMap mounted read-only on main, worker, and webhook-processor pods
-  at `/etc/n8n/postgres-ssl-ca/ca.pem` and sets
-  `DB_POSTGRESDB_SSL_CA_FILE` to that path, which `verify-ca` /
-  `verify-full` need unless the pod image's default trust store already
-  covers the server's certificate chain. The Helm release now waits on the
-  ConfigMap so pods cannot start before their CA volume exists, and
-  `n8n_extra_volumes` / `n8n_extra_volume_mounts` reject the reserved
-  `postgres-ssl-ca` volume name and `/etc/n8n/postgres-ssl-ca` mount path
-  while this input is set. See
+  managed or external PostgreSQL path. When set, the module passes it
+  straight through to the n8n Helm chart's native `database.ssl.ca` value,
+  which the chart renders into its own ConfigMap and injects as
+  `DB_POSTGRESDB_SSL_CA` on main, worker, and webhook-processor pods.
+  The module also sets `DB_POSTGRESDB_SSL_ENABLED` directly through
+  `config.extraEnv` whenever the effective `ssl_mode` is not `disable`:
+  the pinned chart (`1.13.0`) renders `database.ssl.enabled` into a
+  ConfigMap key named `DB_POSTGRESDB_SSL`, which n8n does not read
+  ([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
+  upstream), so without this the connection stayed plaintext regardless of
+  the selected mode. See
   [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) for mode selection,
   the CA bundle, and Azure's CA rotation schedule
   ([#25](https://github.com/n8n-io/terraform-azurerm-n8n/issues/25)).

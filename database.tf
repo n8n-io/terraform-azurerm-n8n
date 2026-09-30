@@ -362,20 +362,21 @@ check "postgres_tuning_requires_module_managed_database" {
   }
 }
 
-# postgres_ssl_ca_pem is shared by both database paths (locals.tf renders it
-# into a ConfigMap and env var regardless of var.create_database), so the
-# advisory below keys off the effective local.postgres_connection.ssl_mode
-# rather than var.create_database: a caller can supply a CA for either path
-# without it going unused. Mirrors the non-failing check-block pattern
-# elsewhere in this file (a warning, not a plan failure, since the CA is
-# simply inert, not harmful, in disable/allow/prefer modes).
+# postgres_ssl_ca_pem is shared by both database paths (n8n.tf passes it
+# straight through to the chart-native database.ssl.ca value regardless of
+# var.create_database), so the advisory below keys off the effective
+# local.postgres_connection.ssl_mode rather than var.create_database: a
+# caller can supply a CA for either path without it going unused. Mirrors
+# the non-failing check-block pattern elsewhere in this file (a warning, not
+# a plan failure, since the CA is simply inert, not harmful, in
+# disable/allow/prefer modes).
 check "postgres_ssl_ca_requires_verify_mode" {
   assert {
     condition = var.postgres_ssl_ca_pem == null ? true : contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
     error_message = join("", [
       "postgres_ssl_ca_pem is set but the effective ssl_mode (", local.postgres_connection.ssl_mode, ") is ",
-      "not verify-ca or verify-full, so n8n never validates the server certificate against it and the ",
-      "ConfigMap is mounted for nothing. Set postgres_managed_ssl_mode or postgres_external_ssl_mode to ",
+      "not verify-ca or verify-full, so n8n never validates the server certificate against it and the CA ",
+      "is passed to the chart for nothing. Set postgres_managed_ssl_mode or postgres_external_ssl_mode to ",
       "verify-ca or verify-full, or remove postgres_ssl_ca_pem.",
     ])
   }

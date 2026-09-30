@@ -115,6 +115,9 @@ export_values single_main "$tmp/single-main-values.json"
 echo "== Rendering PostgreSQL runtime-tuning values fixture (all four timing overrides) =="
 export_values pg_runtime "$tmp/pg-runtime-values.json"
 
+echo "== Rendering PostgreSQL TLS CA values fixture (verify-full + postgres_ssl_ca_pem) =="
+export_values ssl_ca "$tmp/ssl-ca-values.json"
+
 echo "== Rendering Bull worker timing values fixture (all three timing overrides) =="
 export_values worker_timing "$tmp/worker-timing-values.json"
 
@@ -154,6 +157,10 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/pg-runtime-values.json" pg-runtime "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor configmap; do
+  render "$tmp/ssl-ca-values.json" ssl-ca "$template"
 done
 
 for template in deployment-main deployment-worker deployment-webhook-processor configmap; do
@@ -373,6 +380,29 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
 done
 
 echo "PASS: PostgreSQL connection/ping timing renders on all three application pod families and is omitted by default"
+
+echo "== Verify PostgreSQL TLS CA manifests (DB_POSTGRESDB_SSL_ENABLED / DB_POSTGRESDB_SSL_CA) =="
+
+# Regression check for the bug this fixture exists to catch: the pinned
+# chart renders database.ssl.enabled into a ConfigMap key named
+# DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
+# upstream). The module works around this with its own
+# DB_POSTGRESDB_SSL_ENABLED entry in config.extraEnv; assert on the
+# container env directly so a future chart bump that fixes the upstream
+# name does not silently mask a regression in the module's own workaround.
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_SSL_ENABLED")] | length == 1
+    and .[0].value == "true"
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must carry exactly one DB_POSTGRESDB_SSL_ENABLED=true entry when the effective ssl_mode is not disable" >&2; exit 1; }
+done
+
+jq -e '.data.DB_POSTGRESDB_SSL_CA == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"' \
+  "$tmp/ssl-ca-configmap.json" >/dev/null \
+  || { echo "FAIL: the chart ConfigMap must carry DB_POSTGRESDB_SSL_CA from postgres_ssl_ca_pem via the chart-native database.ssl.ca value" >&2; exit 1; }
+
+echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders on every application pod family and postgres_ssl_ca_pem reaches the chart's own ConfigMap"
 
 echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval/graceful shutdown timeout) =="
 
