@@ -16,8 +16,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   Autogrow only grows storage, never shrinks it: after it fires, raise
   `pg_storage_mb` to at least the live size before the next apply, or a
   stale `pg_storage_mb` can plan a downsize that Azure rejects or forces a
-  replacement. Rejected when `create_database = false`, alongside the
-  other managed-server sizing inputs
+  replacement. Triggers a non-blocking check warning when
+  `create_database = false`, alongside the other managed-server sizing
+  inputs
   ([#27](https://github.com/n8n-io/terraform-azurerm-n8n/issues/27)).
 
 ### Changed

@@ -241,7 +241,7 @@ variable "pg_storage_mb" {
 }
 
 variable "pg_storage_auto_grow_enabled" {
-  description = "Enable storage autogrow on the PostgreSQL Flexible Server so it automatically doubles disk space as usage approaches the limit, instead of the server going read-only when full. Autogrow only grows storage, it never shrinks it. After autogrow fires, raise pg_storage_mb to at least the new live size before the next apply: Terraform does not read the autogrown value back, so a stale pg_storage_mb can plan a downsize that Azure rejects or, in the worst case, forces a replacement. Default false to keep current behavior. Ignored when `create_database = false`."
+  description = "Enable storage autogrow on the PostgreSQL Flexible Server so it automatically doubles disk space as usage approaches the limit, instead of the server going read-only when full. Autogrow only grows storage, it never shrinks it. After autogrow fires, raise pg_storage_mb to at least the new live size before the next apply: Terraform's plan reads the grown live value back and diffs it against the still-lower pg_storage_mb, so a stale pg_storage_mb can plan a downsize that Azure rejects or, in the worst case, forces a replacement. Default false to keep current behavior. Ignored when `create_database = false`."
   type        = bool
   default     = false
   nullable    = false
