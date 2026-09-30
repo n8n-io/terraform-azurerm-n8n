@@ -1584,6 +1584,16 @@ run "rejects_helm_settle_duration_below_floor" {
   expect_failures = [var.n8n_helm_post_install_settle_seconds]
 }
 
+run "rejects_n8n_proxy_hops_below_one" {
+  command = plan
+
+  variables {
+    n8n_proxy_hops = 0
+  }
+
+  expect_failures = [var.n8n_proxy_hops]
+}
+
 # ── Section 7: n8n runtime and resource controls ─────────────────────────────
 
 run "runtime_controls_defaults_render_in_helm_values" {
@@ -1757,6 +1767,37 @@ run "runtime_controls_defaults_render_in_helm_values" {
       ], env.name)]) == 0
     )
     error_message = "The floating-license safeguard must always render false while default-on or default-off feature variables remain omitted."
+  }
+}
+
+run "n8n_proxy_hops_override_renders_in_helm_values" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_proxy_hops             = 2
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_PROXY_HOPS"]) == "2"
+    )
+    error_message = "n8n_proxy_hops must override the rendered N8N_PROXY_HOPS value for a caller-owned ingress with extra proxy hops."
   }
 }
 

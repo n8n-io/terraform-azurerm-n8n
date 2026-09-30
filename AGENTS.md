@@ -192,7 +192,12 @@ order, so `/webhook*` would otherwise capture `/webhook-test`. Do not add
 `ssl_certificate` back to the gateway's `ignore_changes`; that silently
 turns `app_gateway_tls_cert_secret_id` rotations into no-ops. The subnet NSG must retain `GatewayManager` access on
 65200-65535 and `AzureLoadBalancer` probe access before its deny rule. Source
-restrictions apply to the editor and webhook paths together.
+restrictions apply to the editor and webhook paths together. See
+[`docs/ingress-options.md`](./docs/ingress-options.md) for the full
+caller-owned-ingress routing contract (path ordering, session affinity,
+`N8N_PROXY_HOPS`) and why the module uses Application Gateway v2 with AGIC
+instead of Application Gateway for Containers or the application routing
+add-on.
 
 **DNS and certificate integration.** Root `dns.tf` accepts at most one
 caller-owned public or private Azure DNS zone ID with a matching explicit,
