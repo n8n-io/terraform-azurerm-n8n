@@ -18,7 +18,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   every chart and image this module pulls and its override input.
   `check.graceful_shutdown_fits_grace_period` (n8n.tf) is now skipped whenever
   `n8n_chart_repository` is not the upstream default, since this module
-  cannot verify a mirror's `values.yaml` default shutdown timeout
+  cannot verify a mirror's `values.yaml` default shutdown timeout.
+  `check.image_pull_secrets_need_a_custom_image` now also passes when only
+  `n8n_task_runner_image_repository` is set, so a runner-only private mirror
+  no longer falsely flags `n8n_image_pull_secrets` as unused
   ([#23](https://github.com/n8n-io/terraform-azurerm-n8n/issues/23)).
 
 ### Changed

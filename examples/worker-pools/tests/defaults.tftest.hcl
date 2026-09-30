@@ -175,6 +175,14 @@ run "rejects_malformed_chart_repository" {
 run "chart_repository_defaults_to_upstream" {
   command = plan
 
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nwpool-tls-test.vault.azure.net/secrets/n8nwpool-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
   assert {
     condition     = var.n8n_chart_repository == "oci://ghcr.io/n8n-io/n8n-helm-chart"
     error_message = "n8n_chart_repository must default to the same upstream registry the official preview build publishes to."

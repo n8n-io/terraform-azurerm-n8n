@@ -3080,6 +3080,15 @@ run "warns_when_image_pull_secrets_are_inert" {
   expect_failures = [check.image_pull_secrets_need_a_custom_image]
 }
 
+run "image_pull_secrets_with_only_a_runner_mirror_do_not_warn" {
+  command = plan
+
+  variables {
+    n8n_image_pull_secrets           = ["registry-creds"]
+    n8n_task_runner_image_repository = "registry.example.com/runners"
+  }
+}
+
 run "warns_when_extra_volume_is_not_mounted" {
   command = plan
 
