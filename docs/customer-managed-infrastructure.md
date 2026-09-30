@@ -445,18 +445,107 @@ Because Terraform never reads the encryption-key Secret's value, the
 see [Post-deployment setup](./post-deployment.md#capture-the-n8n-encryption-key).
 
 The **PostgreSQL password reference applies only to the external database
-path** (`create_database = false`) — the module-managed Flexible Server
-always generates and manages its own password, and there is no
-`postgres_password_secret_ref` equivalent for it. The same is true for Redis:
-`redis_password_secret_ref` applies only to `create_redis = false`, because
-the module-managed Azure Managed Redis instance always uses its own generated
-access key.
+path** (`create_database = false`), with one exception: setting
+`postgres_password_write_only = true` on the managed path
+(`create_database = true`) also requires and honors
+`postgres_password_secret_ref`, because the module cannot copy a write-only
+value into a Secret it manages itself. Outside that opt-in, the
+module-managed Flexible Server always generates and manages its own
+password, and there is no `postgres_password_secret_ref` equivalent for it.
+The same is true for Redis: `redis_password_secret_ref` applies only to
+`create_redis = false`, because the module-managed Azure Managed Redis
+instance always uses its own generated access key, and no write-only path
+exists for it — see "Secrets that remain in Terraform state" below.
 
 **The task-runner authentication token remains module-generated in every
 mode.** It has no persistence and authenticates only an in-cluster process to
 another in-cluster process, so caller ownership of it does not reduce
 Terraform's exposure the way it does for the license key, encryption key, or
 database/queue credentials.
+
+## Secrets that remain in Terraform state
+
+Every credential this module generates or reads for a **module-managed**
+resource is, by default, stored in Terraform state: state is where Terraform
+keeps every attribute of every resource it manages, including ones marked
+`sensitive`. This is separate from the Kubernetes Secret question above —
+`sensitive` and a Secret-ref both control what a caller *sees* in CLI output
+or hands to a workload; neither removes the value from the state file
+itself. Encrypt remote state and restrict who can read it (`terraform state
+pull`, the backend's own access controls) regardless of which options below
+you use. [`examples/customer-managed-everything`](../examples/customer-managed-everything/)
+demonstrates the combination that keeps the most credentials out of this
+module's state, by pointing every data-service input at caller-managed
+resources instead.
+
+On the default, fully module-managed path, the following land in state:
+
+| Credential | Where it lands | Opt out with |
+|---|---|---|
+| PostgreSQL administrator password | `random_password.postgres_admin`'s `result`, `azurerm_postgresql_flexible_server.n8n`'s `administrator_password`, `kubernetes_secret.n8n_db`, the `postgres_admin_password` output | `postgres_password_write_only = true` (below), or `create_database = false` with `postgres_password_secret_ref` |
+| Redis access key | `azurerm_managed_redis.n8n`'s `default_database[0].primary_access_key`, `kubernetes_secret.n8n_redis`, the `redis_primary_access_key` output | `create_redis = false` with `redis_external_password` sourced from a Secret you manage; no equivalent exists for the managed path (see below) |
+| n8n encryption key | `random_password.n8n_encryption_key`'s `result`, `kubernetes_secret.n8n_encryption_key`, the `n8n_encryption_key` output | `n8n_encryption_key_secret_ref` (module never reads the Secret's value) |
+| Task-runner authentication token | `random_password.n8n_task_runners_token`'s `result`, `kubernetes_secret.n8n_task_runners` | none — this token is always module-generated (see above) |
+
+### PostgreSQL write-only password (`postgres_password_write_only`)
+
+Setting `postgres_password_write_only = true` (with `create_database = true`)
+writes the administrator password through
+`azurerm_postgresql_flexible_server.n8n`'s write-only
+`administrator_password_wo` argument (Terraform >= 1.11, azurerm >= 4.21,
+both already required by this module's `versions.tf`) instead of generating
+one with `random_password.postgres_admin`. Feed the actual value in through
+`postgres_admin_password_wo` — an `ephemeral` module variable, so Terraform
+never writes it to a plan or state file — and increment
+`postgres_admin_password_wo_version` whenever you rotate it; Terraform only
+re-applies a write-only value when its version number changes.
+
+Because the value never touches state, the module also cannot copy it into a
+Kubernetes Secret the way it does on the default path. `postgres_password_write_only
+= true` therefore also requires `postgres_password_secret_ref`: you must
+populate that Secret yourself, outside Terraform, with the same password you
+passed to `postgres_admin_password_wo` — for example, syncing an Azure Key
+Vault secret into the cluster with the Key Vault CSI driver or an External
+Secrets Operator `ExternalSecret`. The module never reads that Secret's
+value, so nothing checks the two stay in sync; a mismatch surfaces as a
+PostgreSQL authentication failure on the next pod restart, not a Terraform
+error. The `postgres_admin_password` output is `null` on this path for the
+same reason it never has the value to expose.
+
+Typical source for `postgres_admin_password_wo`: an `ephemeral
+"azurerm_key_vault_secret"` block (or your own ephemeral/ephemeral-adjacent
+source) in the **calling** root module, read from the same Key Vault secret
+your Kubernetes Secret syncs from, so both stay in lockstep by construction
+rather than by manual bookkeeping.
+
+**Upgrading an existing deployment onto this path replaces the server's
+password out of band of Terraform's own change detection.** Flipping
+`postgres_password_write_only` from `false` to `true` moves the server from
+`administrator_password` to `administrator_password_wo`; azurerm applies
+this as a password update, not a resource replacement, but every existing
+session's cached credential still points at the old password until you
+update the Kubernetes Secret and roll the n8n pods. Plan a maintenance
+window: apply with the new write-only value, confirm the Secret you manage
+carries the same password, then restart the `n8n-main`, `n8n-worker`, and
+`n8n-webhook-processor` deployments so they pick up the refreshed Secret.
+
+### Redis access key (no write-only path)
+
+Azure Managed Redis's `primary_access_key` is a **computed** attribute this
+module reads back from `azurerm_managed_redis.n8n`, not a value the module
+chooses or generates — there is no argument on that resource to redirect
+through a write-only path the way `administrator_password_wo` works for
+PostgreSQL. The access key remains in Terraform state on the managed path
+(`create_redis = true`) regardless of any other option in this document.
+
+The only way to remove it is to stop authenticating with an access key at
+all. Microsoft Entra ID authentication for Azure Managed Redis would do
+that, but n8n's Redis client does not yet support Entra ID authentication
+for its queue/cache connection, so this module does not expose it. Track
+n8n's Redis client support before revisiting this. Until then, treat
+encrypted, access-restricted remote state as the mitigation for this
+credential, the same as for the n8n encryption key and task-runner token
+above.
 
 ## Direct controller composition
 

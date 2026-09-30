@@ -189,6 +189,23 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   for the requirements and migration steps
   ([#22](https://github.com/n8n-io/terraform-azurerm-n8n/issues/22)).
 
+- `postgres_password_write_only`, `postgres_admin_password_wo`, and
+  `postgres_admin_password_wo_version` let the module-managed PostgreSQL
+  Flexible Server (`create_database = true`) accept its administrator
+  password through azurerm's write-only `administrator_password_wo`
+  argument instead of a `random_password` resource whose result Terraform
+  stores in plain text in state. `postgres_admin_password_wo` is an
+  `ephemeral` module variable, so the value you pass never lands in a plan
+  or state file. This mode requires `postgres_password_secret_ref` (the
+  module cannot copy a write-only value into the Kubernetes Secret it would
+  otherwise manage), makes the `postgres_admin_password` output `null`, and
+  is fully opt-in — the default (`postgres_password_write_only = false`)
+  behavior is unchanged. See "Secrets that remain in Terraform state" in
+  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md)
+  for the full contract, including the Redis access key and other
+  credentials that still remain in state on every managed path
+  ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by
@@ -255,6 +272,15 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   versioned Secret URI, which the App Gateway listener picks up on the
   following `terraform apply`
   ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
+- **Breaking:** `required_version` is now `>= 1.11` (was `>= 1.9`) and the
+  `azurerm` provider requirement is now `>= 4.21.0, < 5.0.0` (was `~> 4.0`).
+  Both are needed to parse and use `postgres_password_write_only`'s
+  `ephemeral` variable and write-only `administrator_password_wo` argument
+  (see "Added" above), and apply module-wide regardless of whether you set
+  that variable, because Terraform parses `ephemeral` and write-only syntax
+  from this module's HCL unconditionally. Upgrade the Terraform CLI and let
+  the `azurerm` provider resolve within the new range before applying
+  ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
 
 ### Fixed
 
