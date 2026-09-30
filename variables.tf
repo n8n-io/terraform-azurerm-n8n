@@ -218,6 +218,22 @@ variable "create_database" {
   default     = true
 }
 
+variable "postgres_private_dns_zone_id" {
+  description = "Resource ID of an existing private Azure DNS zone named privatelink.postgres.database.azure.com to attach the module-managed PostgreSQL Flexible Server to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). Ignored when create_database = false."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.postgres_private_dns_zone_id == null ? true : can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/privateDnsZones/privatelink\\.postgres\\.database\\.azure\\.com$", var.postgres_private_dns_zone_id))
+    error_message = "postgres_private_dns_zone_id must be null or a fully qualified private Azure DNS zone resource ID whose zone name is exactly privatelink.postgres.database.azure.com, the only name Azure Flexible Server's private-DNS auto-registration fires for."
+  }
+
+  validation {
+    condition     = var.postgres_private_dns_zone_id == null ? true : var.create_database
+    error_message = "postgres_private_dns_zone_id has no effect when create_database = false: the module creates no PostgreSQL Flexible Server to attach it to."
+  }
+}
+
 variable "pg_sku_name" {
   description = "Azure PostgreSQL Flexible Server SKU (e.g. B_Standard_B1ms for dev, GP_Standard_D2s_v3 for production). Format: `<tier>_Standard_<family>` where tier is B (Burstable), GP (General Purpose), or MO (Memory Optimized). Burstable does NOT support zone-redundant HA — set `pg_enable_high_availability = false` when using B_*. Ignored when `create_database = false`."
   type        = string
@@ -492,6 +508,22 @@ variable "create_redis" {
   description = "When true (the default), the module creates and manages a private Azure Managed Redis instance. Set to false to use an external Redis endpoint — `redis_external_host`, `redis_external_username` is optional, and `redis_external_password` must then be supplied. Kept as a static boolean rather than `redis_external_host == null` because `count` expressions cannot depend on values computed at apply time."
   type        = bool
   default     = true
+}
+
+variable "redis_private_dns_zone_id" {
+  description = "Resource ID of an existing private Azure DNS zone named privatelink.redis.azure.net to attach the module-managed Azure Managed Redis private endpoint to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). Ignored when create_redis = false."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.redis_private_dns_zone_id == null ? true : can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/privateDnsZones/privatelink\\.redis\\.azure\\.net$", var.redis_private_dns_zone_id))
+    error_message = "redis_private_dns_zone_id must be null or a fully qualified private Azure DNS zone resource ID whose zone name is exactly privatelink.redis.azure.net, the value Azure Managed Redis private endpoints require."
+  }
+
+  validation {
+    condition     = var.redis_private_dns_zone_id == null ? true : var.create_redis
+    error_message = "redis_private_dns_zone_id has no effect when create_redis = false: the module creates no Azure Managed Redis instance or private endpoint to attach it to."
+  }
 }
 
 variable "redis_sku_name" {
@@ -2835,6 +2867,22 @@ variable "create_blob_storage" {
   type        = bool
   default     = true
   nullable    = false
+}
+
+variable "blob_private_dns_zone_id" {
+  description = "Resource ID of an existing private Azure DNS zone named privatelink.blob.core.windows.net to attach the module-managed Blob storage private endpoint to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). Ignored when create_blob_storage = false."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.blob_private_dns_zone_id == null ? true : can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/privateDnsZones/privatelink\\.blob\\.core\\.windows\\.net$", var.blob_private_dns_zone_id))
+    error_message = "blob_private_dns_zone_id must be null or a fully qualified private Azure DNS zone resource ID whose zone name is exactly privatelink.blob.core.windows.net, the value Azure Blob private endpoints require."
+  }
+
+  validation {
+    condition     = var.blob_private_dns_zone_id == null ? true : var.create_blob_storage
+    error_message = "blob_private_dns_zone_id has no effect when create_blob_storage = false: the module creates no Blob storage account or private endpoint to attach it to."
+  }
 }
 
 variable "existing_blob_storage_account_name" {

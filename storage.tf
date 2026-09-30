@@ -58,8 +58,14 @@ resource "azurerm_storage_container" "n8n" {
   container_access_type = "private"
 }
 
+# Not created when `var.blob_private_dns_zone_id` is set: some landing zones
+# centralize privatelink zones in a connectivity subscription (often under
+# an Azure Policy DeployIfNotExists mandate), and a second same-named zone
+# in the n8n resource group would conflict with that. In that case the
+# caller owns the zone and its VNet link; the module only reads the
+# supplied zone ID.
 resource "azurerm_private_dns_zone" "blob" {
-  count = var.create_blob_storage ? 1 : 0
+  count = var.create_blob_storage && var.blob_private_dns_zone_id == null ? 1 : 0
 
   name                = "privatelink.blob.core.windows.net"
   resource_group_name = var.resource_group_name
@@ -68,7 +74,7 @@ resource "azurerm_private_dns_zone" "blob" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
-  count = var.create_blob_storage ? 1 : 0
+  count = var.create_blob_storage && var.blob_private_dns_zone_id == null ? 1 : 0
 
   name                  = "${var.friendly_name_prefix}-blob-vnet-link"
   resource_group_name   = var.resource_group_name
@@ -77,6 +83,16 @@ resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
   registration_enabled  = false
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-blob-vnet-link" })
+}
+
+# Resolves to the caller-supplied zone ID when set, otherwise the
+# module-managed zone created above. Consumed by the private endpoint's
+# `private_dns_zone_group` below.
+locals {
+  blob_private_dns_zone_id = var.create_blob_storage ? coalesce(
+    var.blob_private_dns_zone_id,
+    one(azurerm_private_dns_zone.blob[*].id),
+  ) : null
 }
 
 resource "azurerm_private_endpoint" "blob" {
@@ -96,7 +112,7 @@ resource "azurerm_private_endpoint" "blob" {
 
   private_dns_zone_group {
     name                 = "blob-private-dns"
-    private_dns_zone_ids = [azurerm_private_dns_zone.blob[0].id]
+    private_dns_zone_ids = [local.blob_private_dns_zone_id]
   }
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-blob-pe" })
