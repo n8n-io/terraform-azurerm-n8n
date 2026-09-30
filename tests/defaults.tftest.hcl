@@ -840,6 +840,11 @@ run "managed_redis_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_managed_redis.n8n[0].default_database[0].eviction_policy == "NoEviction"
+    error_message = "Managed Azure Managed Redis default_database.eviction_policy must equal var.redis_eviction_policy (default NoEviction)."
+  }
+
+  assert {
     condition     = azurerm_managed_redis.n8n[0].default_database[0].client_protocol == "Encrypted"
     error_message = "Managed Azure Managed Redis default_database.client_protocol must always be Encrypted (TLS-only)."
   }
@@ -897,6 +902,31 @@ run "rejects_malformed_redis_sku_name" {
 
   expect_failures = [
     var.redis_sku_name,
+  ]
+}
+
+run "managed_redis_eviction_policy_renders" {
+  command = plan
+
+  variables {
+    redis_eviction_policy = "VolatileLRU"
+  }
+
+  assert {
+    condition     = azurerm_managed_redis.n8n[0].default_database[0].eviction_policy == "VolatileLRU"
+    error_message = "default_database.eviction_policy must render var.redis_eviction_policy when overridden."
+  }
+}
+
+run "rejects_malformed_redis_eviction_policy" {
+  command = plan
+
+  variables {
+    redis_eviction_policy = "Bogus"
+  }
+
+  expect_failures = [
+    var.redis_eviction_policy,
   ]
 }
 

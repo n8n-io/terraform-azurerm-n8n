@@ -34,6 +34,21 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   apply` now also needs the `Update` certificate permission for that
   tag update.
 
+- The module-managed Azure Managed Redis instance now sets
+  `eviction_policy = "NoEviction"` on `default_database` (new
+  `redis_eviction_policy` input, default `"NoEviction"`, validated against
+  the azurerm provider's enum). The provider's own default is
+  `VolatileLRU`, which can evict keys carrying a TTL under memory
+  pressure, including n8n's Bull queue keys — jobs could disappear
+  without an error. `NoEviction` instead rejects writes with an
+  out-of-memory error on enqueue; set an alert on used memory to catch it
+  (see [`docs/redis.md`](./docs/redis.md#eviction-policy)). **Upgrade
+  impact:** `eviction_policy` is set at creation time only, so an
+  existing instance is recreated (and the queue is dropped) on the first
+  apply after upgrading. Pin `redis_eviction_policy = "VolatileLRU"` to
+  keep an existing instance in place, or drain the queue first
+  ([#18](https://github.com/n8n-io/terraform-azurerm-n8n/issues/18)).
+
 ## [0.1.0] - 2026-09-29
 
 Initial release of `terraform-azurerm-n8n`: a single resource-bearing
