@@ -1069,13 +1069,11 @@ run "aks_kms_role_uses_minimum_scope" {
   }
 
   override_resource {
-    target          = azurerm_kubernetes_cluster.n8n[0]
+    target          = azurerm_user_assigned_identity.aks_cluster[0]
     override_during = plan
     values = {
-      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ContainerService/managedClusters/n8ntest-aks"
-      identity = {
-        principal_id = "88888888-8888-8888-8888-888888888888"
-      }
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-aks-cluster"
+      principal_id = "88888888-8888-8888-8888-888888888888"
     }
   }
 
@@ -1087,6 +1085,35 @@ run "aks_kms_role_uses_minimum_scope" {
       azurerm_role_assignment.aks_kms_kv_crypto_user[0].principal_id == "88888888-8888-8888-8888-888888888888"
     )
     error_message = "The cluster identity must receive only Key Vault Crypto Service Encryption User at the supplied vault scope."
+  }
+}
+
+run "aks_kms_switches_cluster_identity_to_user_assigned" {
+  command = plan
+
+  variables {
+    create_ingress                  = false
+    aks_kms_role_assignment_enabled = true
+    aks_kms_key_vault_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-shared-rg/providers/Microsoft.KeyVault/vaults/n8ntest-shared-kv"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "UserAssigned"
+    error_message = "AKS cluster identity must switch to UserAssigned when KMS is requested: Azure's KMS feature rejects a SystemAssigned identity outright."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 1
+    error_message = "A dedicated aks_cluster UserAssigned identity must be created when KMS is requested."
+  }
+}
+
+run "aks_default_cluster_identity_stays_system_assigned_without_kms" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
+    error_message = "No UserAssigned identity should be created when neither KMS input is set."
   }
 }
 

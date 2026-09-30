@@ -47,13 +47,14 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   workload_identity_enabled = true
 
   # SystemAssigned by default. A BYO private DNS zone (aks_private_dns_zone_id
-  # set to a resource ID rather than "System") switches to the
-  # aks_cluster UserAssigned identity below, pre-granted Private DNS Zone
-  # Contributor on that zone — Azure requires the identity to already hold
-  # the role before cluster create, and a SystemAssigned identity has no ID
-  # to grant a role to that early.
+  # set to a resource ID rather than "System") or KMS etcd encryption
+  # switches to the aks_cluster UserAssigned identity below
+  # (local.aks_needs_user_assigned_identity). The BYO zone needs the
+  # identity pre-granted Private DNS Zone Contributor before cluster create,
+  # which a SystemAssigned identity has no ID for yet; AKS's KMS feature
+  # rejects SystemAssigned outright.
   dynamic "identity" {
-    for_each = local.aks_uses_custom_private_dns_zone ? [] : [1]
+    for_each = local.aks_needs_user_assigned_identity ? [] : [1]
 
     content {
       type = "SystemAssigned"
@@ -61,7 +62,7 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   }
 
   dynamic "identity" {
-    for_each = local.aks_uses_custom_private_dns_zone ? [1] : []
+    for_each = local.aks_needs_user_assigned_identity ? [1] : []
 
     content {
       type         = "UserAssigned"
@@ -270,15 +271,14 @@ resource "azurerm_user_assigned_identity" "n8n_workload" {
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-n8n-workload" })
 }
 
-# BYO private DNS zone (issue #28): a module-created identity, granted
-# Private DNS Zone Contributor on the caller's zone, that
-# azurerm_kubernetes_cluster.n8n's identity block switches to instead of
-# SystemAssigned. count = 0 (no identity, no role assignment, no cost) unless
-# aks_private_dns_zone_id names a caller-owned zone resource ID, or
-# aks_private_dns_zone_custom_identity is explicitly set (locals.tf) because
-# the zone ID is itself unknown at plan time in the caller's apply.
+# Module-created cluster identity that azurerm_kubernetes_cluster.n8n's
+# identity block switches to instead of SystemAssigned whenever
+# local.aks_needs_user_assigned_identity is true: a BYO private DNS zone
+# (issue #28, granted Private DNS Zone Contributor below) or KMS etcd
+# encryption (issue #29, granted Key Vault Crypto User in keyvault.tf).
+# count = 0 (no identity, no role assignment, no cost) otherwise.
 resource "azurerm_user_assigned_identity" "aks_cluster" {
-  count = var.create_aks && local.aks_uses_custom_private_dns_zone ? 1 : 0
+  count = var.create_aks && local.aks_needs_user_assigned_identity ? 1 : 0
 
   name                = "${var.friendly_name_prefix}-aks-cluster"
   resource_group_name = var.resource_group_name

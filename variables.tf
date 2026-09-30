@@ -3181,15 +3181,21 @@ variable "aks_key_vault_secrets_provider_role_assignment_enabled" {
 
 # ── AKS KMS etcd encryption ──────────────────────────────────────────────
 # Optional Key Management Service (KMS) etcd encryption using a caller-owned
-# Key Vault key. The cluster's own identity must already hold the Key Vault
-# role before KMS can be enabled, and there is no way to order that role
-# assignment ahead of the cluster's key_management_service block within a
-# single apply. This requires two applies whenever the role assignment does
-# not already exist, not only on a brand-new cluster: first apply with
+# Key Vault key. Azure's KMS feature rejects a SystemAssigned cluster
+# identity outright ("Azure Key Vault KMS feature does not support cluster
+# identity type SystemAssigned"), so setting either KMS input below switches
+# the cluster's identity block (aks.tf) from SystemAssigned to a dedicated
+# UserAssigned aks_cluster identity (locals.tf:
+# aks_needs_user_assigned_identity). That identity must already hold the Key
+# Vault role before KMS can be enabled, and there is no way to order that
+# role assignment ahead of the cluster's key_management_service block within
+# a single apply. This requires two applies whenever the role assignment
+# does not already exist, not only on a brand-new cluster: first apply with
 # aks_kms_role_assignment_enabled = true and aks_kms_key_vault_key_id = null
-# so this module can grant the identity access, then set
-# aks_kms_key_vault_key_id on a second apply to turn on KMS as an update.
-# See docs/customer-managed-infrastructure.md for the full sequencing note.
+# so this module can create the UserAssigned identity and grant it access,
+# then set aks_kms_key_vault_key_id on a second apply to turn on KMS as an
+# update. See docs/customer-managed-infrastructure.md for the full
+# sequencing note.
 
 variable "aks_kms_key_vault_key_id" {
   description = "Azure Key Vault key identifier used for AKS KMS etcd encryption (versioned or versionless, e.g. https://<vault>.vault.azure.net/keys/<key>[/<version>]). Null (the default) leaves KMS etcd encryption disabled. Has no effect when create_aks is false; setting it there fails the aks_kms_requires_module_managed_aks check. See the sequencing note above the variable block for the two-apply caveat on a first-time enable."
