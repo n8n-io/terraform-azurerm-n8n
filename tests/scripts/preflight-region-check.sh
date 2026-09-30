@@ -61,13 +61,13 @@ EOF
 
 # `zones_set` distinguishes an explicit `--zones ''` (zone-less region) from
 # an omitted flag, which falls back to the plan or the root default.
-dir=. region='' vm_size='' node_count_max='' node_count_max_set=false system_vm_size='' system_node_count_max='' system_node_count_max_set=false zones='' zones_set=false pg_version='' pg_sku='' redis_sku='' probe_redis=false
+dir=. region='' vm_size='' vm_size_set=false node_count_max='' node_count_max_set=false system_vm_size='' system_node_count_max='' system_node_count_max_set=false zones='' zones_set=false pg_version='' pg_sku='' redis_sku='' probe_redis=false
 need_value() { (($# >= 2)) || { echo "Option $1 requires a value" >&2; usage >&2; exit 2; }; }
 while (($#)); do
   case $1 in
     --dir) need_value "$@"; dir=$2; shift 2 ;;
     --region) need_value "$@"; region=$2; shift 2 ;;
-    --vm-size) need_value "$@"; vm_size=$2; shift 2 ;;
+    --vm-size) need_value "$@"; vm_size=$2; vm_size_set=true; shift 2 ;;
     --node-count-max) need_value "$@"; node_count_max=$2; node_count_max_set=true; shift 2 ;;
     --system-vm-size) need_value "$@"; system_vm_size=$2; shift 2 ;;
     --system-node-count-max) need_value "$@"; system_node_count_max=$2; system_node_count_max_set=true; shift 2 ;;
@@ -101,12 +101,48 @@ is_node_count() { is_pos_int "$1" && (($1 <= 1000)); }
 # only: the module also declares data sources (e.g.
 # data.azurerm_kubernetes_cluster.existing) whose location may differ.
 managed='.planned_values.root_module | recurse(.child_modules[]?) | .resources[]? | select(.mode == "managed")'
-# plan_pool_maxes PLAN VM_SIZE: max_count of the cluster default pool and of
-# every separate node pool of VM_SIZE, space-separated, so the worst case is
-# summed rather than assumed from the system pool (the user pool mirrors it
-# in aks.tf today, but that is not a contract). null/unknown prints "null".
-plan_pool_maxes() {
-  jq -r --arg vm "$2" "[$managed | if .type == \"azurerm_kubernetes_cluster\" then .values.default_node_pool[0] elif .type == \"azurerm_kubernetes_cluster_node_pool\" then .values else empty end | select(.vm_size == \$vm) | .max_count | tostring] | join(\" \")" "$1"
+# plan_extra_pool_maxes PLAN VM_SIZE: max_count of every node pool of
+# VM_SIZE that is not the module's named user pool ("n8nuser"), space-
+# separated. The user pool and the cluster's default (system) pool are
+# sized separately, from the (possibly --vm-size/--system-vm-size/
+# --node-count-max/--system-node-count-max overridden) resolved vm_size/
+# system_vm_size/node_count_max/system_node_count_max, so a flag override is
+# honored even when a plan is available (see pool_peak below); this only
+# catches an unrelated extra node pool of a matching size the module might
+# add later. null/unknown max_count prints "null".
+plan_extra_pool_maxes() {
+  jq -r --arg vm "$2" "[$managed | select(.type == \"azurerm_kubernetes_cluster_node_pool\" and .values.name != \"n8nuser\") | select(.values.vm_size == \$vm) | .values.max_count | tostring] | join(\" \")" "$1"
+}
+# pool_peak SIZE VM_SIZE NODE_COUNT_MAX SYSTEM_VM_SIZE SYSTEM_NODE_COUNT_MAX
+#   [PLAN]
+# Worst-case node count of SIZE across every module-managed node pool at
+# max_count: NODE_COUNT_MAX when the user pool is SIZE, SYSTEM_NODE_COUNT_MAX
+# when the system pool is SIZE (both are resolved before this call, from a
+# --node-count-max/--system-node-count-max override or the plan/root
+# default), plus any other node pool of SIZE from PLAN, if given
+# (plan_extra_pool_maxes; empty PLAN skips this, matching --region mode with
+# no plan file). Prints the peak on stdout; on a non-integer max_count,
+# prints the offending message to stderr and returns 2 instead.
+pool_peak() {
+  local size=$1 vm=$2 node_max=$3 svm=$4 snode_max=$5 plan=${6:-} peak=0 m
+  if [[ -n $plan ]]; then
+    for m in $(plan_extra_pool_maxes "$plan" "$size"); do
+      is_node_count "$m" \
+        || { echo "planned node pool max_count '$m' for $size is not an integer from 1 to 1000" >&2; return 2; }
+      peak=$((peak + m))
+    done
+  fi
+  if [[ $size == "$vm" ]]; then
+    is_node_count "$node_max" \
+      || { echo "aks_node_count_max must be an integer from 1 to 1000 (got '${node_max:-<empty>}'); pass --node-count-max N" >&2; return 2; }
+    peak=$((peak + node_max))
+  fi
+  if [[ $size == "$svm" ]]; then
+    is_node_count "$snode_max" \
+      || { echo "aks_system_node_count_max must be an integer from 1 to 1000 (got '${snode_max:-<empty>}'); pass --system-node-count-max N" >&2; return 2; }
+    peak=$((peak + snode_max))
+  fi
+  echo "$peak"
 }
 # plan_quota_mode PLAN: `fail` only when every AKS cluster and node pool
 # change in the plan is a pure create, so no counted node can already be
@@ -164,8 +200,9 @@ if [[ "${PREFLIGHT_SELF_TEST:-0}" == "1" ]]; then
   done
   for v in 1 1000; do rc=0; is_node_count "$v" || rc=1; st_expect "is_node_count accepts '$v'" "$rc"; done
   for v in 0 1001 4611686018427387904; do rc=1; is_node_count "$v" || rc=0; st_expect "is_node_count rejects '$v'" "$rc"; done
-  # Plan readers: a child-module cluster plus a user pool of the same size are
-  # summed; a pool of another size and a data source are ignored.
+  # Plan readers: an extra unrelated node pool of the same size is summed; a
+  # pool of another size, a data source, and the module's own "n8nuser" user
+  # pool (sized separately, see pool_peak below) are ignored.
   st_plan() { # st_plan FILE CLUSTER_ACTIONS POOL_ACTIONS [USER_MAX] [EXTRA_CHANGE]
     cat >"$1" <<JSON
 {"planned_values":{"root_module":{"resources":[
@@ -180,11 +217,38 @@ if [[ "${PREFLIGHT_SELF_TEST:-0}" == "1" ]]; then
 JSON
   }
   st_plan "$st_tmp/p.json" '["create"]' '["create"]'
-  out=$(plan_pool_maxes "$st_tmp/p.json" Standard_D2s_v5); rc=0; [[ $out == "2 3" ]] || rc=1
-  st_expect "plan_pool_maxes sums matching pools across modules, ignores other sizes and data sources (got '$out')" "$rc"
+  out=$(plan_extra_pool_maxes "$st_tmp/p.json" Standard_D2s_v5); rc=0; [[ $out == "3" ]] || rc=1
+  st_expect "plan_extra_pool_maxes sums an unnamed extra pool, ignores the cluster default pool, other sizes, and data sources (got '$out')" "$rc"
   st_plan "$st_tmp/p.json" '["create"]' '["create"]' null
-  out=$(plan_pool_maxes "$st_tmp/p.json" Standard_D2s_v5); rc=0; [[ $out == "2 null" ]] || rc=1
-  st_expect "plan_pool_maxes surfaces an unknown max_count as 'null' (got '$out')" "$rc"
+  out=$(plan_extra_pool_maxes "$st_tmp/p.json" Standard_D2s_v5); rc=0; [[ $out == "null" ]] || rc=1
+  st_expect "plan_extra_pool_maxes surfaces an unknown max_count as 'null' (got '$out')" "$rc"
+  # pool_peak: the user ("n8nuser") and system (cluster default) pools are
+  # sized from the resolved node_count_max/system_node_count_max, honoring a
+  # --node-count-max/--system-node-count-max override even when a plan
+  # disagrees; an unrelated extra pool of a matching size is still summed
+  # from the plan.
+  st_peak_plan() { # st_peak_plan FILE USER_MAX SYSTEM_MAX EXTRA_MAX
+    cat >"$1" <<JSON
+{"planned_values":{"root_module":{"resources":[
+  {"mode":"managed","type":"azurerm_kubernetes_cluster","values":{"default_node_pool":[{"vm_size":"Standard_D4s_v4","max_count":$3}]}},
+  {"mode":"managed","type":"azurerm_kubernetes_cluster_node_pool","values":{"name":"n8nuser","vm_size":"Standard_D4s_v4","max_count":$2}},
+  {"mode":"managed","type":"azurerm_kubernetes_cluster_node_pool","values":{"name":"n8nextra","vm_size":"Standard_D4s_v4","max_count":$4}}]}}}
+JSON
+  }
+  st_peak_plan "$st_tmp/pk.json" 6 4 3
+  out=$(pool_peak Standard_D4s_v4 Standard_D4s_v4 6 Standard_D4s_v4 4 "$st_tmp/pk.json"); rc=0; [[ $out == 13 ]] || rc=1
+  st_expect "pool_peak sums the user pool, the system pool, and an extra pool of the same size (got '$out', want 13)" "$rc"
+  out=$(pool_peak Standard_D8s_v5 Standard_D4s_v4 6 Standard_D8s_v5 4 "$st_tmp/pk.json"); rc=0; [[ $out == 4 ]] || rc=1
+  st_expect "pool_peak honors a --system-vm-size override the plan's default_node_pool does not match, instead of reporting 0 (got '$out', want 4)" "$rc"
+  out=$(pool_peak Standard_D4s_v4 Standard_D4s_v4 10 Standard_D4s_v4 4 "$st_tmp/pk.json"); rc=0; [[ $out == 17 ]] || rc=1
+  st_expect "pool_peak honors a --node-count-max override that differs from the plan's actual n8nuser max_count (got '$out', want 17)" "$rc"
+  st_peak_plan "$st_tmp/pk.json" 6 4 null
+  out=$(pool_peak Standard_D4s_v4 Standard_D4s_v4 6 Standard_D4s_v4 4 "$st_tmp/pk.json" 2>&1) && ec=0 || ec=$?
+  rc=$([[ $ec -eq 2 && $out == *"not an integer"* ]] && echo 0 || echo 1)
+  st_expect "pool_peak rejects a non-integer planned max_count on an extra pool (got '$out')" "$rc"
+  out=$(pool_peak Standard_D4s_v4 Standard_D4s_v4 abc Standard_D4s_v4 4 '' 2>&1) && ec=0 || ec=$?
+  rc=$([[ $ec -eq 2 && $out == *"aks_node_count_max must be an integer"* ]] && echo 0 || echo 1)
+  st_expect "pool_peak rejects a non-integer --node-count-max override (got '$out')" "$rc"
   st_mode() { # st_mode NAME EXPECTED CLUSTER_ACTIONS POOL_ACTIONS [EXTRA_CHANGE]
     st_plan "$st_tmp/p.json" "$3" "$4" 3 "${5:-}"
     out=$(plan_quota_mode "$st_tmp/p.json"); rc=0; [[ $out == "$2" ]] || rc=1
@@ -277,7 +341,11 @@ if [[ -z $region ]]; then
     *) echo "plan spans several regions ($locations); pass --region to pick one" >&2; exit 1 ;;
   esac
   [[ -n $vm_size ]] || vm_size=$(res_pool azurerm_kubernetes_cluster_node_pool n8nuser vm_size)
-  [[ -n $system_vm_size ]] || system_vm_size=$(res azurerm_kubernetes_cluster default_node_pool.0.vm_size)
+  if $vm_size_set; then
+    [[ -n $system_vm_size ]] || system_vm_size=$vm_size
+  else
+    [[ -n $system_vm_size ]] || system_vm_size=$(res azurerm_kubernetes_cluster default_node_pool.0.vm_size)
+  fi
   $node_count_max_set || node_count_max=$(res_pool azurerm_kubernetes_cluster_node_pool n8nuser max_count)
   $system_node_count_max_set || system_node_count_max=$(res azurerm_kubernetes_cluster default_node_pool.0.max_count)
   quota_mode=$(plan_quota_mode "$tmp/plan.json")
@@ -337,29 +405,12 @@ else
     echo
     echo "-- $label, zones [${zones:-none}] --"
     # peak: worst-case node count of $size across every module node pool at
-    # max_count (both pools when they share a size). From the plan, this is
-    # every planned pool's max_count summed (plan_pool_maxes); otherwise it
-    # is aks_node_count_max and/or aks_system_node_count_max, whichever
-    # pool(s) use this size.
-    peak=0
-    if [[ -f "$tmp/plan.json" ]]; then
-      for m in $(plan_pool_maxes "$tmp/plan.json" "$size"); do
-        is_node_count "$m" \
-          || { echo "planned node pool max_count '$m' for $size is not an integer from 1 to 1000" >&2; exit 2; }
-        peak=$((peak + m))
-      done
-    else
-      if [[ $size == "$vm_size" ]]; then
-        is_node_count "$node_count_max" \
-          || { echo "aks_node_count_max must be an integer from 1 to 1000 (got '${node_count_max:-<empty>}'); pass --node-count-max N" >&2; exit 2; }
-        peak=$((peak + node_count_max))
-      fi
-      if [[ $size == "$system_vm_size" ]]; then
-        is_node_count "$system_node_count_max" \
-          || { echo "aks_system_node_count_max must be an integer from 1 to 1000 (got '${system_node_count_max:-<empty>}'); pass --system-node-count-max N" >&2; exit 2; }
-        peak=$((peak + system_node_count_max))
-      fi
-    fi
+    # max_count (both pools when they share a size), from node_count_max/
+    # system_node_count_max (already resolved above from a --node-count-max/
+    # --system-node-count-max override, the plan, or the root default) plus
+    # any other planned node pool of this size (pool_peak/plan_extra_pool_maxes).
+    peak=$(pool_peak "$size" "$vm_size" "$node_count_max" "$system_vm_size" "$system_node_count_max" \
+      "$([[ -f "$tmp/plan.json" ]] && echo "$tmp/plan.json" || true)") || exit 2
     # --all keeps SKUs the subscription is restricted from, so the restriction
     # reason is reported instead of a bare "not offered".
     if ! az_json "$tmp/skus-$size.json" vm list-skus -l "$region" --size "$size" --resource-type virtualMachines --all; then

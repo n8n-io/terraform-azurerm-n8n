@@ -515,6 +515,30 @@ run "rejects_aks_system_node_count_max_below_shared_min" {
   ]
 }
 
+run "rejects_fractional_aks_system_node_count_min" {
+  command = plan
+
+  variables {
+    aks_system_node_count_min = 1.5
+  }
+
+  expect_failures = [
+    var.aks_system_node_count_min,
+  ]
+}
+
+run "rejects_fractional_aks_system_node_count_max" {
+  command = plan
+
+  variables {
+    aks_system_node_count_max = 1.5
+  }
+
+  expect_failures = [
+    var.aks_system_node_count_max,
+  ]
+}
+
 run "rejects_malformed_aks_availability_zones" {
   command = plan
 

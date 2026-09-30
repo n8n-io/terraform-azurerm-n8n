@@ -142,8 +142,8 @@ variable "aks_system_node_count_min" {
   default     = null
 
   validation {
-    condition     = var.aks_system_node_count_min == null || var.aks_system_node_count_min >= 1
-    error_message = "aks_system_node_count_min must be null or at least 1."
+    condition     = var.aks_system_node_count_min == null || (var.aks_system_node_count_min >= 1 && var.aks_system_node_count_min == floor(var.aks_system_node_count_min))
+    error_message = "aks_system_node_count_min must be null or a whole number of at least 1."
   }
 }
 
@@ -165,8 +165,8 @@ variable "aks_system_node_count_max" {
   default     = null
 
   validation {
-    condition     = var.aks_system_node_count_max == null || var.aks_system_node_count_max >= 1
-    error_message = "aks_system_node_count_max must be null or at least 1."
+    condition     = var.aks_system_node_count_max == null || (var.aks_system_node_count_max >= 1 && var.aks_system_node_count_max == floor(var.aks_system_node_count_max))
+    error_message = "aks_system_node_count_max must be null or a whole number of at least 1."
   }
 
   validation {

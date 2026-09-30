@@ -1069,15 +1069,15 @@ Every value can be overridden (`--region`, `--vm-size`, `--node-count-max`,
 `aks_node_vm_size`/`aks_node_count_max` size the user (`n8nuser`) pool; the
 system (default) pool uses the same values unless `aks_system_node_vm_size`/
 `aks_system_node_count_max` overrides them (aks.tf, locals.tf). The vCPU
-quota check reads `az vm list-usage` once per distinct VM size in play (one
+quota check reads `az vm list-skus` once per distinct VM size in play (one
 call when both pools share a size, two when `aks_system_node_vm_size`
-diverges), summing each size's `az vm list-skus` vCPU count times its
-worst-case demand (the planned `max_count` of every node pool of that size,
-summed from the plan via `plan_pool_maxes`; with `--region` or explicit
-count flags it assumes each pool's own configured `max_count`) into a
+diverges), summing each size's vCPU count times its worst-case demand (the
+resolved `aks_node_count_max`/`aks_system_node_count_max`, honoring any
+`--node-count-max`/`--system-node-count-max` override, plus any other node
+pool of that size from the plan via `plan_extra_pool_maxes`) into a
 per-family total plus the aggregate `cores` total, then checks every family
-that appears against `az vm list-usage`. The shortfall is a hard failure
-only when every non-deposed `azurerm_kubernetes_cluster` and
+that appears against a single region-wide `az vm list-usage` call. The
+shortfall is a hard failure only when every non-deposed `azurerm_kubernetes_cluster` and
 `azurerm_kubernetes_cluster_node_pool` entry in the plan's `resource_changes`
 is exactly `["create"]`
 (`plan_quota_mode`); anything else (`no-op`, `update`, replace, a new pool
