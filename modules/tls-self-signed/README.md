@@ -23,8 +23,9 @@ is `azurerm`, and the private key never passes through Terraform.
 
 - The principal running `terraform apply` must be able to create
   certificates on the supplied `var.key_vault_id` (Key Vault Certificates
-  Officer in RBAC mode, or `Create`, `Get`, and `Import` on certificates
-  plus `Get` and `Set` on secrets in legacy access-policy mode).
+  Officer in RBAC mode, or `Create`, `Get`, `Import`, and `Update` on
+  certificates plus `Get` and `Set` on secrets in legacy access-policy
+  mode). `Update` is what applies tag changes to an existing certificate.
 - The App Gateway's user-assigned identity that consumes the cert at
   runtime needs read access to the vault's secrets. This submodule does
   not grant it. Either set the root module's `app_gateway_keyvault_id` to
@@ -85,6 +86,14 @@ Key Vault's certificate policy takes a validity in whole months, and
 `validity_in_months` is passed to it unchanged. The variable accepts whole
 numbers from 1 to 120 (10 years); any other non-null value fails at plan.
 An explicit `null` falls back to the default of 12.
+
+Changing `validity_in_months` on an existing certificate changes its
+policy, so Key Vault issues a new certificate version with a new
+versioned Secret URI. The provider plans this as an in-place update and
+does not mark the Secret URI as changing, so the
+`app_gateway_tls_cert_secret_id` output still returns the old URI after
+that apply. Run a second `terraform apply` to move the App Gateway
+listener to the new version.
 
 Key Vault's `AutoRenew` lifetime action issues a new certificate version
 once 80% of the validity window has elapsed (about 73 days before expiry on

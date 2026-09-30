@@ -27,7 +27,7 @@ variable "domain_name" {
 }
 
 variable "key_vault_id" {
-  description = "Azure resource ID of the Key Vault that issues the certificate with its `Self` issuer and stores it as a PFX secret. The principal running `terraform apply` must hold certificate create rights on this vault (Key Vault Certificates Officer in RBAC mode, or Create/Import on certificates in legacy access-policy mode). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
+  description = "Azure resource ID of the Key Vault that issues the certificate with its `Self` issuer and stores it as a PFX secret. The principal running `terraform apply` must hold certificate create and update rights on this vault (Key Vault Certificates Officer in RBAC mode, or Create/Get/Import/Update on certificates plus Get/Set on secrets in legacy access-policy mode). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
   type        = string
 
   validation {
