@@ -3372,6 +3372,20 @@ run "retained_azure_read_access_keeps_blob_connection" {
   }
 }
 
+run "database_only_modes_grant_no_blob_role" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+  }
+
+  assert {
+    condition     = !local.n8n_azure_storage_enabled && length(azurerm_role_assignment.n8n_blob_data_contributor) == 0
+    error_message = "A database-only deployment without azure_blob_retain_read_access must not grant the workload identity Blob Data Contributor."
+  }
+}
+
 run "retained_azure_read_access_enforces_n8n_2_29_floor" {
   command = plan
 

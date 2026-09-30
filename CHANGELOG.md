@@ -566,6 +566,10 @@ in your own subscription before relying on the one-apply lifecycle.
   alias: this module is pre-release. Callers who set
   `n8n_available_binary_data_modes` must delete it, and add the new flag
   if it contained `azure` while writes are on `database`.
+  `azurerm_role_assignment.n8n_blob_data_contributor` is now also gated on
+  Azure being in use (an Azure mode or the new flag), so a database-only
+  deployment no longer grants the workload identity Blob Data Contributor;
+  applying on such a deployment destroys that role assignment.
 - CI toolchain currency: `TF_VERSION` `1.16.2` (was `1.15.1`),
   `TFLINT_VERSION` `v0.64.0` (was `v0.53.0`), pinned `CHECKOV_VERSION`
   `3.3.17` (was unpinned via `bridgecrewio/checkov-action@v12`'s own

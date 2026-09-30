@@ -120,7 +120,7 @@ main, so the sidecar was idle there. Main pods roll once to drop the
 container. `n8n_task_runner_*` resources now describe worker pods only, and
 the advisory capacity check (`check.autoscaling_maxima_fit_aks_capacity`)
 stops adding the sidecar request to the main ceiling for the verified
-charts `1.12.0` and `1.13.0` (`local.n8n_chart_has_worker_only_runners`);
+charts `1.12.0`, `1.13.0`, and `1.14.0` (`local.n8n_chart_has_worker_only_runners`);
 any other `n8n_chart_version` keeps the conservative allowance. Verify
 JavaScript and Python Code nodes through workers after the upgrade,
 including manual executions from the editor.

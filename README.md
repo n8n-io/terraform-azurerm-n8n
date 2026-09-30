@@ -383,7 +383,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 ## Operator documentation
 
 - [`docs/post-deployment.md`](./docs/post-deployment.md) — DNS verification, encryption-key backup, license activation, post-apply health checks.
-- [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md): bumping `n8n_image_tag` or `n8n_chart_version` on an existing deployment, per-chart-version upgrade notes (the one-time worker reset to 1 replica, which can interrupt running executions, and main sidecar removal on `1.13.0`), rollback.
+- [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md): bumping `n8n_image_tag` or `n8n_chart_version` on an existing deployment, per-chart-version upgrade notes (the one-time worker reset to 1 replica, which can interrupt running executions, and main sidecar removal on `1.13.0`; the `N8N_AVAILABLE_BINARY_DATA_MODES` removal on `1.14.0`), rollback.
 - [`docs/troubleshooting.md`](./docs/troubleshooting.md) — symptom → root cause → fix for the failure modes observed in real `terraform apply` runs.
 - [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md) — manual recovery for stuck namespace finalizers, half-uninstalled Helm releases, and App Gateway frontend-IP release.
 - [`docs/deletion-safety.md`](./docs/deletion-safety.md) — which AWS deletion-time controls (RDS/S3) have a real Azure analog, and which do not.
