@@ -173,6 +173,11 @@ run "split_ingress_plan" {
     error_message = "The two Ingress objects must carry distinct ingress-class annotations so each AGIC install reconciles only its own gateway."
   }
 
+  assert {
+    condition     = kubernetes_ingress_v1.admin_internal.metadata[0].annotations["appgw.ingress.kubernetes.io/cookie-based-affinity"] == "true"
+    error_message = "The admin Ingress must pin multi-main sessions with cookie-based affinity like the root module, or the default 2-replica main topology sees intermittent auth failures."
+  }
+
   # Each AGIC identity is scoped to only its own Application Gateway.
   assert {
     condition     = azurerm_role_assignment.agic_webhook_appgw_contributor.scope == azurerm_application_gateway.webhook.id

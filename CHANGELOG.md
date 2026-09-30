@@ -23,16 +23,6 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   behind an additional load balancer) can now set the correct hop count
   ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
 
-### Fixed
-
-- `examples/customer-managed-cluster` and
-  `examples/customer-managed-everything` now set
-  `appgw.ingress.kubernetes.io/cookie-based-affinity = "true"` on their
-  caller-owned Ingress, matching the root module's default. Without it,
-  multi-main deployments using these examples as a reference could see
-  intermittent authentication failures as session state diverged between
-  main pods ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
-
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
@@ -50,6 +40,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
 
 ### Fixed
+
+- `examples/customer-managed-cluster`, `examples/customer-managed-everything`,
+  and the private admin gateway in `examples/split-ingress` now set
+  `appgw.ingress.kubernetes.io/cookie-based-affinity = "true"` on their
+  caller-owned Ingress, matching the root module's default. Without it,
+  multi-main deployments using these examples as a reference could see
+  intermittent authentication failures as session state diverged between
+  main pods ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
 
 - `modules/tls-self-signed` now tags its Key Vault certificate with
   `ManagedBy = terraform`, `Project = n8n`, the caller's `common_tags`,

@@ -24,7 +24,7 @@ Whatever ingress technology a caller chooses under `create_ingress = false`, thr
 
 ### 1. Path-prefix ordering
 
-Use the `n8n_test_webhook_path_prefixes` and `n8n_webhook_path_prefixes` module outputs, not hardcoded strings — they track whatever prefixes the pinned n8n/chart version exposes.
+Use the `n8n_test_webhook_path_prefixes` and `n8n_webhook_path_prefixes` module outputs, not hardcoded strings. These outputs define the prefixes this module version supports; they are static locals (`locals.tf`) fixed at this module's pinned chart version, not derived from the chart at plan time. If a future chart bump adds or renames webhook/test-mode paths, these outputs (and this doc) must be updated to match, or a caller-owned ingress reading them will miss the new routes.
 
 Route, in this order, for every host in `n8n_domain` and `n8n_additional_domains`:
 
