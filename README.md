@@ -4,7 +4,7 @@ Terraform module for deploying a production-grade, multi-main [n8n](https://n8n.
 
 This module is the Azure sibling of [`terraform-aws-n8n`](https://github.com/n8n-io/terraform-aws-n8n). The two share the same shape — one resource-bearing root module, the same variable and output naming, the same quality bar — so an operator who knows one can read the other. Cloud-specific deltas (the PostgreSQL `azure.extensions` allowlist, the CRD-aware KEDA `TriggerAuthentication` install) are documented in [`AGENTS.md`](./AGENTS.md).
 
-An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this module does not provision a community-edition deployment.
+An **n8n Enterprise license key is required** (`var.n8n_license_key`), or an offline license certificate for air-gapped and egress-restricted clusters (`var.n8n_license_cert_secret_ref`, see [Offline license activation](#offline-license-activation)) — this module does not provision a community-edition deployment.
 
 ## Table of contents
 
@@ -13,6 +13,7 @@ An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this m
 - [Usage](#usage)
 - [Runtime and workload controls](#runtime-and-workload-controls)
 - [Main topology: multi-main and single-main](#main-topology-multi-main-and-single-main)
+- [Offline license activation](#offline-license-activation)
 - [Credential overwrites](#credential-overwrites)
 - [Task-runner launcher configuration](#task-runner-launcher-configuration)
 - [Worker pools (early alpha)](#worker-pools-early-alpha)
@@ -70,7 +71,7 @@ The caller is responsible for providing:
 - A pre-existing **VNet** with five subnets: `aks_subnet_id` (Azure CNI node subnet), `appgw_subnet_id` (dedicated to Application Gateway, `/24` or larger), `postgres_subnet_id` (delegated to `Microsoft.DBforPostgreSQL/flexibleServers`, unless `create_database = false`), `redis_subnet_id` (`private_endpoint_network_policies` disabled, unless `create_redis = false`), and `private_endpoint_subnet_id` (Blob private endpoints).
 - A **resource group** (`var.resource_group_name`) — this module does not create one.
 - `Storage Blob Data Contributor` for the Terraform applying identity on that resource group (or the module-managed storage account). The provider needs data-plane access to create the private container while shared-key authentication is disabled by default.
-- An **n8n Enterprise license key** (`var.n8n_license_key`).
+- An **n8n Enterprise license key** (`var.n8n_license_key`), or an offline license certificate (`var.n8n_license_cert_secret_ref`) for a cluster that cannot reach n8n's license server — see [Offline license activation](#offline-license-activation).
 - A Key Vault Secret URI for the App Gateway TLS certificate (`var.app_gateway_tls_cert_secret_id`) — see [TLS cert and Key Vault](#tls-cert-and-key-vault).
 
 ## Usage
@@ -167,6 +168,30 @@ Worker and webhook-processor scaling (KEDA `ScaledObject`, webhook HPA) are unaf
 Selecting single-main does **not** grant any other Enterprise entitlement. A Business license without `feat:binaryDataAz` / `feat:executionDataAz` still cannot use the Azure binary/execution-data modes — for a new deployment on such a license, set `n8n_binary_data_storage_mode = "database"`, `n8n_execution_data_storage_mode = "database"`, and `n8n_available_binary_data_modes = ["database"]`; see [`docs/data-storage.md`](./docs/data-storage.md#new-deployment-without-azure-storage-entitlements-business-license). Do not remove an existing deployment's Azure storage modes before its retained objects are migrated or expired.
 
 Switch topology only in a maintenance window; raising the minimum above 1 without the multi-main entitlement fails the additional main pod's license activation, and `helm_release.n8n`'s `atomic = true` rolls the release back automatically after its timeout — see [`docs/troubleshooting.md`](./docs/troubleshooting.md#switching-to-multi-main-fails-because-the-license-lacks-featmultiplemaininstances) for diagnosis and recovery.
+
+## Offline license activation
+
+For air-gapped or egress-restricted clusters that cannot reach n8n's license
+server, set `n8n_license_cert_secret_ref` instead of `n8n_license_key` — a
+reference to a caller-managed Kubernetes Secret holding a base64-encoded
+[offline license certificate](https://docs.n8n.io/deploy/host-n8n/configure-n8n/manage-your-license/#add-a-license-certificate-using-an-environment-variable)
+(`N8N_LICENSE_CERT`, obtained from n8n directly):
+
+```hcl
+n8n_license_key             = null
+n8n_license_cert_secret_ref = { name = "n8n-license-cert", key = "cert" }
+```
+
+`n8n_license_key`, `n8n_license_key_secret_ref`, and
+`n8n_license_cert_secret_ref` are mutually exclusive — set exactly one. The
+certificate renders through the shared `config.extraEnv` list as a
+`secretKeyRef` on every n8n pod, not through the chart's
+`license.existingSecret` block, because the pinned chart's license helper only
+ever maps `existingSecret` to `N8N_LICENSE_ACTIVATION_KEY`. `license.enabled`
+stays `true` on this path, because the chart separately gates
+`N8N_MULTI_MAIN_SETUP_ENABLED` on `license.enabled`, not on which credential
+backs it — multi-main leader election still requires `feat:multipleMainInstances`
+on the certificate itself. The module never reads the Secret's value.
 
 ## Credential overwrites
 
@@ -612,9 +637,10 @@ This module does not:
 | <a name="input_n8n_image_pull_secrets"></a> [n8n\_image\_pull\_secrets](#input\_n8n\_image\_pull\_secrets) | Names of existing kubernetes.io/dockerconfigjson Secrets in the n8n namespace. The module attaches these names to a module-managed service account when a private custom image needs registry authentication. Callers create and rotate the Secrets; registry credentials never enter this module's inputs or Terraform state through this contract. | `list(string)` | `[]` | no |
 | <a name="input_n8n_image_repository"></a> [n8n\_image\_repository](#input\_n8n\_image\_repository) | Optional container image repository for every n8n application pod, without a tag or digest. Null uses the chart default docker.n8n.io/n8nio/n8n. Use n8n\_image\_tag for the application tag. Private registries can use existing dockerconfigjson Secrets named by n8n\_image\_pull\_secrets; this module accepts Secret names only and never registry credentials. | `string` | `null` | no |
 | <a name="input_n8n_image_tag"></a> [n8n\_image\_tag](#input\_n8n\_image\_tag) | Pinned n8n application version used by the main, worker, webhook-processor, and task-runner images. Azure Blob binary and execution-data modes require n8n 2.29.0 or later. Environment-managed log streaming requires n8n 2.19.0 or later. n8n\_worker\_pools (early alpha) requires n8n 2.39.0 or later. The default 2.35.0 includes the Azure container-scoped credential startup probe fix. | `string` | `"2.35.0"` | no |
+| <a name="input_n8n_license_cert_secret_ref"></a> [n8n\_license\_cert\_secret\_ref](#input\_n8n\_license\_cert\_secret\_ref) | Existing Kubernetes Secret name and key holding a base64-encoded n8n Enterprise offline license certificate (N8N\_LICENSE\_CERT), for air-gapped or egress-restricted clusters that cannot reach n8n's license server to activate var.n8n\_license\_key. Mutually exclusive with n8n\_license\_key and n8n\_license\_key\_secret\_ref — exactly one of the three must be set. The module does not read the Secret's value; Terraform renders only the name and key into the shared config.extraEnv list as a secretKeyRef (n8n.tf), not into the chart's license.existingSecret block, which only ever maps to N8N\_LICENSE\_ACTIVATION\_KEY. license.enabled still renders true on this path because the chart also gates N8N\_MULTI\_MAIN\_SETUP\_ENABLED on license.enabled, independent of which credential backs it. | <pre>object({<br/>    name = string<br/>    key  = string<br/>  })</pre> | `null` | no |
 | <a name="input_n8n_license_detach_floating_on_shutdown"></a> [n8n\_license\_detach\_floating\_on\_shutdown](#input\_n8n\_license\_detach\_floating\_on\_shutdown) | Whether n8n main pods detach their floating license on shutdown. The default false prevents a leader shutdown from invalidating the shared certificate and crash-looping replacement mains in this multi-main topology. | `bool` | `false` | no |
-| <a name="input_n8n_license_key"></a> [n8n\_license\_key](#input\_n8n\_license\_key) | n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Leave null when n8n\_license\_key\_secret\_ref selects a caller-managed Kubernetes Secret instead — exactly one of the two must be set. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF\_VAR\_n8n\_license\_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below. | `string` | `null` | no |
-| <a name="input_n8n_license_key_secret_ref"></a> [n8n\_license\_key\_secret\_ref](#input\_n8n\_license\_key\_secret\_ref) | Existing Kubernetes Secret name and key holding the n8n Enterprise license key, for callers who manage this credential outside Terraform. Mutually exclusive with n8n\_license\_key — exactly one must be set. The module does not read the Secret's value; Terraform renders only the name and key into the n8n chart. | <pre>object({<br/>    name = string<br/>    key  = string<br/>  })</pre> | `null` | no |
+| <a name="input_n8n_license_key"></a> [n8n\_license\_key](#input\_n8n\_license\_key) | n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Leave null when n8n\_license\_key\_secret\_ref selects a caller-managed Kubernetes Secret holding the key instead, or when n8n\_license\_cert\_secret\_ref selects a caller-managed Secret holding an offline N8N\_LICENSE\_CERT certificate for air-gapped or egress-restricted clusters that cannot reach n8n's license server — exactly one of the three must be set. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF\_VAR\_n8n\_license\_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below. | `string` | `null` | no |
+| <a name="input_n8n_license_key_secret_ref"></a> [n8n\_license\_key\_secret\_ref](#input\_n8n\_license\_key\_secret\_ref) | Existing Kubernetes Secret name and key holding the n8n Enterprise license key, for callers who manage this credential outside Terraform. Mutually exclusive with n8n\_license\_key and n8n\_license\_cert\_secret\_ref — exactly one of the three must be set. The module does not read the Secret's value; Terraform renders only the name and key into the n8n chart. | <pre>object({<br/>    name = string<br/>    key  = string<br/>  })</pre> | `null` | no |
 | <a name="input_n8n_log_level"></a> [n8n\_log\_level](#input\_n8n\_log\_level) | n8n log level written to N8N\_LOG\_LEVEL. | `string` | `"info"` | no |
 | <a name="input_n8n_log_output"></a> [n8n\_log\_output](#input\_n8n\_log\_output) | Comma-separated n8n log destinations written to N8N\_LOG\_OUTPUT. Each destination must be console or file. This selects destinations, not log format. | `string` | `"console"` | no |
 | <a name="input_n8n_log_streaming_destinations"></a> [n8n\_log\_streaming\_destinations](#input\_n8n\_log\_streaming\_destinations) | Typed webhook, syslog, or Sentry log-streaming destinations JSON-encoded into N8N\_LOG\_STREAMING\_DESTINATIONS. Field names match n8n's environment-managed destination schema. Marked sensitive because headers, TLS material, and DSNs can carry credentials, but the rendered JSON remains in Terraform state and pod environments. Ignored when n8n\_log\_streaming\_managed\_by\_env is false. | <pre>list(object({<br/>    type                   = string<br/>    label                  = optional(string)<br/>    enabled                = optional(bool)<br/>    subscribedEvents       = optional(list(string))<br/>    anonymizeAuditMessages = optional(bool)<br/>    circuitBreaker = optional(object({<br/>      maxFailures   = number<br/>      failureWindow = number<br/>    }))<br/>    url          = optional(string)<br/>    method       = optional(string)<br/>    sendQuery    = optional(bool)<br/>    specifyQuery = optional(string)<br/>    queryParameters = optional(object({<br/>      parameters = list(object({ name = string, value = string }))<br/>    }))<br/>    jsonQuery      = optional(string)<br/>    sendHeaders    = optional(bool)<br/>    specifyHeaders = optional(string)<br/>    headerParameters = optional(object({<br/>      parameters = list(object({ name = string, value = string }))<br/>    }))<br/>    jsonHeaders = optional(string)<br/>    host        = optional(string)<br/>    port        = optional(number)<br/>    protocol    = optional(string)<br/>    tlsCa       = optional(string)<br/>    facility    = optional(number)<br/>    app_name    = optional(string)<br/>    dsn         = optional(string)<br/>  }))</pre> | `[]` | no |

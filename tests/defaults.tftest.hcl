@@ -2614,6 +2614,7 @@ run "rejects_reserved_additional_environment_names" {
       { name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME", value = "override" },
       { name = "AZURE_CLIENT_ID", value = "override" },
       { name = "N8N_LICENSE_ACTIVATION_KEY", value = "override" },
+      { name = "N8N_LICENSE_CERT", value = "override" },
     ]
   }
 
@@ -6727,6 +6728,104 @@ run "license_key_secret_ref_creates_no_managed_secret" {
     condition     = local.n8n_license_secret_name == "platform-n8n-license" && local.n8n_license_secret_key == "license-key"
     error_message = "local.n8n_license_secret_name/_key must reflect n8n_license_key_secret_ref when set."
   }
+}
+
+run "license_cert_secret_ref_creates_no_managed_secret" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = "cert" }
+    create_database             = false
+    postgres_external_host      = "postgres.external.example.com"
+    postgres_external_username  = "n8n_app"
+    postgres_external_password  = "synthetic-external-postgres-password"
+    create_redis                = false
+    redis_external_host         = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_license) == 0
+    error_message = "kubernetes_secret.n8n_license must not exist when n8n_license_cert_secret_ref is set."
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).license.enabled == true &&
+      contains(keys(yamldecode(helm_release.n8n.values[0]).license), "existingSecret") == false &&
+      contains(keys(yamldecode(helm_release.n8n.values[0]).license), "activationKey") == false
+    )
+    error_message = "The cert path must keep license.enabled = true (multi-main setup detection depends on it) while omitting existingSecret and activationKey, which only ever map to N8N_LICENSE_ACTIVATION_KEY."
+  }
+
+  assert {
+    condition = one([
+      for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv :
+      env if env.name == "N8N_LICENSE_CERT"
+      ]) == {
+      name = "N8N_LICENSE_CERT"
+      valueFrom = {
+        secretKeyRef = {
+          name = "platform-n8n-license-cert"
+          key  = "cert"
+        }
+      }
+    }
+    error_message = "config.extraEnv must carry exactly one N8N_LICENSE_CERT entry sourced from n8n_license_cert_secret_ref via secretKeyRef."
+  }
+}
+
+run "rejects_license_key_and_cert_secret_ref_together" {
+  command = plan
+
+  variables {
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = "cert" }
+  }
+
+  expect_failures = [var.n8n_license_key]
+}
+
+run "rejects_license_key_secret_ref_and_cert_secret_ref_together" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_key_secret_ref  = { name = "platform-n8n-license", key = "license-key" }
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = "cert" }
+  }
+
+  expect_failures = [var.n8n_license_key]
+}
+
+run "rejects_no_license_credential_set" {
+  command = plan
+
+  variables {
+    n8n_license_key = null
+  }
+
+  expect_failures = [var.n8n_license_key]
+}
+
+run "rejects_empty_license_cert_secret_ref_name" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "", key = "cert" }
+  }
+
+  expect_failures = [var.n8n_license_cert_secret_ref]
 }
 
 run "encryption_key_secret_ref_creates_no_managed_secret_or_random_password" {

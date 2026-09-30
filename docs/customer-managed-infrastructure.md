@@ -196,17 +196,23 @@ private ChartMuseum or ACR Helm registry instead of reaching
 
 ### Kubernetes Secret references
 
-Five inputs support a caller-managed Kubernetes Secret reference. The four
+Six inputs support a caller-managed Kubernetes Secret reference. The five
 credential references replace a Terraform-managed value and use
 `object({ name = string, key = string })`:
 
 | Data | Secret-ref input | Conflicts with |
 |---|---|---|
-| n8n license key | `n8n_license_key_secret_ref` | `n8n_license_key` |
+| n8n license key | `n8n_license_key_secret_ref` | `n8n_license_key`, `n8n_license_cert_secret_ref` |
+| n8n offline license certificate | `n8n_license_cert_secret_ref` | `n8n_license_key`, `n8n_license_key_secret_ref` |
 | n8n encryption key | `n8n_encryption_key_secret_ref` | `n8n_encryption_key` |
 | External PostgreSQL password | `postgres_password_secret_ref` | `postgres_external_password` |
 | External Redis password | `redis_password_secret_ref` | `redis_external_password` |
 | n8n credential overwrite JSON | `n8n_credentials_overwrite_secret_ref` | `CREDENTIALS_OVERWRITE_DATA` or `CREDENTIALS_OVERWRITE_DATA_FILE` in `n8n_extra_env`; the reserved volume name `credentials-overwrite`; the reserved mount path `/etc/n8n/credentials-overwrite` |
+
+`n8n_license_cert_secret_ref` renders into the shared `config.extraEnv` list
+as an `N8N_LICENSE_CERT` `secretKeyRef` entry, not into the chart's
+`license.existingSecret` block — see [Offline license
+activation](../README.md#offline-license-activation) in the root README.
 
 `n8n_credentials_overwrite_secret_ref` uses
 `object({ name = string, key = optional(string, "credentials-overwrite.json") })`.

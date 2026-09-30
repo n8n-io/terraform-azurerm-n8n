@@ -505,6 +505,7 @@ locals {
   # from these selections without reading any caller-managed Secret value
   # into Terraform.
   n8n_license_key_uses_secret_ref    = var.n8n_license_key_secret_ref != null
+  n8n_license_uses_cert              = var.n8n_license_cert_secret_ref != null
   n8n_encryption_key_uses_secret_ref = var.n8n_encryption_key_secret_ref != null
   postgres_password_uses_secret_ref  = var.postgres_password_secret_ref != null
   redis_password_uses_secret_ref     = var.redis_password_secret_ref != null
@@ -514,9 +515,30 @@ locals {
   # Secret's coordinates (name always known statically; the resource itself
   # is `count`-gated to zero on the caller-managed branch, so `try()` reads
   # around the absent instance) or the caller-supplied reference's coordinates
-  # verbatim. None of these ever read a caller-managed Secret's value.
+  # verbatim. None of these ever read a caller-managed Secret's value. Unused
+  # (both null) when n8n_license_uses_cert is true — the cert path never
+  # renders license.existingSecret.
   n8n_license_secret_name = local.n8n_license_key_uses_secret_ref ? var.n8n_license_key_secret_ref.name : try(kubernetes_secret.n8n_license[0].metadata[0].name, null)
   n8n_license_secret_key  = local.n8n_license_key_uses_secret_ref ? var.n8n_license_key_secret_ref.key : "license-key"
+
+  # Offline license activation (N8N_LICENSE_CERT, issue #24): rendered through
+  # the shared config.extraEnv list (n8n.tf) rather than the chart's
+  # license.existingSecret block. The pinned chart's license helper
+  # (n8n.licenseEnv) only ever maps license.existingSecret to
+  # N8N_LICENSE_ACTIVATION_KEY — it has no cert equivalent — so the
+  # certificate Secret is wired in as an ordinary config.extraEnv entry with
+  # a secretKeyRef, the same mechanism the chart itself uses for that env var.
+  n8n_license_cert_env = local.n8n_license_uses_cert ? [
+    {
+      name = "N8N_LICENSE_CERT"
+      valueFrom = {
+        secretKeyRef = {
+          name = var.n8n_license_cert_secret_ref.name
+          key  = var.n8n_license_cert_secret_ref.key
+        }
+      }
+    },
+  ] : []
 
   n8n_encryption_secret_name = local.n8n_encryption_key_uses_secret_ref ? var.n8n_encryption_key_secret_ref.name : try(kubernetes_secret.n8n_encryption_key[0].metadata[0].name, null)
 
