@@ -462,7 +462,7 @@ This module does not:
 ## Requirements
 
 | Name | Version |
-| ---- | ------- |
+|------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9 |
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
@@ -474,7 +474,7 @@ This module does not:
 ## Providers
 
 | Name | Version |
-| ---- | ------- |
+|------|---------|
 | <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | ~> 4.0 |
 | <a name="provider_helm"></a> [helm](#provider\_helm) | ~> 2.12 |
 | <a name="provider_kubectl"></a> [kubectl](#provider\_kubectl) | >= 1.14 |
@@ -485,13 +485,13 @@ This module does not:
 ## Modules
 
 | Name | Source | Version |
-| ---- | ------ | ------- |
+|------|--------|---------|
 | <a name="module_controllers"></a> [controllers](#module\_controllers) | ./modules/controllers | n/a |
 
 ## Resources
 
 | Name | Type |
-| ---- | ---- |
+|------|------|
 | [azurerm_application_gateway.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway) | resource |
 | [azurerm_dns_a_record.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/dns_a_record) | resource |
 | [azurerm_federated_identity_credential.n8n_workload](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/federated_identity_credential) | resource |
@@ -552,7 +552,7 @@ This module does not:
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-| ---- | ----------- | ---- | ------- | :------: |
+|------|-------------|------|---------|:--------:|
 | <a name="input_aks_api_authorized_ip_ranges"></a> [aks\_api\_authorized\_ip\_ranges](#input\_aks\_api\_authorized\_ip\_ranges) | IPv4 CIDR ranges allowed to reach the AKS API server's public endpoint (e.g. ["203.0.113.0/24"]). Empty list (the default) leaves the API server publicly reachable from any address — set this on any production cluster. Azure always allows traffic that originates from inside the cluster's own VNet, so this list only needs to cover operator/CI networks. | `list(string)` | `[]` | no |
 | <a name="input_aks_api_warmup_seconds"></a> [aks\_api\_warmup\_seconds](#input\_aks\_api\_warmup\_seconds) | Seconds to wait after `azurerm_kubernetes_cluster.n8n` reports success before downstream Kubernetes-/Helm-provider resources are created. Azure reports the AKS resource as `Succeeded` before /healthz is consistently green; the kubernetes/helm providers' built-in retry handles any transient 503s after the gate. Default 90 s covers the typical AKS post-provision warm-up. Operators on cold regions or capacity-constrained subscriptions can extend this; the floor (30 s) is below which the providers' retry budget alone is insufficient, the ceiling (600 s) matches the legacy probe's 10-minute upper bound. | `number` | `90` | no |
 | <a name="input_aks_availability_zones"></a> [aks\_availability\_zones](#input\_aks\_availability\_zones) | Availability zones the AKS default node pool and user node pool spread across (e.g. ["1", "2", "3"]). Set to [] to deploy into a region without zone support (e.g. some smaller Azure regions). Zonal placement survives a single-zone outage without waiting for the cluster autoscaler to reschedule pods into a healthy zone. | `list(string)` | <pre>[<br/>  "1",<br/>  "2",<br/>  "3"<br/>]</pre> | no |
@@ -753,7 +753,7 @@ This module does not:
 ## Outputs
 
 | Name | Description |
-| ---- | ----------- |
+|------|-------------|
 | <a name="output_aks_cluster_id"></a> [aks\_cluster\_id](#output\_aks\_cluster\_id) | Resource ID of the effective AKS cluster (module-created or existing). Consumed by caller wiring that scopes role assignments to the cluster (e.g. AGIC Contributor). |
 | <a name="output_aks_cluster_name"></a> [aks\_cluster\_name](#output\_aks\_cluster\_name) | Name of the effective AKS cluster (module-created or existing). Useful for `data.azurerm_kubernetes_cluster.n8n` lookups in callers that prefer data-source-based kubeconfig refresh over the `aks_kube_config` output. |
 | <a name="output_aks_kube_config"></a> [aks\_kube\_config](#output\_aks\_kube\_config) | Local-account kubeconfig block for the effective AKS cluster (module-created or existing). The cluster has no AAD-RBAC integration so this IS the local-account admin credential. A calling root uses this to configure the kubernetes / helm providers against this module's cluster (see examples/small/providers.tf, section 13) without a kubelogin / exec dependency. On existing AKS, the caller's own read permissions on the referenced cluster govern whether this local-account kubeconfig is available. |
