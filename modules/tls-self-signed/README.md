@@ -63,11 +63,28 @@ module "n8n" {
 }
 ```
 
+## Inputs
+
+| Name | Description | Type | Default |
+| ---- | ----------- | ---- | ------- |
+| `domain_name` | Fully qualified domain name the certificate is issued for. Becomes the certificate's CN and its only SAN entry. At most 64 characters. | `string` | n/a (required) |
+| `key_vault_id` | Resource ID of the caller-owned Key Vault that issues the certificate with its `Self` issuer and stores it as a PFX secret. | `string` | n/a (required) |
+| `friendly_name_prefix` | Lowercase alphanumeric prefix, 2 to 12 characters. The certificate is named `<friendly_name_prefix>-n8n-tls`. | `string` | n/a (required) |
+| `common_tags` | Accepted for parity with the other submodules. Currently unused: the submodule does not set tags on its Key Vault certificate. | `map(string)` | `{}` |
+| `validity_in_months` | Certificate lifetime in whole months, 1 to 120. Passed unchanged to the Key Vault certificate policy. `null` falls back to the default. | `number` | `12` |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| `app_gateway_tls_cert_secret_id` | Versioned Key Vault Secret URI of the issued certificate (PFX). Pass it to the root module's `app_gateway_tls_cert_secret_id` input. Sensitive. |
+
 ## Validity and renewal
 
 Key Vault's certificate policy takes a validity in whole months, and
 `validity_in_months` is passed to it unchanged. The variable accepts whole
-numbers from 1 to 120 (10 years); anything else fails at plan.
+numbers from 1 to 120 (10 years); any other non-null value fails at plan.
+An explicit `null` falls back to the default of 12.
 
 Key Vault's `AutoRenew` lifetime action issues a new certificate version
 once 80% of the validity window has elapsed (about 73 days before expiry on

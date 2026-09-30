@@ -4,7 +4,7 @@
 # ── Inputs ───────────────────────────────────────────────────────────────────
 # Submodule contract. The caller supplies:
 #   - the FQDN the cert is issued for (`domain_name`),
-#   - the Key Vault to import the generated PEM into (`key_vault_id`),
+#   - the Key Vault that issues and stores the certificate (`key_vault_id`),
 #   - the standard naming/tagging pair (`friendly_name_prefix`, `common_tags`),
 #   - the cert validity window (`validity_in_months`, default 12).
 #
@@ -27,7 +27,7 @@ variable "domain_name" {
 }
 
 variable "key_vault_id" {
-  description = "Azure resource ID of the Key Vault the generated PEM is imported into. The principal running `terraform apply` must hold cert-import rights on this vault (Key Vault Certificates Officer in RBAC mode, or Create/Import on certificates in legacy access-policy mode). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
+  description = "Azure resource ID of the Key Vault that issues the certificate with its `Self` issuer and stores it as a PFX secret. The principal running `terraform apply` must hold certificate create rights on this vault (Key Vault Certificates Officer in RBAC mode, or Create/Import on certificates in legacy access-policy mode). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
   type        = string
 
   validation {
@@ -37,7 +37,7 @@ variable "key_vault_id" {
 }
 
 variable "friendly_name_prefix" {
-  description = "Short, lowercase name prefix used in the imported certificate's name and as the value of the `Name` tag (e.g. `n8nprod`, `n8ndev`). Mirrors the root module's variable to keep naming/tagging consistent across the IaaS + TLS surfaces. 2–12 chars, lowercase alphanumeric only."
+  description = "Short, lowercase name prefix used in the issued certificate's name, `<friendly_name_prefix>-n8n-tls` (e.g. `n8nprod`, `n8ndev`). Mirrors the root module's variable to keep naming consistent across the IaaS + TLS surfaces. 2–12 chars, lowercase alphanumeric only."
   type        = string
 
   validation {
@@ -46,13 +46,13 @@ variable "friendly_name_prefix" {
   }
 }
 
-# No taggable Azure resource lives in this submodule (azurerm_key_vault_certificate
-# does not carry tags — tags live on the parent vault, which is caller-owned).
-# Kept on the contract so umbrella examples can pass the same `common_tags`
-# they pass to other submodules without bookkeeping divergence.
+# Not applied to any resource today: azurerm_key_vault_certificate accepts
+# tags, but this submodule does not set them. Kept on the contract so
+# umbrella examples can pass the same `common_tags` they pass to other
+# submodules without bookkeeping divergence.
 # tflint-ignore: terraform_unused_declarations
 variable "common_tags" {
-  description = "Tags merged onto every taggable resource this submodule creates. The Key Vault Certificate resource itself is not directly taggable on Azure (tags live on the parent vault), so today this only flows into the `Name` tag the caller will see in azurerm_key_vault_certificate plan output. Kept on the contract so a future taggable tls/keyvault resource picks the value up automatically."
+  description = "Tags for resources this submodule creates. Currently unused: the submodule does not set tags on its Key Vault certificate. Kept on the contract so callers can pass the same `common_tags` they pass to the other submodules."
   type        = map(string)
   default     = {}
 
@@ -64,6 +64,7 @@ variable "validity_in_months" {
   description = "Lifetime of the self-signed certificate, in whole months (1 to 120). Defaults to 12. Passed straight to the Key Vault certificate policy's validity_in_months, which only accepts whole months. Key Vault's AutoRenew lifetime action issues a new certificate version once 80% of the validity window has elapsed; the App Gateway listener picks up the new versioned URI on the next terraform apply. Self-signed mode is intended for lab / internal-only use; production deployments should use the sibling `modules/tls-letsencrypt/` submodule or pass an existing Key Vault certificate's Secret URI to the root module's app_gateway_tls_cert_secret_id."
   type        = number
   default     = 12
+  nullable    = false
 
   validation {
     condition     = var.validity_in_months >= 1 && var.validity_in_months <= 120 && floor(var.validity_in_months) == var.validity_in_months

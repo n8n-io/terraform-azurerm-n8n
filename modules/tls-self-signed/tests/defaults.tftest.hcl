@@ -63,6 +63,13 @@ run "submodule_plans_clean_with_defaults" {
     error_message = "azurerm_key_vault_certificate.self_signed.certificate_policy.x509_certificate_properties.validity_in_months must equal var.validity_in_months"
   }
 
+  # Pins the default itself: the pass-through assertion above would still
+  # hold if the variable's default drifted away from 12 months.
+  assert {
+    condition     = azurerm_key_vault_certificate.self_signed.certificate_policy[0].x509_certificate_properties[0].validity_in_months == 12
+    error_message = "validity_in_months must default to 12 months"
+  }
+
   # KV stores the cert as an unencrypted PFX (PKCS#12) — required so
   # Application Gateway v2's KV-integration code path can consume the
   # secret URI. The legacy PEM-typed import path silently failed at AGW
@@ -186,6 +193,21 @@ run "accepts_one_month_validity" {
   assert {
     condition     = azurerm_key_vault_certificate.self_signed.certificate_policy[0].x509_certificate_properties[0].validity_in_months == 1
     error_message = "validity_in_months = 1 must reach the certificate policy unchanged"
+  }
+}
+
+# `nullable = false` makes an explicit null fall back to the default instead
+# of failing the validation with a null-argument error.
+run "null_validity_falls_back_to_default" {
+  command = plan
+
+  variables {
+    validity_in_months = null
+  }
+
+  assert {
+    condition     = azurerm_key_vault_certificate.self_signed.certificate_policy[0].x509_certificate_properties[0].validity_in_months == 12
+    error_message = "validity_in_months = null must fall back to the default of 12 months"
   }
 }
 
