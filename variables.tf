@@ -429,7 +429,7 @@ variable "postgres_managed_ssl_mode" {
 }
 
 variable "postgres_ssl_ca_pem" {
-  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set, the module renders it into a Kubernetes ConfigMap mounted read-only on main, worker, and webhook-processor pods at `/etc/n8n/postgres-ssl-ca/ca.pem` and sets `DB_POSTGRESDB_SSL_CA_FILE` to that path. Required for `verify-full` against Azure Database for PostgreSQL Flexible Server unless the pod image's default trust store already trusts Microsoft's root CAs (DigiCert Global Root G2 and Microsoft RSA Root CA 2017). Ignored (with a plan-time warning) when the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `disable`, `allow`, or `prefer`. n8n_extra_volumes may not use the reserved name \"postgres-ssl-ca\" and n8n_extra_volume_mounts may not use the reserved mount path \"/etc/n8n/postgres-ssl-ca\" while this input is set. Null (default) renders no ConfigMap, volume, or env var. See `docs/postgresql-tls.md`."
+  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set, the module passes it straight through to the n8n Helm chart's native `database.ssl.ca` value, which the chart renders into its own ConfigMap and injects as `DB_POSTGRESDB_SSL_CA` on main, worker, and webhook-processor pods. Required for `verify-full` against Azure Database for PostgreSQL Flexible Server unless the pod image's default trust store already trusts Microsoft's root CAs (DigiCert Global Root G2 and Microsoft RSA Root CA 2017). Ignored (with a plan-time warning) when the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `disable`, `allow`, or `prefer`. See `docs/postgresql-tls.md`."
   type        = string
   default     = null
   nullable    = true
@@ -437,20 +437,6 @@ variable "postgres_ssl_ca_pem" {
   validation {
     condition     = var.postgres_ssl_ca_pem == null ? true : length(trimspace(var.postgres_ssl_ca_pem)) > 0
     error_message = "postgres_ssl_ca_pem must be null or a non-empty PEM-encoded CA bundle."
-  }
-
-  validation {
-    condition = var.postgres_ssl_ca_pem == null ? true : alltrue([
-      for volume in var.n8n_extra_volumes : volume.name != "postgres-ssl-ca"
-    ])
-    error_message = "postgres_ssl_ca_pem reserves the volume name \"postgres-ssl-ca\". Rename or remove the conflicting n8n_extra_volumes entry."
-  }
-
-  validation {
-    condition = var.postgres_ssl_ca_pem == null ? true : alltrue([
-      for mount in var.n8n_extra_volume_mounts : mount.mount_path != "/etc/n8n/postgres-ssl-ca"
-    ])
-    error_message = "postgres_ssl_ca_pem reserves the mount path \"/etc/n8n/postgres-ssl-ca\". Move or remove the conflicting n8n_extra_volume_mounts entry."
   }
 }
 
