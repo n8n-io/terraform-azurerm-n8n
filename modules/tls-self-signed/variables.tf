@@ -37,7 +37,7 @@ variable "key_vault_id" {
 }
 
 variable "friendly_name_prefix" {
-  description = "Short, lowercase name prefix used in the issued certificate's name, `<friendly_name_prefix>-n8n-tls` (e.g. `n8nprod`, `n8ndev`). Mirrors the root module's variable to keep naming consistent across the IaaS + TLS surfaces. 2–12 chars, lowercase alphanumeric only."
+  description = "Short, lowercase name prefix used in the issued certificate's name, `<friendly_name_prefix>-n8n-tls`, which is also its `Name` tag (e.g. `n8nprod`, `n8ndev`). Mirrors the root module's variable to keep naming/tagging consistent across the IaaS + TLS surfaces. 2–12 chars, lowercase alphanumeric only."
   type        = string
 
   validation {
@@ -46,13 +46,8 @@ variable "friendly_name_prefix" {
   }
 }
 
-# Not applied to any resource today: azurerm_key_vault_certificate accepts
-# tags, but this submodule does not set them. Kept on the contract so
-# umbrella examples can pass the same `common_tags` they pass to other
-# submodules without bookkeeping divergence.
-# tflint-ignore: terraform_unused_declarations
 variable "common_tags" {
-  description = "Tags for resources this submodule creates. Currently unused: the submodule does not set tags on its Key Vault certificate. Kept on the contract so callers can pass the same `common_tags` they pass to the other submodules."
+  description = "Tags merged onto the Key Vault certificate this submodule creates, on top of the baseline `ManagedBy = terraform` and `Project = n8n` tags (caller values win). The `Name` tag is always set to the certificate name."
   type        = map(string)
   default     = {}
 

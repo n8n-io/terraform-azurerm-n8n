@@ -20,6 +20,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   months, so replace it with at least 1
   ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
 
+### Fixed
+
+- `modules/tls-self-signed` now tags its Key Vault certificate with
+  `ManagedBy = terraform`, `Project = n8n`, the caller's `common_tags`,
+  and `Name = <friendly_name_prefix>-n8n-tls`, matching the root module.
+  Before, `common_tags` was accepted but ignored. Existing certificates
+  get an in-place tag update on the next apply; they are not replaced.
+
 ## [0.1.0] - 2026-09-29
 
 Initial release of `terraform-azurerm-n8n`: a single resource-bearing

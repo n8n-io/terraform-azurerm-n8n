@@ -33,7 +33,7 @@
 # `azurerm_application_gateway` apply.
 
 resource "azurerm_key_vault_certificate" "self_signed" {
-  name         = "${var.friendly_name_prefix}-n8n-tls"
+  name         = local.certificate_name
   key_vault_id = var.key_vault_id
 
   certificate_policy {
@@ -85,4 +85,6 @@ resource "azurerm_key_vault_certificate" "self_signed" {
       }
     }
   }
+
+  tags = merge(local.common_tags, { Name = local.certificate_name })
 }
