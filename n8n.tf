@@ -828,8 +828,8 @@ check "extra_volumes_should_be_mounted" {
 
 check "image_pull_secrets_need_a_custom_image" {
   assert {
-    condition     = length(var.n8n_image_pull_secrets) > 0 ? var.n8n_image_repository != null : true
-    error_message = "n8n_image_pull_secrets is set while n8n_image_repository is null, so registry Secrets are attached to the ServiceAccount but the public chart image remains in use. Set the private custom repository or clear the inert Secret names."
+    condition     = length(var.n8n_image_pull_secrets) > 0 ? var.n8n_image_repository != null || var.n8n_task_runner_image_repository != null : true
+    error_message = "n8n_image_pull_secrets is set while both n8n_image_repository and n8n_task_runner_image_repository are null, so registry Secrets are attached to the ServiceAccount but every pod still uses its public chart image. Set one of the private custom repositories or clear the inert Secret names."
   }
 }
 
