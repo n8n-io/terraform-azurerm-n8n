@@ -168,8 +168,8 @@ variable "n8n_worker_keda_max_replicas" {
 }
 
 # ── Chart ─────────────────────────────────────────────────────────────────────
-# EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE. Required here, unlike every
-# other example, because the module's default n8n_chart_version does not
+# EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE. n8n_chart_version is required
+# here, unlike every other example, because the module's default does not
 # render pools. queueMode.workerGroups (n8n-io/n8n-hosting#189) is merged to
 # the chart's preview/worker-pools branch but not released; a chart that
 # predates it accepts the key and silently renders nothing, so
@@ -178,11 +178,23 @@ variable "n8n_worker_keda_max_replicas" {
 # input means this example cannot be applied without choosing a chart on
 # purpose. Until the release exists, that is an official prerelease build
 # published from the branch via n8n-io/n8n-hosting#191's "Preview chart"
-# GitHub Action to oci://ghcr.io/n8n-io/n8n-helm-chart (the root module
-# hardcodes this repository; there is no override to point at a private
-# mirror), or a chart built from the branch and confirmed to render pools with
-# n8n_worker_pools_chart_verified; see README.md, "Getting a chart that
-# renders pools".
+# GitHub Action to the default n8n_chart_repository, or a chart built from the
+# branch and pushed to a private mirror named by n8n_chart_repository and
+# confirmed to render pools with n8n_worker_pools_chart_verified; see
+# README.md, "Getting a chart that renders pools".
+
+variable "n8n_chart_repository" {
+  description = "Helm chart repository for the n8n chart, passed through to the module's n8n_chart_repository. Override to point this example at a private mirror, e.g. an ACR OCI repository carrying a self-built preview chart."
+  type        = string
+  default     = "oci://ghcr.io/n8n-io/n8n-helm-chart"
+  nullable    = false
+
+  validation {
+    # Keep in sync with the module root's n8n_chart_repository validation.
+    condition     = can(regex("^(https|oci)://[^[:space:]]+$", var.n8n_chart_repository))
+    error_message = "n8n_chart_repository must be an https:// or oci:// URL with no whitespace."
+  }
+}
 
 variable "n8n_chart_version" {
   description = "n8n Helm chart version to deploy, passed to the module's n8n_chart_version. Required by this example because the module default predates queueMode.workerGroups and would render no pools once local.worker_pools is wired in. Pin the first release that carries the feature once it exists, or a prerelease build (e.g. 1.11.0-preview.workerpools.1, published via n8n-io/n8n-hosting's Preview chart GitHub Action) in the meantime."

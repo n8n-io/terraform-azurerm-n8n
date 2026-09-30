@@ -287,12 +287,13 @@ module "n8n" {
   n8n_image_tag   = var.n8n_image_tag
 
   # ── Chart ───────────────────────────────────────────────────────────────────
-  # Required by this example: the module default n8n_chart_version predates
-  # queueMode.workerGroups and would render no pools. See the variable's
-  # comment and README.md, "Getting a chart that renders pools". The module
-  # hardcodes the chart's repository (n8n.tf) to the same oci://ghcr.io
-  # registry the official preview build publishes to, so no repository
-  # override is needed or available here.
+  # n8n_chart_version is required by this example: the module default
+  # predates queueMode.workerGroups and would render no pools. See the
+  # variable's comment and README.md, "Getting a chart that renders pools".
+  # n8n_chart_repository defaults to the same oci://ghcr.io registry the
+  # official preview build publishes to; override it in terraform.tfvars to
+  # pull from a private mirror instead.
+  n8n_chart_repository            = var.n8n_chart_repository
   n8n_chart_version               = var.n8n_chart_version
   n8n_worker_pools_chart_verified = var.n8n_worker_pools_chart_verified
 
