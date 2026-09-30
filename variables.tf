@@ -239,7 +239,7 @@ variable "create_database" {
 }
 
 variable "postgres_private_dns_zone_id" {
-  description = "Resource ID of an existing private Azure DNS zone named privatelink.postgres.database.azure.com to attach the module-managed PostgreSQL Flexible Server to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). Ignored when create_database = false."
+  description = "Resource ID of an existing private Azure DNS zone named privatelink.postgres.database.azure.com to attach the module-managed PostgreSQL Flexible Server to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). The zone must already exist before this apply (e.g. from a data source or a prior apply): the resource count that gates the module-managed zone depends on this value being null or not, and Terraform cannot evaluate that comparison if the ID is still unknown at plan time, so an ID computed from a resource created in this same apply will fail to plan. Rejected (not merely ignored) when create_database = false, since there is no module-managed PostgreSQL Flexible Server to attach it to."
   type        = string
   default     = null
 
@@ -250,7 +250,7 @@ variable "postgres_private_dns_zone_id" {
 
   validation {
     condition     = var.postgres_private_dns_zone_id == null ? true : var.create_database
-    error_message = "postgres_private_dns_zone_id has no effect when create_database = false: the module creates no PostgreSQL Flexible Server to attach it to."
+    error_message = "postgres_private_dns_zone_id must be null when create_database = false: the module creates no PostgreSQL Flexible Server to attach it to, so this input is rejected at plan time rather than silently ignored."
   }
 }
 
@@ -572,7 +572,7 @@ variable "create_redis" {
 }
 
 variable "redis_private_dns_zone_id" {
-  description = "Resource ID of an existing private Azure DNS zone named privatelink.redis.azure.net to attach the module-managed Azure Managed Redis private endpoint to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). Ignored when create_redis = false."
+  description = "Resource ID of an existing private Azure DNS zone named privatelink.redis.azure.net to attach the module-managed Azure Managed Redis private endpoint to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). The zone must already exist before this apply (e.g. from a data source or a prior apply): the resource count that gates the module-managed zone depends on this value being null or not, and Terraform cannot evaluate that comparison if the ID is still unknown at plan time, so an ID computed from a resource created in this same apply will fail to plan. Rejected (not merely ignored) when create_redis = false, since there is no module-managed Azure Managed Redis instance or private endpoint to attach it to."
   type        = string
   default     = null
 
@@ -583,7 +583,7 @@ variable "redis_private_dns_zone_id" {
 
   validation {
     condition     = var.redis_private_dns_zone_id == null ? true : var.create_redis
-    error_message = "redis_private_dns_zone_id has no effect when create_redis = false: the module creates no Azure Managed Redis instance or private endpoint to attach it to."
+    error_message = "redis_private_dns_zone_id must be null when create_redis = false: the module creates no Azure Managed Redis instance or private endpoint to attach it to, so this input is rejected at plan time rather than silently ignored."
   }
 }
 
@@ -2967,7 +2967,7 @@ variable "create_blob_storage" {
 }
 
 variable "blob_private_dns_zone_id" {
-  description = "Resource ID of an existing private Azure DNS zone named privatelink.blob.core.windows.net to attach the module-managed Blob storage private endpoint to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). Ignored when create_blob_storage = false."
+  description = "Resource ID of an existing private Azure DNS zone named privatelink.blob.core.windows.net to attach the module-managed Blob storage private endpoint to, instead of creating one. Use this in landing zones that centralize privatelink zones in a connectivity subscription, often under an Azure Policy DeployIfNotExists mandate. When set, the module creates neither the zone nor its VNet link: the caller is responsible for linking the zone to var.vnet_id and for granting the Terraform identity join rights on the zone (Private DNS Zone Contributor, or at minimum Microsoft.Network/privateDnsZones/join/action). The zone must already exist before this apply (e.g. from a data source or a prior apply): the resource count that gates the module-managed zone depends on this value being null or not, and Terraform cannot evaluate that comparison if the ID is still unknown at plan time, so an ID computed from a resource created in this same apply will fail to plan. Rejected (not merely ignored) when create_blob_storage = false, since there is no module-managed Blob storage account or private endpoint to attach it to."
   type        = string
   default     = null
 
@@ -2978,7 +2978,7 @@ variable "blob_private_dns_zone_id" {
 
   validation {
     condition     = var.blob_private_dns_zone_id == null ? true : var.create_blob_storage
-    error_message = "blob_private_dns_zone_id has no effect when create_blob_storage = false: the module creates no Blob storage account or private endpoint to attach it to."
+    error_message = "blob_private_dns_zone_id must be null when create_blob_storage = false: the module creates no Blob storage account or private endpoint to attach it to, so this input is rejected at plan time rather than silently ignored."
   }
 }
 

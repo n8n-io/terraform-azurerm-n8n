@@ -667,6 +667,14 @@ run "rejects_aks_api_warmup_seconds_below_floor" {
 run "managed_postgres_resources_in_plan" {
   command = plan
 
+  override_resource {
+    target          = azurerm_private_dns_zone.postgres[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.postgres.database.azure.com"
+    }
+  }
+
   assert {
     condition     = azurerm_postgresql_flexible_server.n8n[0].name == local.postgres_server_name
     error_message = "Managed PostgreSQL Flexible Server name must equal local.postgres_server_name."
@@ -725,6 +733,11 @@ run "managed_postgres_resources_in_plan" {
   assert {
     condition     = azurerm_private_dns_zone.postgres[0].name == "privatelink.postgres.database.azure.com"
     error_message = "PostgreSQL private DNS zone name must be exactly 'privatelink.postgres.database.azure.com'."
+  }
+
+  assert {
+    condition     = azurerm_postgresql_flexible_server.n8n[0].private_dns_zone_id == azurerm_private_dns_zone.postgres[0].id
+    error_message = "The Flexible Server must attach to the module-managed postgres private DNS zone when postgres_private_dns_zone_id is not set."
   }
 
   assert {
@@ -1413,6 +1426,14 @@ run "rejects_postgres_pool_size_below_floor" {
 run "managed_redis_resources_in_plan" {
   command = plan
 
+  override_resource {
+    target          = azurerm_private_dns_zone.redis[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.redis.azure.net"
+    }
+  }
+
   assert {
     condition     = azurerm_managed_redis.n8n[0].name == local.redis_name
     error_message = "Managed Azure Managed Redis instance name must equal local.redis_name."
@@ -1466,6 +1487,11 @@ run "managed_redis_resources_in_plan" {
   assert {
     condition     = azurerm_private_endpoint.redis[0].private_service_connection[0].subresource_names[0] == "redisEnterprise"
     error_message = "Redis private endpoint must target the redisEnterprise subresource."
+  }
+
+  assert {
+    condition     = azurerm_private_endpoint.redis[0].private_dns_zone_group[0].private_dns_zone_ids[0] == azurerm_private_dns_zone.redis[0].id
+    error_message = "The Redis private endpoint must attach to the module-managed redis private DNS zone when redis_private_dns_zone_id is not set."
   }
 
   assert {
@@ -1705,6 +1731,14 @@ run "private_blob_storage_resources_in_plan" {
     }
   }
 
+  override_resource {
+    target          = azurerm_private_dns_zone.blob[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+    }
+  }
+
   assert {
     condition     = azurerm_storage_account.n8n[0].name == local.storage_account_name
     error_message = "Storage account name must equal local.storage_account_name."
@@ -1758,6 +1792,11 @@ run "private_blob_storage_resources_in_plan" {
   assert {
     condition     = azurerm_private_endpoint.blob[0].private_service_connection[0].subresource_names[0] == "blob"
     error_message = "Blob private endpoint must target the blob subresource."
+  }
+
+  assert {
+    condition     = azurerm_private_endpoint.blob[0].private_dns_zone_group[0].private_dns_zone_ids[0] == azurerm_private_dns_zone.blob[0].id
+    error_message = "The Blob private endpoint must attach to the module-managed blob private DNS zone when blob_private_dns_zone_id is not set."
   }
 
   assert {
