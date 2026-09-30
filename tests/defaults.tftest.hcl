@@ -4222,12 +4222,13 @@ run "custom_image_volumes_and_environment_render_on_all_pods" {
     create_redis               = false
     redis_external_host        = "redis.external.example.com"
 
-    n8n_image_repository       = "registry.internal:5000/n8n/custom"
-    n8n_image_tag              = "2.35.0-custom"
-    n8n_task_runner_image_tag  = "2.35.0"
-    n8n_image_pull_secrets     = ["registry-creds", "registry-fallback"]
-    n8n_helm_timeout           = 900
-    n8n_custom_extensions_path = "/opt/n8n-nodes"
+    n8n_image_repository             = "registry.internal:5000/n8n/custom"
+    n8n_image_tag                    = "2.35.0-custom"
+    n8n_task_runner_image_tag        = "2.35.0"
+    n8n_task_runner_image_repository = "registry.internal:5000/n8n/runners"
+    n8n_image_pull_secrets           = ["registry-creds", "registry-fallback"]
+    n8n_helm_timeout                 = 900
+    n8n_custom_extensions_path       = "/opt/n8n-nodes"
     n8n_extra_volumes = [
       {
         name = "custom-nodes"
@@ -4300,10 +4301,11 @@ run "custom_image_volumes_and_environment_render_on_all_pods" {
       yamldecode(helm_release.n8n.values[0]).image.repository == "registry.internal:5000/n8n/custom" &&
       yamldecode(helm_release.n8n.values[0]).image.tag == "2.35.0-custom" &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.image.tag == "2.35.0" &&
+      yamldecode(helm_release.n8n.values[0]).taskRunners.image.repository == "registry.internal:5000/n8n/runners" &&
       !yamldecode(helm_release.n8n.values[0]).serviceAccount.create &&
       yamldecode(helm_release.n8n.values[0]).serviceAccount.name == "n8n-enterprise-pull"
     )
-    error_message = "Custom application and runner images, Helm timeout, and external ServiceAccount selection must render into Helm values."
+    error_message = "Custom application and runner images (including the runner's own repository), Helm timeout, and external ServiceAccount selection must render into Helm values."
   }
 
   assert {
@@ -7000,6 +7002,11 @@ run "customer_managed_ownership_switches_default_to_module_managed" {
   }
 
   assert {
+    condition     = var.n8n_chart_repository == "oci://ghcr.io/n8n-io/n8n-helm-chart"
+    error_message = "n8n_chart_repository must default to the public upstream n8n Helm chart repository."
+  }
+
+  assert {
     condition     = local.effective_aks_cluster_name == azurerm_kubernetes_cluster.n8n[0].name
     error_message = "local.effective_aks_cluster_name must resolve to the module-managed cluster name by default."
   }
@@ -7048,6 +7055,16 @@ run "rejects_malformed_keda_chart_repository" {
   }
 
   expect_failures = [var.keda_chart_repository]
+}
+
+run "rejects_malformed_n8n_chart_repository" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "not-a-url"
+  }
+
+  expect_failures = [var.n8n_chart_repository]
 }
 
 # ── Existing AKS contract ───────────────────────────────────────────────────
@@ -7626,6 +7643,19 @@ run "passes_custom_keda_chart_settings_through_to_controllers" {
   assert {
     condition     = module.controllers.keda_release_name == "keda"
     error_message = "modules/controllers must still install KEDA when only the chart repository and version are overridden."
+  }
+}
+
+run "passes_custom_n8n_chart_repository_to_the_helm_release" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://mirror.example.com/n8n-helm-chart"
+  }
+
+  assert {
+    condition     = helm_release.n8n.repository == "oci://mirror.example.com/n8n-helm-chart"
+    error_message = "helm_release.n8n.repository must follow n8n_chart_repository, not stay hardcoded to the upstream GHCR path."
   }
 }
 
@@ -8562,6 +8592,25 @@ run "graceful_shutdown_timeout_null_default_warns_at_the_exact_ceiling" {
   }
 
   expect_failures = [check.graceful_shutdown_fits_grace_period]
+}
+
+run "graceful_shutdown_check_skips_for_a_custom_chart_repository" {
+  command = plan
+
+  variables {
+    # Same 30 + 31 = 61 over the default 60s grace period that
+    # graceful_shutdown_timeout_null_default_warns_when_it_does_not_fit warns
+    # on against the upstream chart. A custom n8n_chart_repository's
+    # values.yaml default cannot be verified, so the check must stay silent
+    # here instead of assuming the upstream chart's 30s default still holds.
+    n8n_prestop_sleep    = 31
+    n8n_chart_repository = "oci://mirror.example.com/n8n-helm-chart"
+  }
+
+  assert {
+    condition     = local.n8n_graceful_shutdown_default_applies == false
+    error_message = "local.n8n_graceful_shutdown_default_applies must be false whenever n8n_chart_repository is not the upstream default."
+  }
 }
 
 run "graceful_shutdown_timeout_null_default_is_silent_when_it_fits" {

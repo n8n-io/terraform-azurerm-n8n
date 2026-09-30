@@ -1298,6 +1298,18 @@ variable "n8n_chart_version" {
   }
 }
 
+variable "n8n_chart_repository" {
+  description = "Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Point this at a private mirror, e.g. an ACR OCI repository, for a cluster with no egress to ghcr.io. The mirror must serve the exact chart version named by n8n_chart_version; this module does not verify that a mirrored repository actually carries it. check.graceful_shutdown_fits_grace_period (n8n.tf) is skipped whenever this is not the default, because this module cannot verify a mirror's values.yaml default shutdown timeout."
+  type        = string
+  default     = "oci://ghcr.io/n8n-io/n8n-helm-chart"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^(https|oci)://[^[:space:]]+$", var.n8n_chart_repository))
+    error_message = "n8n_chart_repository must be an https:// or oci:// URL with no whitespace."
+  }
+}
+
 variable "n8n_helm_timeout" {
   description = "Seconds Terraform waits for the n8n Helm release to converge. Increase this for large deployments whose rolling update cannot finish within the 600-second default."
   type        = number
@@ -2234,6 +2246,25 @@ variable "n8n_task_runner_image_tag" {
   validation {
     condition     = var.n8n_task_runner_image_tag == null ? true : can(regex("^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$", var.n8n_task_runner_image_tag))
     error_message = "n8n_task_runner_image_tag must be null or a valid Docker tag with no whitespace, such as 2.35.0."
+  }
+}
+
+variable "n8n_task_runner_image_repository" {
+  description = "Optional container image repository for the n8nio/runners task-runner sidecar, without a tag or digest. Null uses the chart default n8nio/runners. Set alongside n8n_image_repository when mirroring both images into the same private registry; the two are independent because the application and runner images can live in different repositories on the same mirror. Use n8n_task_runner_image_tag for the runner tag. Any private-registry pull access is granted the same way as n8n_image_repository, through n8n_image_pull_secrets on the module-managed ServiceAccount."
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.n8n_task_runner_image_repository == null ? true : (
+      length(var.n8n_task_runner_image_repository) <= 255 &&
+      can(regex("^(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:]+\\])(?::[0-9]+)?/)?[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*)*$", var.n8n_task_runner_image_repository))
+    )
+    error_message = "n8n_task_runner_image_repository must be a bare Docker repository reference with no scheme, whitespace, tag, digest, uppercase path component, or empty path component, such as registry.internal:5000/runners or n8nio/runners."
+  }
+
+  validation {
+    condition     = var.n8n_task_runner_image_repository == null ? true : !can(regex(":", reverse(split("/", var.n8n_task_runner_image_repository))[0]))
+    error_message = "n8n_task_runner_image_repository must not include a tag or digest because the chart appends n8n_task_runner_image_tag."
   }
 }
 

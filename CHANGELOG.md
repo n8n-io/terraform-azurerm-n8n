@@ -264,6 +264,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   values at plan time. The name was already reserved, so `n8n_extra_env`,
   `n8n_worker_extra_env`, and `n8n_worker_pools[*].extra_env` still cannot
   set it ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
+- `n8n_chart_repository` overrides the n8n Helm chart's repository (default
+  `oci://ghcr.io/n8n-io/n8n-helm-chart`), and `n8n_task_runner_image_repository`
+  overrides the `n8nio/runners` task-runner sidecar's image repository
+  (default null, chart default), so a caller with no egress to the public
+  registries can point both at a private mirror. `docs/customer-managed-infrastructure.md`
+  gained an "External artifacts and private-registry mirrors" section listing
+  every chart and image this module pulls and its override input.
+  `check.graceful_shutdown_fits_grace_period` (n8n.tf) is now skipped whenever
+  `n8n_chart_repository` is not the upstream default, since this module
+  cannot verify a mirror's `values.yaml` default shutdown timeout
+  ([#23](https://github.com/n8n-io/terraform-azurerm-n8n/issues/23)).
 
 ### Changed
 

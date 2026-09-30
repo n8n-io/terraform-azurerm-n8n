@@ -405,6 +405,20 @@ locals {
   # so update both together on a chart bump.
   n8n_chart_default_graceful_shutdown_timeout = 30
 
+  # The upstream OCI repository n8n_chart_repository defaults to. Compared
+  # against directly (rather than adding a separate "is this a mirror" input)
+  # because it is the one literal already in play as the variable's default.
+  n8n_default_chart_repository = "oci://ghcr.io/n8n-io/n8n-helm-chart"
+
+  # check.graceful_shutdown_fits_grace_period (n8n.tf) only has a verified
+  # chart default to compare against on the upstream repository; a private
+  # mirror's values.yaml default cannot be verified, so the check is skipped
+  # whenever n8n_chart_repository points anywhere else.
+  n8n_graceful_shutdown_default_applies = (
+    var.n8n_graceful_shutdown_timeout == null &&
+    var.n8n_chart_repository == local.n8n_default_chart_repository
+  )
+
   # The chart appends config.extraEnv after its own environment variables, and
   # Kubernetes resolves duplicates last-wins. Reserve every current module and
   # chart-owned connection, identity, storage, license, runner, and topology

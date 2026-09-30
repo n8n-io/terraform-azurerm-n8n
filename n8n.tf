@@ -193,7 +193,7 @@ resource "kubernetes_secret" "n8n_task_runners" {
 # former workload tier.
 resource "helm_release" "n8n" {
   name            = "n8n"
-  repository      = "oci://ghcr.io/n8n-io/n8n-helm-chart"
+  repository      = var.n8n_chart_repository
   chart           = "n8n"
   version         = var.n8n_chart_version
   namespace       = local.n8n_namespace
@@ -595,9 +595,13 @@ resource "helm_release" "n8n" {
       enabled            = var.n8n_task_runners_enabled
       mode               = "external"
       nativePythonRunner = var.n8n_task_runner_python_enabled
-      image = {
-        tag = coalesce(var.n8n_task_runner_image_tag, var.n8n_image_tag)
-      }
+      # repository is merged in only when set, mirroring the top-level
+      # image block above, so the chart's default n8nio/runners repository
+      # stays the default for every caller who has not mirrored it.
+      image = merge(
+        { tag = coalesce(var.n8n_task_runner_image_tag, var.n8n_image_tag) },
+        var.n8n_task_runner_image_repository == null ? {} : { repository = var.n8n_task_runner_image_repository },
+      )
       authToken = {
         existingSecret    = kubernetes_secret.n8n_task_runners.metadata[0].name
         existingSecretKey = "N8N_RUNNERS_AUTH_TOKEN"
@@ -790,12 +794,12 @@ check "worker_keda_pause_requires_a_supported_chart" {
 # n8n_graceful_shutdown_timeout that does not fit is a hard validation error on
 # that variable. Left null, the chart still renders its own default, which must
 # fit the same way, but this was never checked before that input existed, so a
-# hard error here would break configurations that already plan. The chart
-# repository is hardcoded to the upstream OCI registry, so unlike
-# terraform-aws-n8n no custom-repository gate is needed.
+# hard error here would break configurations that already plan. Skipped
+# entirely for a custom n8n_chart_repository (local.n8n_graceful_shutdown_default_applies),
+# whose values.yaml default this module cannot verify.
 check "graceful_shutdown_fits_grace_period" {
   assert {
-    condition     = var.n8n_graceful_shutdown_timeout != null || local.n8n_chart_default_graceful_shutdown_timeout + var.n8n_prestop_sleep < var.n8n_termination_grace_period
+    condition     = local.n8n_graceful_shutdown_default_applies ? local.n8n_chart_default_graceful_shutdown_timeout + var.n8n_prestop_sleep < var.n8n_termination_grace_period : true
     error_message = "n8n_graceful_shutdown_timeout is unset, so n8n uses the chart's default shutdown timeout of ${local.n8n_chart_default_graceful_shutdown_timeout}s. That plus n8n_prestop_sleep (${var.n8n_prestop_sleep}s) does not stay below n8n_termination_grace_period (${var.n8n_termination_grace_period}s), so Kubernetes can SIGKILL a pod before n8n finishes shutting down and interrupt running executions. Set n8n_graceful_shutdown_timeout to a value that fits, lower n8n_prestop_sleep, or raise n8n_termination_grace_period."
   }
 }
