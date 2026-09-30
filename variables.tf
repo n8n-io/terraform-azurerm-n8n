@@ -2794,19 +2794,26 @@ variable "aks_key_vault_secrets_provider_role_assignment_enabled" {
   type        = bool
   default     = false
 
-  # no validation: a plain bool needs no extra check; the cross-variable
-  # validation requiring aks_key_vault_secrets_provider_keyvault_id lives on
-  # that variable above, and the module-managed-AKS + add-on-enabled
-  # requirements live on the check block in aks.tf.
+  # Cross-variable validation (Terraform 1.9+): the add-on must actually be
+  # enabled, or azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user
+  # (keyvault.tf) indexes into an empty key_vault_secrets_provider block and
+  # fails planning. The keyvault_id requirement lives on that variable above;
+  # the module-managed-AKS requirement lives on the check block in aks.tf.
+  validation {
+    condition     = !var.aks_key_vault_secrets_provider_role_assignment_enabled || var.aks_key_vault_secrets_provider_enabled
+    error_message = "aks_key_vault_secrets_provider_enabled must be true when aks_key_vault_secrets_provider_role_assignment_enabled is true."
+  }
 }
 
 # ── AKS KMS etcd encryption ──────────────────────────────────────────────
 # Optional Key Management Service (KMS) etcd encryption using a caller-owned
-# Key Vault key. Because the cluster's SystemAssigned identity does not
-# exist until the cluster is created, enabling this on a brand-new cluster
-# requires two applies: first create the cluster with
+# Key Vault key. The cluster's own identity must already hold the Key Vault
+# role before KMS can be enabled, and there is no way to order that role
+# assignment ahead of the cluster's key_management_service block within a
+# single apply. This requires two applies whenever the role assignment does
+# not already exist, not only on a brand-new cluster: first apply with
 # aks_kms_role_assignment_enabled = true and aks_kms_key_vault_key_id = null
-# so this module can grant the cluster identity access, then set
+# so this module can grant the identity access, then set
 # aks_kms_key_vault_key_id on a second apply to turn on KMS as an update.
 # See docs/customer-managed-infrastructure.md for the full sequencing note.
 

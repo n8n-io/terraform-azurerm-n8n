@@ -17,6 +17,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `aks_key_vault_secrets_provider_keyvault_id`). Lets a caller sync Key
   Vault objects into the Kubernetes Secrets the `*_secret_ref` inputs
   already read, without adding a static credential to Terraform state.
+  `aks_key_vault_secrets_provider_role_assignment_enabled = true` requires
+  `aks_key_vault_secrets_provider_enabled = true`, or the role assignment
+  fails planning against the add-on's not-yet-rendered identity.
 - Optional AKS KMS etcd encryption with a caller-owned Key Vault key
   (`aks_kms_key_vault_key_id`, `aks_kms_key_vault_network_access`) and an
   optional role assignment granting the cluster's own identity `Key

@@ -127,6 +127,10 @@ resource "random_string" "key_vault_suffix" {
   special = false
 }
 
+# Purge protection is on because this vault also holds the AKS KMS etcd
+# encryption key (azurerm_key_vault_key.aks_kms below): AKS requires soft
+# delete and purge protection on any vault used for KMS, since losing the
+# key would make every Secret already written to etcd unrecoverable.
 resource "azurerm_key_vault" "tls" {
   name                       = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
   resource_group_name        = azurerm_resource_group.network.name
@@ -134,7 +138,7 @@ resource "azurerm_key_vault" "tls" {
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
   soft_delete_retention_days = 7
-  purge_protection_enabled   = false
+  purge_protection_enabled   = true
   rbac_authorization_enabled = true
   tags                       = local.common_tags
 }
