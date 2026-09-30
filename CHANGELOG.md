@@ -7,6 +7,24 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `postgres_managed_ssl_mode` lets the module-managed PostgreSQL Flexible
+  Server path use `verify-ca` or `verify-full` instead of the previously
+  hardcoded `require`, which encrypted the connection but never validated
+  the server certificate. Default stays `require`, so existing deployments
+  see no plan diff.
+- `postgres_ssl_ca_pem` accepts a PEM-encoded CA bundle for either the
+  managed or external PostgreSQL path. When set, the module renders it into
+  a ConfigMap mounted read-only on main, worker, and webhook-processor pods
+  at `/etc/n8n/postgres-ssl-ca/ca.pem` and sets
+  `DB_POSTGRESDB_SSL_CA_FILE` to that path, which `verify-ca` /
+  `verify-full` need unless the pod image's default trust store already
+  covers the server's certificate chain. See
+  [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) for mode selection,
+  the CA bundle, and Azure's CA rotation schedule
+  ([#25](https://github.com/n8n-io/terraform-azurerm-n8n/issues/25)).
+
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`

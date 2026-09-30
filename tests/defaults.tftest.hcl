@@ -785,6 +785,104 @@ run "rejects_malformed_postgres_external_ssl_mode" {
   ]
 }
 
+# ── Managed PostgreSQL TLS mode and CA bundle (issue #25) ────────────────────
+
+run "managed_postgres_defaults_to_require" {
+  command = plan
+
+  assert {
+    condition     = local.postgres_connection.ssl_mode == "require"
+    error_message = "local.postgres_connection.ssl_mode must default to require on the managed path."
+  }
+
+  assert {
+    condition     = length(kubernetes_config_map.postgres_ssl_ca) == 0
+    error_message = "No postgres_ssl_ca ConfigMap must be created when postgres_ssl_ca_pem is null."
+  }
+
+  assert {
+    condition     = length(local.n8n_postgres_ssl_ca_env) == 0
+    error_message = "local.n8n_postgres_ssl_ca_env must be empty when postgres_ssl_ca_pem is null."
+  }
+
+  assert {
+    condition     = length([for v in local.n8n_extra_volumes : v if v.name == "postgres-ssl-ca"]) == 0
+    error_message = "No postgres-ssl-ca volume must be rendered when postgres_ssl_ca_pem is null."
+  }
+}
+
+run "managed_postgres_verify_full_sets_ssl_mode" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+  }
+
+  assert {
+    condition     = local.postgres_connection.ssl_mode == "verify-full"
+    error_message = "local.postgres_connection.ssl_mode must equal postgres_managed_ssl_mode on the managed path."
+  }
+}
+
+run "rejects_malformed_postgres_managed_ssl_mode" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "disable"
+  }
+
+  expect_failures = [
+    var.postgres_managed_ssl_mode,
+  ]
+}
+
+run "postgres_ssl_ca_pem_renders_configmap_volume_mount_and_env" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem       = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+  }
+
+  assert {
+    condition     = kubernetes_config_map.postgres_ssl_ca[0].data["ca.pem"] == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+    error_message = "kubernetes_config_map.postgres_ssl_ca must hold the caller-supplied PEM under the ca.pem key."
+  }
+
+  assert {
+    condition = one([
+      for v in local.n8n_extra_volumes : v
+      if v.name == "postgres-ssl-ca" && v.configMap.name == local.n8n_postgres_ssl_ca_config_map_name
+    ]) != null
+    error_message = "local.n8n_extra_volumes must carry a postgres-ssl-ca ConfigMap volume pointing at the module-owned ConfigMap."
+  }
+
+  assert {
+    condition = one([
+      for m in local.n8n_extra_volume_mounts : m
+      if m.name == "postgres-ssl-ca" && m.mountPath == "/etc/n8n/postgres-ssl-ca" && m.readOnly == true
+    ]) != null
+    error_message = "local.n8n_extra_volume_mounts must mount postgres-ssl-ca read-only at /etc/n8n/postgres-ssl-ca."
+  }
+
+  assert {
+    condition     = one([for env in local.n8n_postgres_ssl_ca_env : env.value if env.name == "DB_POSTGRESDB_SSL_CA_FILE"]) == "/etc/n8n/postgres-ssl-ca/ca.pem"
+    error_message = "local.n8n_postgres_ssl_ca_env must set DB_POSTGRESDB_SSL_CA_FILE to the mounted CA file path."
+  }
+}
+
+run "rejects_empty_postgres_ssl_ca_pem" {
+  command = plan
+
+  variables {
+    postgres_ssl_ca_pem = "   "
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
 run "rejects_malformed_pg_admin_username" {
   command = plan
 
@@ -2609,6 +2707,7 @@ run "rejects_reserved_additional_environment_names" {
   variables {
     n8n_extra_env = [
       { name = "DB_POSTGRESDB_HOST", value = "override" },
+      { name = "DB_POSTGRESDB_SSL_CA_FILE", value = "/tmp/override.pem" },
       { name = "QUEUE_BULL_REDIS_HOST", value = "override" },
       { name = "N8N_ENCRYPTION_KEY", value = "override" },
       { name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME", value = "override" },
