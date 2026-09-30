@@ -278,7 +278,7 @@ On the default, fully module-managed path, the following land in state:
 | Credential | Where it lands | Opt out with |
 |---|---|---|
 | PostgreSQL administrator password | `random_password.postgres_admin`'s `result`, `azurerm_postgresql_flexible_server.n8n`'s `administrator_password`, `kubernetes_secret.n8n_db`, the `postgres_admin_password` output | `postgres_password_write_only = true` (below), or `create_database = false` with `postgres_password_secret_ref` |
-| Redis access key | `azurerm_managed_redis.n8n`'s `default_database[0].primary_access_key`, `kubernetes_secret.n8n_redis`, the `redis_primary_access_key` output | `create_redis = false` with `redis_external_password` sourced from a Secret you manage; no equivalent exists for the managed path (see below) |
+| Redis access key | `azurerm_managed_redis.n8n`'s `default_database[0].primary_access_key`, `kubernetes_secret.n8n_redis`, the `redis_primary_access_key` output | `create_redis = false` with `redis_password_secret_ref` pointing at a Secret you manage; `redis_external_password` still lands in `kubernetes_secret.n8n_redis` and does not opt out of state. No equivalent exists for the managed path (see below) |
 | n8n encryption key | `random_password.n8n_encryption_key`'s `result`, `kubernetes_secret.n8n_encryption_key`, the `n8n_encryption_key` output | `n8n_encryption_key_secret_ref` (module never reads the Secret's value) |
 | Task-runner authentication token | `random_password.n8n_task_runners_token`'s `result`, `kubernetes_secret.n8n_task_runners` | none — this token is always module-generated (see above) |
 
@@ -322,7 +322,9 @@ session's cached credential still points at the old password until you
 update the Kubernetes Secret and roll the n8n pods. Plan a maintenance
 window: apply with the new write-only value, confirm the Secret you manage
 carries the same password, then restart the `n8n-main`, `n8n-worker`, and
-`n8n-webhook-processor` deployments so they pick up the refreshed Secret.
+`n8n-webhook-processor` deployments, and any `n8n_worker_pools` deployments
+(`kubectl rollout restart deployment -l app.kubernetes.io/component=worker-group -n <namespace>`),
+so they pick up the refreshed Secret.
 
 ### Redis access key (no write-only path)
 

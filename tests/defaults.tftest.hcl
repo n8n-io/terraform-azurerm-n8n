@@ -5695,6 +5695,16 @@ run "rejects_nonpositive_postgres_admin_password_wo_version" {
   expect_failures = [var.postgres_admin_password_wo_version]
 }
 
+run "rejects_fractional_postgres_admin_password_wo_version" {
+  command = plan
+
+  variables {
+    postgres_admin_password_wo_version = 1.5
+  }
+
+  expect_failures = [var.postgres_admin_password_wo_version]
+}
+
 run "rejects_postgres_external_neither_password_nor_secret_ref" {
   command = plan
 
