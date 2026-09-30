@@ -296,9 +296,17 @@ caller-owned Key Vault key instead of Microsoft's platform-managed key.
 `aks_kms_key_vault_network_access` selects `"Public"` (default) or
 `"Private"` vault network access.
 
-Azure requires the cluster's own identity to already hold `Key Vault Crypto
-Service Encryption User` on the vault **before** KMS can be enabled. This
-ordering hazard is not limited to a brand-new cluster: within a single
+Azure's KMS feature rejects a `SystemAssigned` cluster identity outright
+(`Azure Key Vault KMS feature does not support cluster identity type
+"SystemAssigned"`), so setting either KMS input switches the cluster's
+identity block from this module's default `SystemAssigned` to a dedicated
+`UserAssigned` identity (`azurerm_user_assigned_identity.aks_cluster`) that
+this module creates and manages for you. On an already-running cluster this
+identity-type switch is applied in place by `terraform apply` (confirmed
+live, no cluster replacement). Azure also requires that identity to already
+hold `Key Vault Crypto Service Encryption User` on the vault **before** KMS
+can be enabled. This ordering hazard is not limited to a brand-new cluster:
+within a single
 `terraform apply`, Terraform has no way to guarantee the role assignment
 finishes before the cluster's `key_management_service` block is added,
 whether the cluster is being created for the first time or already exists

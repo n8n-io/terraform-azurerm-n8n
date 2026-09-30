@@ -45,6 +45,19 @@ locals {
   appgw_pip_name       = "${var.friendly_name_prefix}-appgw-pip"
   appgw_nsg_name       = "${var.friendly_name_prefix}-appgw-nsg"
 
+  # Azure Key Vault KMS etcd encryption requires the cluster's control-plane
+  # identity to be UserAssigned; a SystemAssigned identity (this module's
+  # default) has no ID a Key Vault role assignment can target until after
+  # the cluster exists, and AKS's KMS feature rejects SystemAssigned
+  # outright ("Azure Key Vault KMS feature does not support cluster
+  # identity type SystemAssigned"). True as soon as either KMS input is
+  # set, so the identity switches on the first grant-only apply (issue #29
+  # sequencing note), not only once aks_kms_key_vault_key_id itself is set.
+  aks_needs_user_assigned_identity = (
+    var.aks_kms_role_assignment_enabled ||
+    var.aks_kms_key_vault_key_id != null
+  )
+
   # Namespace names and chart-rendered service coordinates stay centralized so
   # Kubernetes resources, KEDA manifests, outputs, and caller-owned ingress can
   # share one contract.

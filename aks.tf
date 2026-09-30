@@ -40,8 +40,21 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
-  identity {
-    type = "SystemAssigned"
+  dynamic "identity" {
+    for_each = local.aks_needs_user_assigned_identity ? [] : [1]
+
+    content {
+      type = "SystemAssigned"
+    }
+  }
+
+  dynamic "identity" {
+    for_each = local.aks_needs_user_assigned_identity ? [1] : []
+
+    content {
+      type         = "UserAssigned"
+      identity_ids = [azurerm_user_assigned_identity.aks_cluster[0].id]
+    }
   }
 
   default_node_pool {
@@ -216,6 +229,20 @@ resource "time_sleep" "aks_api_warmup" {
   }
 
   depends_on = [azurerm_kubernetes_cluster.n8n]
+}
+
+# UserAssigned identity for the cluster, created only when KMS etcd
+# encryption is requested (see local.aks_needs_user_assigned_identity
+# above): AKS's KMS feature rejects SystemAssigned outright, so the
+# cluster's identity block above switches to this identity whenever either
+# KMS input is set, including the grant-only first apply.
+resource "azurerm_user_assigned_identity" "aks_cluster" {
+  count = var.create_aks && local.aks_needs_user_assigned_identity ? 1 : 0
+
+  name                = "${var.friendly_name_prefix}-aks-cluster"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.common_tags
 }
 
 # ── Existing AKS lookup ────────────────────────────────────────────────────

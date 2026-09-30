@@ -53,11 +53,14 @@ resource "azurerm_role_assignment" "aks_key_vault_secrets_provider_kv_secrets_us
 # Azure requires the cluster's own identity to already hold this role on the
 # key vault before key_management_service (aks.tf) can be enabled — see the
 # two-apply sequencing note above var.aks_kms_key_vault_key_id in
-# variables.tf.
+# variables.tf. The cluster's identity is always the UserAssigned
+# aks_cluster identity here (local.aks_needs_user_assigned_identity in
+# locals.tf is true whenever this role assignment is requested), since
+# AKS's KMS feature rejects a SystemAssigned identity outright.
 resource "azurerm_role_assignment" "aks_kms_kv_crypto_user" {
   count = var.create_aks && var.aks_kms_role_assignment_enabled ? 1 : 0
 
   scope                = var.aks_kms_key_vault_id
   role_definition_name = "Key Vault Crypto Service Encryption User"
-  principal_id         = azurerm_kubernetes_cluster.n8n[0].identity[0].principal_id
+  principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
 }
