@@ -15,10 +15,16 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   read-only when full. Set to `true` in the `medium` and `large` examples.
   Autogrow only grows storage, never shrinks it: after it fires, raise
   `pg_storage_mb` to at least the live size before the next apply, or a
-  stale `pg_storage_mb` can plan a downsize that Azure rejects or forces a
-  replacement. Triggers a non-blocking check warning when
-  `create_database = false`, alongside the other managed-server sizing
-  inputs
+  stale `pg_storage_mb` plans to **destroy and recreate the entire server**
+  (data loss), since Azure cannot shrink storage in place. `pg_storage_drift_guard_enabled`
+  (bool, default `false`) turns that into a clean precondition failure
+  instead: when both it and autogrow are `true`, the module reads the live
+  server's actual `storage_mb` via a data source before every plan and
+  refuses to apply if `pg_storage_mb` has fallen behind it. Leave it `false`
+  on the apply that first creates the server (the data source has nothing
+  to read yet); enable it on the next apply for ongoing drift protection.
+  Triggers a non-blocking check warning when `create_database = false`,
+  alongside the other managed-server sizing inputs
   ([#27](https://github.com/n8n-io/terraform-azurerm-n8n/issues/27)).
 
 ### Changed
