@@ -36,6 +36,7 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   location            = var.location
   dns_prefix          = local.cluster_name
   kubernetes_version  = var.aks_kubernetes_version
+  sku_tier            = var.aks_sku_tier
 
   oidc_issuer_enabled       = true
   workload_identity_enabled = true

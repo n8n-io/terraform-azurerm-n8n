@@ -7,6 +7,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- New `aks_sku_tier` input (`"Free"`, `"Standard"`, or `"Premium"`, default
+  `"Free"`) sets the AKS cluster's SKU tier. The Free tier has no
+  financially backed SLA for the API server; the `medium` and `large`
+  examples now set `aks_sku_tier = "Standard"`
+  ([#19](https://github.com/n8n-io/terraform-azurerm-n8n/issues/19)).
+
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`

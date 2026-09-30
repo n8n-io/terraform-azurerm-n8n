@@ -31,6 +31,7 @@ This tier sets binary and execution-data writes to Azure Blob. These features re
 | Module input | Default | Purpose |
 | --- | --- | --- |
 | `blob_delete_retention_days` | `null` | Soft-delete retention window, in days, for the module-managed Blob storage account's `delete_retention_policy` and `container_delete_retention_policy`. `null` leaves soft delete disabled, so a deleted blob or container is immediately unrecoverable. |
+| `aks_sku_tier` | `"Standard"` | AKS SKU tier. This example overrides the module's `"Free"` default so the cluster's API server has a financially backed SLA. |
 
 `pg_backup_retention_days` does not apply to this example: it sets `create_database = false` and owns PostgreSQL itself (see [PostgreSQL and PgBouncer](#postgresql-and-pgbouncer)), so PostgreSQL backup retention is a property of the Flexible Server resource this example manages directly, not of the root module.
 
