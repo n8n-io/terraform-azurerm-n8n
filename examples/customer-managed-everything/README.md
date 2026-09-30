@@ -35,7 +35,7 @@ The root default writes binary data to private Azure Blob and requires the separ
 
 ## Production considerations
 
-AKS, PostgreSQL, Redis, and Blob storage are all caller-owned in this example, so their build-time constraints (zone placement, networking mode, HA/clustering policy, replication type) belong to whoever manages those resources, not to this root module's inputs. The one setting this example still owns is the n8n encryption key: back it up immediately after the first apply (`terraform output -raw n8n_encryption_key`). See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for the full list of module-level settings that are fixed at the first `terraform apply`.
+AKS, PostgreSQL, Redis, and Blob storage are all caller-owned in this example, so their build-time constraints (zone placement, networking mode, HA/clustering policy, replication type) belong to whoever manages those resources, not to this root module's inputs. The one setting this example still owns is the n8n encryption key: back it up immediately after the first apply. This example creates no `n8n_encryption_key` output (the module returns `null` for `n8n_encryption_key` whenever a caller-managed Secret is in use), so read it directly from the Kubernetes Secret instead: `kubectl get secret n8n-encryption-key -n n8n -o jsonpath='{.data.N8N_ENCRYPTION_KEY}' | base64 -d`. See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for the full list of module-level settings that are fixed at the first `terraform apply`.
 
 ## Reference
 
