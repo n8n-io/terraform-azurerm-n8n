@@ -298,7 +298,8 @@ caller-owned Key Vault key instead of Microsoft's platform-managed key.
 
 Azure's KMS feature rejects a `SystemAssigned` cluster identity outright
 (`Azure Key Vault KMS feature does not support cluster identity type
-"SystemAssigned"`), so setting either KMS input switches the cluster's
+"SystemAssigned"`), so setting either `aks_kms_role_assignment_enabled` or
+`aks_kms_key_vault_key_id` switches the cluster's
 identity block from this module's default `SystemAssigned` to a dedicated
 `UserAssigned` identity (`azurerm_user_assigned_identity.aks_cluster`) that
 this module creates and manages for you. On an already-running cluster this

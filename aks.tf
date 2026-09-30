@@ -155,6 +155,15 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   # the autoscaling-and-capacity spec's "Autoscaler-owned node count"
   # requirement and the AWS sibling's aws_eks_node_group.n8n equivalent in
   # eks.tf.
+  #
+  # depends_on the subnet role assignment below: when the aks_cluster
+  # UserAssigned identity replaces SystemAssigned (KMS enabled), it must
+  # hold Network Contributor on var.aks_subnet_id before cluster create —
+  # a SystemAssigned identity receives this permission implicitly, a
+  # UserAssigned one does not. When count = 0 (no KMS), this is a no-op
+  # dependency.
+  depends_on = [azurerm_role_assignment.aks_cluster_subnet_network_contributor]
+
   lifecycle {
     ignore_changes = [default_node_pool[0].node_count]
   }
@@ -245,6 +254,20 @@ resource "azurerm_user_assigned_identity" "aks_cluster" {
   tags                = local.common_tags
 }
 
+# KMS cluster identity subnet access: when the aks_cluster identity above
+# replaces SystemAssigned, Azure also requires it to hold Network
+# Contributor on var.aks_subnet_id before cluster create — the control
+# plane identity manages subnet-backed networking (load balancers, NSG
+# rules) and a SystemAssigned identity would otherwise have received this
+# permission implicitly at creation time.
+resource "azurerm_role_assignment" "aks_cluster_subnet_network_contributor" {
+  count = var.create_aks && local.aks_needs_user_assigned_identity ? 1 : 0
+
+  scope                = var.aks_subnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
+}
+
 # ── Existing AKS lookup ────────────────────────────────────────────────────
 # The only exception to the rule against inspecting customer-managed Azure
 # resources (design.md decision 2): workload federation needs the existing
@@ -274,5 +297,12 @@ check "aks_kms_requires_module_managed_aks" {
   assert {
     condition     = var.create_aks ? true : var.aks_kms_key_vault_key_id == null
     error_message = "aks_kms_key_vault_key_id is set while create_aks is false, so there is no module-managed AKS cluster to configure KMS etcd encryption on. Configure KMS on the existing cluster out-of-band, or set create_aks = true."
+  }
+}
+
+check "aks_kms_role_assignment_requires_module_managed_aks" {
+  assert {
+    condition     = var.create_aks ? true : !var.aks_kms_role_assignment_enabled
+    error_message = "aks_kms_role_assignment_enabled is true while create_aks is false, so there is no module-managed aks_cluster identity or AKS cluster to grant Key Vault Crypto User on. Grant the role on the existing cluster's identity out-of-band, or set create_aks = true."
   }
 }

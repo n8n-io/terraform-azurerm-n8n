@@ -726,6 +726,35 @@ run "aks_kms_role_uses_minimum_scope" {
   }
 }
 
+run "aks_kms_cluster_identity_gets_subnet_network_contributor" {
+  command = plan
+
+  variables {
+    create_ingress                  = false
+    aks_kms_role_assignment_enabled = true
+    aks_kms_key_vault_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-shared-rg/providers/Microsoft.KeyVault/vaults/n8ntest-shared-kv"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.aks_cluster[0]
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-aks-cluster"
+      principal_id = "88888888-8888-8888-8888-888888888888"
+    }
+  }
+
+  assert {
+    condition = (
+      length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 1 &&
+      azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].scope == var.aks_subnet_id &&
+      azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].role_definition_name == "Network Contributor" &&
+      azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].principal_id == "88888888-8888-8888-8888-888888888888"
+    )
+    error_message = "The aks_cluster UserAssigned identity must receive Network Contributor on the AKS subnet before cluster create, mirroring a SystemAssigned identity's implicit grant."
+  }
+}
+
 run "aks_kms_switches_cluster_identity_to_user_assigned" {
   command = plan
 
@@ -786,6 +815,24 @@ run "rejects_aks_kms_on_existing_cluster" {
 
   expect_failures = [
     check.aks_kms_requires_module_managed_aks,
+  ]
+}
+
+run "rejects_aks_kms_role_assignment_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_kms_role_assignment_enabled              = true
+    aks_kms_key_vault_id                         = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-shared-rg/providers/Microsoft.KeyVault/vaults/n8ntest-shared-kv"
+  }
+
+  expect_failures = [
+    check.aks_kms_role_assignment_requires_module_managed_aks,
   ]
 }
 
