@@ -589,6 +589,10 @@ worker does, so raising a pool's ceiling grows the aggregate connection
 count against the Flexible Server's `max_connections` exactly like raising
 `n8n_worker_keda_max_replicas` does; budget the pool ceilings into the same
 arithmetic, not on top of it unaccounted for.
+`check.postgres_pool_size_fits_known_max_connections` (database.tf) is
+this arithmetic made concrete: it sums `n8n_worker_pools` `max_replicas`
+alongside the main/worker/webhook ceilings and warns when the product
+exceeds the known default `max_connections` for `pg_sku_name`.
 
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
