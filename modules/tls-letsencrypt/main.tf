@@ -57,11 +57,13 @@ resource "acme_certificate" "n8n" {
 # `app_gateway_tls_cert_secret_id` output.
 
 resource "azurerm_key_vault_certificate" "letsencrypt" {
-  name         = "${var.friendly_name_prefix}-n8n-tls"
+  name         = local.certificate_name
   key_vault_id = var.key_vault_id
 
   certificate {
     contents = acme_certificate.n8n.certificate_p12
     password = acme_certificate.n8n.certificate_p12_password
   }
+
+  tags = merge(local.common_tags, { Name = local.certificate_name })
 }

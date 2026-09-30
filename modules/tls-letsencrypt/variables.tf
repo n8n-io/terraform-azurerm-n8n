@@ -103,7 +103,7 @@ variable "dns_zone_resource_group_name" {
 }
 
 variable "key_vault_id" {
-  description = "Azure resource ID of the Key Vault the issued PFX is imported into. The principal running `terraform apply` must hold cert-import rights on this vault (Key Vault Certificates Officer in RBAC mode, or Create/Import on certificates in legacy access-policy mode). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
+  description = "Azure resource ID of the Key Vault the issued PFX is imported into. The principal running `terraform apply` must hold certificate import and update rights on this vault (Key Vault Certificates Officer in RBAC mode, or Get/Import/Update on certificates in legacy access-policy mode; Update applies tag changes to an existing certificate). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
   type        = string
 
   validation {
@@ -113,7 +113,7 @@ variable "key_vault_id" {
 }
 
 variable "friendly_name_prefix" {
-  description = "Short, lowercase name prefix used in the imported certificate's name and as the value of the `Name` tag (e.g. `n8nprod`, `n8ndev`). Mirrors the root module's variable to keep naming/tagging consistent across the IaaS + TLS surfaces. 2–12 chars, lowercase alphanumeric only."
+  description = "Short, lowercase name prefix used in the imported certificate's name, `<friendly_name_prefix>-n8n-tls`, which is also its `Name` tag (e.g. `n8nprod`, `n8ndev`). Mirrors the root module's variable to keep naming/tagging consistent across the IaaS + TLS surfaces. 2–12 chars, lowercase alphanumeric only."
   type        = string
 
   validation {
@@ -122,15 +122,8 @@ variable "friendly_name_prefix" {
   }
 }
 
-# No taggable Azure resource lives in this submodule (azurerm_key_vault_certificate
-# does not carry tags — tags live on the parent vault, which is caller-owned).
-# Kept on the contract so umbrella examples can pass the same `common_tags`
-# they pass to other submodules without bookkeeping divergence; will be
-# consumed automatically if a future Azure resource gains tag support inside
-# this submodule.
-# tflint-ignore: terraform_unused_declarations
 variable "common_tags" {
-  description = "Tags merged onto every taggable resource this submodule creates. The Key Vault Certificate resource itself is not directly taggable on Azure (tags live on the parent vault), so today this only flows into the `Name` tag the caller will see in azurerm_key_vault_certificate plan output. Kept on the contract so a future taggable ACME resource picks the value up automatically."
+  description = "Tags merged onto the Key Vault certificate this submodule imports, on top of the baseline `ManagedBy = terraform` and `Project = n8n` tags (caller values win). The `Name` tag is always set to the certificate name."
   type        = map(string)
   default     = {}
 

@@ -21,8 +21,9 @@ of the root module when a caller supplies an existing certificate — a lighter
   - `DNS Zone Contributor` on the DNS zone (so lego can write the
     DNS-01 validation TXT record).
   - Cert-import rights on the supplied `var.key_vault_id` (Key Vault
-    Certificates Officer in RBAC mode, or `Create` / `Import` on
-    certificates in legacy access-policy mode).
+    Certificates Officer in RBAC mode, or `Get`, `Import`, and
+    `Update` on certificates in legacy access-policy mode). `Update` is
+    what applies tag changes to an existing certificate.
 - Credentials supported by lego's `azuredns` provider on the apply host.
   Service-principal secret authentication uses `AZURE_TENANT_ID`,
   `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET`. Set `AZURE_SUBSCRIPTION_ID`
@@ -63,6 +64,26 @@ module "n8n" {
   # ... remaining root-module inputs
 }
 ```
+
+## Inputs
+
+| Name | Description | Type | Default |
+| ---- | ----------- | ---- | ------- |
+| `acme_email` | Email address registered with Let's Encrypt for issuance and renewal notifications. | `string` | n/a (required) |
+| `domain_name` | Canonical fully qualified domain name. Becomes the certificate's CN. Must be the `dns_zone_name` apex or a subdomain of it. At most 64 characters. | `string` | n/a (required) |
+| `subject_alternative_names` | Additional fully qualified domain names on the certificate. Normalized to lowercase, unique, not repeating `domain_name`, and inside `dns_zone_name`. | `list(string)` | `[]` |
+| `dns_zone_name` | Caller-owned Azure DNS zone used for the DNS-01 challenge. | `string` | n/a (required) |
+| `dns_zone_resource_group_name` | Resource group containing `dns_zone_name`. | `string` | n/a (required) |
+| `key_vault_id` | Resource ID of the caller-owned Key Vault the issued PFX is imported into. | `string` | n/a (required) |
+| `friendly_name_prefix` | Lowercase alphanumeric prefix, 2 to 12 characters. The certificate is named `<friendly_name_prefix>-n8n-tls`. | `string` | n/a (required) |
+| `common_tags` | Tags merged onto the Key Vault certificate, on top of the baseline `ManagedBy = terraform` and `Project = n8n` tags. Caller values win, except `Name`, which is always the certificate name. | `map(string)` | `{}` |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| `app_gateway_tls_cert_secret_id` | Versioned Key Vault Secret URI of the imported certificate (PFX). Pass it to the root module's `app_gateway_tls_cert_secret_id` input. Sensitive. |
+| `certificate_domain_names` | Normalized set of domain names the certificate covers: `domain_name` plus every `subject_alternative_names` entry. |
 
 ## Provider configuration
 

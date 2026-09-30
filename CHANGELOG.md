@@ -33,6 +33,15 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   In a legacy access-policy vault, the principal running `terraform
   apply` now also needs the `Update` certificate permission for that
   tag update.
+- `modules/tls-letsencrypt` applies the same tags to its imported Key
+  Vault certificate: `ManagedBy = terraform`, `Project = n8n`, the
+  caller's `common_tags`, and `Name = <friendly_name_prefix>-n8n-tls`.
+  Before, `common_tags` was accepted but ignored. Existing certificates
+  get an in-place tag update on the next apply; they are not replaced,
+  so when tags are the only change the versioned Secret URI stays the
+  same. In a legacy access-policy vault, the principal running
+  `terraform apply` now also needs the `Update` certificate permission
+  ([#16](https://github.com/n8n-io/terraform-azurerm-n8n/issues/16)).
 
 ## [0.1.0] - 2026-09-29
 
