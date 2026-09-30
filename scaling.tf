@@ -202,16 +202,18 @@ locals {
   }
 
   # Verified upstream 1.12.0 (n8n-hosting #179) removes task-runner sidecars
-  # from queue-mode mains, unchanged through 1.13.0 (that release only reworks
-  # worker/webhook-processor replica ownership and bumps appVersion;
-  # deployment-main.yaml's runner placement is untouched). Previews, older or
-  # future releases and any chart this list has not been checked against keep
-  # the conservative main-sidecar allowance until their topology is verified.
+  # from queue-mode mains, unchanged through 1.14.0 (1.13.0 only reworks
+  # worker/webhook-processor replica ownership; 1.14.0 only renames the
+  # chart's WEBHOOK_URL key, drops an S3-only env var, and aggregates
+  # validation errors; deployment-main.yaml's runner placement is untouched).
+  # Previews, older or future releases and any chart this list has not been
+  # checked against keep the conservative main-sidecar allowance until their
+  # topology is verified.
   # Same shape as terraform-aws-n8n's n8n_chart_has_worker_only_runners, minus
   # its repository check (helm_release.n8n hardcodes the upstream OCI
   # repository here) and its build-metadata strip (n8n_chart_version's
   # validation never admits a "+build" suffix).
-  n8n_chart_has_worker_only_runners = contains(["1.12.0", "1.13.0"], var.n8n_chart_version)
+  n8n_chart_has_worker_only_runners = contains(["1.12.0", "1.13.0", "1.14.0"], var.n8n_chart_version)
   n8n_main_task_runner_cpu_millis   = local.n8n_chart_has_worker_only_runners ? 0 : local.n8n_cpu_request_millis.task_runner
 
   # keda.worker.pause/pausedReplicaCount shipped in chart 1.12.0

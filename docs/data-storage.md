@@ -20,12 +20,11 @@ A Business license without `feat:binaryDataAz` / `feat:executionDataAz` can stil
 ```hcl
 n8n_binary_data_storage_mode    = "database"
 n8n_execution_data_storage_mode = "database"
-n8n_available_binary_data_modes = ["database"]
 ```
 
 This keeps every binary and execution-data write in PostgreSQL and never requires the Azure Blob entitlements. `create_blob_storage` can still default to `true` — the module-managed container simply goes unused — or be set to `false` if you don't want the storage account provisioned at all.
 
-This is a new-deployment recipe, not a migration shortcut. An **existing** deployment already writing to Azure must not switch modes to work around a missing entitlement before following the [Transition procedure](#transition-procedure) below; removing the Azure mode from `n8n_available_binary_data_modes` while objects it wrote are still referenced makes that data unreadable.
+This is a new-deployment recipe, not a migration shortcut. An **existing** deployment already writing to Azure must not switch modes to work around a missing entitlement before following the [Transition procedure](#transition-procedure) below; moving writes to `database` without `azure_blob_retain_read_access = true` while objects it wrote to Azure are still referenced makes that data unreadable.
 
 ## Binary data modes
 
@@ -34,16 +33,16 @@ This is a new-deployment recipe, not a migration shortcut. An **existing** deplo
 - `azure` writes to the private module-managed Blob container. This is the default.
 - `database` writes to PostgreSQL. Use this durable queue-mode backend when the Azure binary-data entitlement is unavailable.
 
-`n8n_available_binary_data_modes` controls which backends n8n may read. It must include the active write mode. Keep every historical backend in this list until all objects in it have expired or have been migrated.
-
-For example, this configuration keeps database-backed objects readable while writes have already moved to Azure:
+n8n reads each binary object from the backend recorded in its ID, so it needs no list of readable modes (n8n 2.x ignores `N8N_AVAILABLE_BINARY_DATA_MODES` and logs it as safe to remove; the module does not render it). What n8n does need is the old backend's connection. PostgreSQL is always connected. Azure is connected whenever a storage mode is `azure`; after moving binary writes from `azure` to `database`, keep it connected with:
 
 ```hcl
-n8n_binary_data_storage_mode    = "azure"
-n8n_available_binary_data_modes = ["database", "azure"]
+n8n_binary_data_storage_mode  = "database"
+azure_blob_retain_read_access = true
 ```
 
-The module renders `N8N_DEFAULT_BINARY_DATA_MODE`, `N8N_AVAILABLE_BINARY_DATA_MODES`, and the required storage connection on main, worker, and webhook pods.
+Leave `azure_blob_retain_read_access = true` until every Azure object has expired or been migrated.
+
+The module renders `N8N_DEFAULT_BINARY_DATA_MODE` and, while Azure is in use or retained, the Azure storage connection on main, worker, and webhook pods.
 
 ## Execution data modes
 
@@ -91,11 +90,11 @@ Changing a mode does not copy or backfill data.
 
 1. Back up the database, encryption key, and every current storage backend.
 2. Keep the old backend mounted, reachable, and authenticated.
-3. Add the new backend to the available mode configuration before changing writes.
+3. Make sure the new backend is connected before changing writes (PostgreSQL always is; Azure needs an `azure` mode or `azure_blob_retain_read_access = true`).
 4. Apply the connection and networking changes.
 5. Change the active write mode and apply again.
 6. Verify new writes and historical reads from every n8n pod family.
 7. Retain the old backend until all references expire or an operator completes a separate migration.
-8. Remove the historical mode only after verification.
+8. Clear `azure_blob_retain_read_access` (when leaving Azure) only after verification.
 
 Removing a mode or backend early makes retained data unreadable. Terraform does not move objects between Blob Storage and PostgreSQL.

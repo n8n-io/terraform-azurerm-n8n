@@ -182,7 +182,7 @@ resource "kubernetes_secret" "n8n_task_runners" {
 }
 
 # ── Helm release ──────────────────────────────────────────────────────────────
-# The chart is pinned to 1.13.0 (see var.n8n_chart_version for the delta
+# The chart is pinned to 1.14.0 (see var.n8n_chart_version for the delta
 # since 1.11.0). The application and task-runner images are pinned to one n8n
 # version so storage and runner protocol changes cannot drift between pod
 # families. Explicit multiMain.setup, wait, atomic, cleanup, and timeout
@@ -213,7 +213,7 @@ resource "helm_release" "n8n" {
       }
     }
 
-    # spec.replicas ownership differs per Deployment on chart 1.13.0:
+    # spec.replicas ownership differs per Deployment on chart 1.14.0:
     # - main: the chart renders it unconditionally (multiMain.replicas or
     #   replicaCount, selected by multiMain.enabled), so it is set to the HPA
     #   floor and a Helm upgrade at the floor never scales main down first.
@@ -276,7 +276,7 @@ resource "helm_release" "n8n" {
       disableProductionWebhooksOnMainProcess = true
 
       # The chart renders executions.data only on main and worker pods
-      # (re-checked on 1.13.0: tests/scripts/check-n8n-chart.sh's duplicate
+      # (re-checked on 1.14.0: tests/scripts/check-n8n-chart.sh's duplicate
       # detector fails if the chart ever adds them to webhook pods too).
       # The webhook process also decides retention when a queued run finishes,
       # so it must receive the same defaults. Keep these role-specific to avoid
@@ -419,7 +419,6 @@ resource "helm_release" "n8n" {
         # write backend does not strand existing objects.
         [
           { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = var.n8n_binary_data_storage_mode },
-          { name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = join(",", var.n8n_available_binary_data_modes) },
           { name = "N8N_EXECUTION_DATA_STORAGE_MODE", value = var.n8n_execution_data_storage_mode },
         ],
         local.n8n_azure_storage_enabled ? concat(
@@ -680,7 +679,7 @@ check "azure_blob_tuning_requires_an_azure_mode" {
       var.azure_blob_endpoint == null &&
       var.azure_blob_binary_retention_days == null
     )
-    error_message = "Azure Blob credentials, endpoint, or retention tuning is set while no active or historical binary or execution-data mode uses Azure. The values are ignored by n8n. Add azure to n8n_available_binary_data_modes, select an Azure storage mode, or clear the inert settings."
+    error_message = "Azure Blob credentials, endpoint, or retention tuning is set while neither storage mode uses Azure and azure_blob_retain_read_access is false. The values are ignored by n8n. Select an Azure storage mode, set azure_blob_retain_read_access = true to keep historical Azure objects readable, or clear the inert settings."
   }
 }
 

@@ -1341,8 +1341,8 @@ run "controllers_and_base_n8n_release_in_plan" {
   }
 
   assert {
-    condition     = helm_release.n8n.version == "1.13.0" && var.n8n_image_tag == "2.35.0"
-    error_message = "The base release must pin chart 1.13.0 and n8n 2.35.0."
+    condition     = helm_release.n8n.version == "1.14.0" && var.n8n_image_tag == "2.35.0"
+    error_message = "The base release must pin chart 1.14.0 and n8n 2.35.0."
   }
 
   assert {
@@ -3147,7 +3147,7 @@ run "azure_binary_defaults_and_disabled_observability_render" {
   assert {
     condition = (
       var.n8n_binary_data_storage_mode == "azure" &&
-      toset(var.n8n_available_binary_data_modes) == toset(["azure"]) &&
+      !var.azure_blob_retain_read_access &&
       var.n8n_execution_data_storage_mode == "database" &&
       local.n8n_azure_storage_enabled
     )
@@ -3158,7 +3158,6 @@ run "azure_binary_defaults_and_disabled_observability_render" {
     condition = alltrue([
       for name, value in {
         N8N_DEFAULT_BINARY_DATA_MODE                = "azure"
-        N8N_AVAILABLE_BINARY_DATA_MODES             = "azure"
         N8N_EXECUTION_DATA_STORAGE_MODE             = "database"
         N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME     = "n8ntestn8nfiles"
         N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME   = "n8n-data"
@@ -3166,6 +3165,14 @@ run "azure_binary_defaults_and_disabled_observability_render" {
       } : one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == name]) == value
     ])
     error_message = "Azure binary defaults and DefaultAzureCredential settings must render through the all-pod environment contract."
+  }
+
+  assert {
+    condition = length([
+      for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
+      if env.name == "N8N_AVAILABLE_BINARY_DATA_MODES"
+    ]) == 0
+    error_message = "N8N_AVAILABLE_BINARY_DATA_MODES must not render; n8n 2.x ignores it and logs it as deprecated."
   }
 
   assert {
@@ -3196,7 +3203,6 @@ run "azure_execution_mode_is_independent_from_binary_mode" {
     create_redis                               = false
     redis_external_host                        = "redis.external.example.com"
     n8n_binary_data_storage_mode               = "database"
-    n8n_available_binary_data_modes            = ["database"]
     n8n_execution_data_storage_mode            = "azure"
     azure_blob_container_stores_execution_data = true
   }
@@ -3316,26 +3322,6 @@ run "rejects_inline_memory_binary_data_storage_mode" {
   expect_failures = [var.n8n_binary_data_storage_mode]
 }
 
-run "rejects_filesystem_available_binary_data_modes" {
-  command = plan
-
-  variables {
-    n8n_available_binary_data_modes = ["azure", "filesystem"]
-  }
-
-  expect_failures = [var.n8n_available_binary_data_modes]
-}
-
-run "rejects_inline_memory_available_binary_data_modes" {
-  command = plan
-
-  variables {
-    n8n_available_binary_data_modes = ["azure", "default"]
-  }
-
-  expect_failures = [var.n8n_available_binary_data_modes]
-}
-
 run "rejects_filesystem_execution_data_storage_mode" {
   command = plan
 
@@ -3361,7 +3347,6 @@ run "database_only_modes_allow_pre_azure_n8n_version" {
 
   variables {
     n8n_binary_data_storage_mode    = "database"
-    n8n_available_binary_data_modes = ["database"]
     n8n_execution_data_storage_mode = "database"
     n8n_image_tag                   = "2.28.9"
   }
@@ -3370,6 +3355,34 @@ run "database_only_modes_allow_pre_azure_n8n_version" {
     condition     = var.n8n_image_tag == "2.28.9" && !local.n8n_azure_storage_enabled
     error_message = "The n8n 2.29 floor must apply to Azure modes rather than an unrelated database-only deployment."
   }
+}
+
+run "retained_azure_read_access_keeps_blob_connection" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+    azure_blob_retain_read_access   = true
+  }
+
+  assert {
+    condition     = local.n8n_azure_storage_enabled && length(azurerm_role_assignment.n8n_blob_data_contributor) == 1
+    error_message = "azure_blob_retain_read_access must keep the Azure connection and Blob role assignment after writes move to database."
+  }
+}
+
+run "retained_azure_read_access_enforces_n8n_2_29_floor" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+    azure_blob_retain_read_access   = true
+    n8n_image_tag                   = "2.28.9"
+  }
+
+  expect_failures = [var.n8n_image_tag]
 }
 
 run "observability_controls_render_on_all_pods" {
@@ -3541,7 +3554,6 @@ run "rejects_storage_and_observability_environment_overrides" {
   variables {
     n8n_extra_env = [
       { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
-      { name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = "filesystem" },
       { name = "N8N_EXECUTION_DATA_STORAGE_MODE", value = "filesystem" },
       { name = "N8N_METRICS", value = "true" },
       { name = "N8N_OTEL_ENABLED", value = "true" },
@@ -7505,6 +7517,44 @@ run "worker_pools_reject_extra_env_overriding_the_pool_name" {
   expect_failures = [var.n8n_worker_pools]
 }
 
+# N8N_AVAILABLE_BINARY_DATA_MODES is in local.n8n_deprecated_env_names, not
+# local.n8n_managed_env_names; each run sets only that name, so a failure
+# proves the dedicated deprecated-name validation fires.
+run "extra_env_rejects_deprecated_binary_data_modes" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [{ name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = "filesystem,s3" }]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "worker_extra_env_rejects_deprecated_binary_data_modes" {
+  command = plan
+
+  variables {
+    n8n_worker_extra_env = [{ name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = "filesystem,s3" }]
+  }
+
+  expect_failures = [var.n8n_worker_extra_env]
+}
+
+run "worker_pools_reject_deprecated_binary_data_modes" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0-preview.workerpools.1"
+    n8n_image_tag     = "2.39.0"
+    n8n_worker_pools = [{
+      name      = "gpu"
+      extra_env = [{ name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = "filesystem,s3" }]
+    }]
+  }
+
+  expect_failures = [var.n8n_worker_pools]
+}
+
 run "worker_pools_reject_extra_env_overriding_a_module_managed_variable" {
   command = plan
 
@@ -7599,8 +7649,8 @@ run "capacity_model_drops_main_runner_on_the_default_chart" {
   command = plan
 
   assert {
-    condition     = var.n8n_chart_version == "1.13.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
-    error_message = "Upstream chart 1.13.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
+    condition     = var.n8n_chart_version == "1.14.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
+    error_message = "Upstream chart 1.14.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
   }
 }
 

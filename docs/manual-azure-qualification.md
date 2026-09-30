@@ -173,7 +173,7 @@ manual `kubectl rollout restart`.
 (by design — the module never reads either payload). After the manual
 restart, main/worker/webhook pods reflect the new credential-overwrite data;
 worker task-runner sidecars reflect the new launcher allow-list (main pods
-carry no sidecar in queue mode on chart 1.13.0).
+carry no sidecar in queue mode on chart 1.14.0).
 
 **Result:** _______________________________________________
 

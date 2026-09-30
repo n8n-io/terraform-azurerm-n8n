@@ -922,7 +922,7 @@ variable "private_dns_zone_id" {
 # ── Binary and execution-data storage modes ───────────────────────────────
 
 variable "n8n_binary_data_storage_mode" {
-  description = "Where n8n writes new binary data. `azure` (the default) writes to the private module-managed Blob container and requires the separate `feat:binaryDataAz` Enterprise entitlement. `database` stores binary data in PostgreSQL and is the durable queue-mode fallback when that entitlement is unavailable. 0.1.0 does not support the inline-memory `default` mode or a shared-filesystem mode. Changing this value does not move existing objects; keep every historical backend in n8n_available_binary_data_modes until its data expires or is migrated."
+  description = "Where n8n writes new binary data. `azure` (the default) writes to the private module-managed Blob container and requires the separate `feat:binaryDataAz` Enterprise entitlement. `database` stores binary data in PostgreSQL and is the durable queue-mode fallback when that entitlement is unavailable. 0.1.0 does not support the inline-memory `default` mode or a shared-filesystem mode. Changing this value does not move existing objects; n8n reads each object from the backend recorded in its ID, so when moving writes from azure to database set azure_blob_retain_read_access = true until the Azure objects expire or are migrated."
   type        = string
   default     = "azure"
   nullable    = false
@@ -931,27 +931,15 @@ variable "n8n_binary_data_storage_mode" {
     condition     = contains(["database", "azure"], var.n8n_binary_data_storage_mode)
     error_message = "n8n_binary_data_storage_mode must be either database or azure. 0.1.0 does not support the inline-memory default mode or filesystem."
   }
-
-  validation {
-    condition     = contains(var.n8n_available_binary_data_modes, var.n8n_binary_data_storage_mode)
-    error_message = "n8n_available_binary_data_modes must include n8n_binary_data_storage_mode so n8n can read data written by its active backend."
-  }
 }
 
-variable "n8n_available_binary_data_modes" {
-  description = "Binary-data backends n8n may read, rendered as N8N_AVAILABLE_BINARY_DATA_MODES. Include the active n8n_binary_data_storage_mode and every historical backend that still contains retained objects. Supported values are database and azure. Removing a mode does not migrate data and makes objects in that backend unreadable."
-  type        = list(string)
-  default     = ["azure"]
+variable "azure_blob_retain_read_access" {
+  description = "Keep the Azure Blob connection settings and the workload identity's Blob role assignment in place when neither n8n_binary_data_storage_mode nor n8n_execution_data_storage_mode is azure, so n8n can still read objects it wrote to Azure before writes moved to database. n8n selects the backend per object from the ID it stored, so no n8n-side mode list is needed. Leave false for a deployment that never wrote to Azure; clearing it while retained Azure objects are still referenced makes them unreadable."
+  type        = bool
+  default     = false
   nullable    = false
 
-  validation {
-    condition = (
-      length(var.n8n_available_binary_data_modes) > 0 &&
-      length(distinct(var.n8n_available_binary_data_modes)) == length(var.n8n_available_binary_data_modes) &&
-      alltrue([for mode in var.n8n_available_binary_data_modes : contains(["database", "azure"], mode)])
-    )
-    error_message = "n8n_available_binary_data_modes must be a non-empty list containing unique database or azure values. 0.1.0 does not support the inline-memory default mode or filesystem."
-  }
+  # no validation: a plain bool needs no additional constraint.
 }
 
 variable "n8n_execution_data_storage_mode" {
@@ -995,9 +983,9 @@ variable "keda_chart_version" {
 }
 
 variable "n8n_chart_version" {
-  description = "n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default 1.13.0 matches the AWS sibling's pin. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner, and the first upgrade from an older chart resets the worker count to 1, terminating any surplus worker pods, until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount are usable (added in chart 1.12.0 by #177, reliable only from 1.13.0; see n8n_worker_keda_pause). Inert here: the chart's image.tag default moving from a floating stable tag to its appVersion (this module always sets n8n_image_tag) and the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject)."
+  description = "n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default 1.14.0 matches the AWS sibling's pin. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner, and the first upgrade from an older chart resets the worker count to 1, terminating any surplus worker pods, until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount are usable (added in chart 1.12.0 by #177, reliable only from 1.13.0; see n8n_worker_keda_pause). Inert here: the chart's image.tag default moving from a floating stable tag to its appVersion (this module always sets n8n_image_tag), the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject), and 1.14.0's WEBHOOK_URL to N8N_WEBHOOK_URL rename (chart #184), S3-only N8N_AVAILABLE_BINARY_DATA_MODES removal (chart #185), and aggregated values-validation errors (chart #209): this module sets neither webhook.url nor ingress nor s3 and renders its own N8N_WEBHOOK_URL."
   type        = string
-  default     = "1.13.0"
+  default     = "1.14.0"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-.+)?$", var.n8n_chart_version))
@@ -1028,7 +1016,7 @@ variable "n8n_image_tag" {
 
   validation {
     condition = !can(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)) ? true : (
-      contains(var.n8n_available_binary_data_modes, "azure") || var.n8n_execution_data_storage_mode == "azure" ? (
+      local.n8n_azure_storage_enabled ? (
         tonumber(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)[0]) > 2 ? true : (
           tonumber(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)[0]) == 2 ? (
             tonumber(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)[1]) >= 29
@@ -1036,7 +1024,7 @@ variable "n8n_image_tag" {
         )
       ) : true
     )
-    error_message = "n8n_image_tag must be 2.29.0 or later when Azure is an active or historical binary-data mode or the execution-data mode."
+    error_message = "n8n_image_tag must be 2.29.0 or later when a binary or execution-data mode is azure or azure_blob_retain_read_access is true."
   }
 
   validation {
@@ -1945,7 +1933,7 @@ variable "n8n_task_runner_image_tag" {
 }
 
 variable "n8n_task_runner_cpu_request" {
-  description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every worker replica when task runners are enabled, and for every main replica only when n8n_chart_version is not one of the upstream charts verified to place runners on workers alone (1.12.0 and 1.13.0, n8n-hosting #179): on those, queue-mode main pods carry no sidecar because n8n offloads manual executions to workers, so the main ceiling is not multiplied by this."
+  description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every worker replica when task runners are enabled, and for every main replica only when n8n_chart_version is not one of the upstream charts verified to place runners on workers alone (1.12.0, 1.13.0, and 1.14.0, n8n-hosting #179): on those, queue-mode main pods carry no sidecar because n8n offloads manual executions to workers, so the main ceiling is not multiplied by this."
   type        = string
   default     = "200m"
   nullable    = false
@@ -2364,6 +2352,11 @@ variable "n8n_extra_env" {
   }
 
   validation {
+    condition     = !anytrue([for e in var.n8n_extra_env : contains(local.n8n_deprecated_env_names, e.name)])
+    error_message = "n8n_extra_env must not set deprecated n8n variables (${join(", ", local.n8n_deprecated_env_names)}). n8n ignores them and logs a deprecation warning on every start; remove the entry."
+  }
+
+  validation {
     condition = alltrue([
       for env in var.n8n_extra_env : !(
         contains(local.n8n_managed_env_names, env.name) ||
@@ -2391,6 +2384,11 @@ variable "n8n_worker_extra_env" {
   validation {
     condition     = length(distinct([for env in var.n8n_worker_extra_env : env.name])) == length(var.n8n_worker_extra_env)
     error_message = "n8n_worker_extra_env must not contain duplicate names."
+  }
+
+  validation {
+    condition     = !anytrue([for e in var.n8n_worker_extra_env : contains(local.n8n_deprecated_env_names, e.name)])
+    error_message = "n8n_worker_extra_env must not set deprecated n8n variables (${join(", ", local.n8n_deprecated_env_names)}). n8n ignores them and logs a deprecation warning on every start; remove the entry."
   }
 
   validation {
@@ -2470,6 +2468,15 @@ variable "n8n_worker_pools" {
   validation {
     condition     = alltrue([for p in var.n8n_worker_pools : p.concurrency == null ? true : (p.concurrency == floor(p.concurrency) && p.concurrency >= 1)])
     error_message = "n8n_worker_pools concurrency must be a whole number of concurrent jobs, 1 or greater, or null to inherit n8n_worker_concurrency."
+  }
+
+  validation {
+    condition = !anytrue(flatten([
+      for p in var.n8n_worker_pools : [
+        for e in p.extra_env : contains(local.n8n_deprecated_env_names, e.name)
+      ]
+    ]))
+    error_message = "n8n_worker_pools extra_env must not set deprecated n8n variables (${join(", ", local.n8n_deprecated_env_names)}). n8n ignores them and logs a deprecation warning on every start; remove the entry."
   }
 
   validation {

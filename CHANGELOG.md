@@ -533,6 +533,39 @@ in your own subscription before relying on the one-apply lifecycle.
   preview chart and do not pick up either change until a new preview
   build is cut. New `docs/upgrading-n8n.md` (the counterpart of the AWS
   and GCP siblings' guide) carries the per-version upgrade notes.
+- **Default `n8n_chart_version` bumped to `1.14.0`** (was `1.13.0`).
+  - Chart `appVersion` moves from n8n `2.40.5` to `2.41.4` (n8n-hosting
+    #213); n8n 2.41.0 through 2.41.4 list no breaking changes. Inert here:
+    this module always pins `n8n_image_tag` (default stays `2.35.0`).
+  - No changes to the replica, KEDA, or task-runner templates;
+    `deployment-main.yaml` is unchanged, so `1.14.0` joins
+    `local.n8n_chart_has_worker_only_runners`.
+  - #185: the chart stops rendering `N8N_AVAILABLE_BINARY_DATA_MODES`, which
+    n8n deprecated and warns about on every start. The module no longer sets
+    it either, so the warning is gone. `n8n_extra_env`,
+    `n8n_worker_extra_env`, and `n8n_worker_pools[*].extra_env` reject it at
+    plan time through the new `local.n8n_deprecated_env_names`, and
+    `tests/scripts/check-n8n-chart.sh` fails if it is ever rendered.
+    Callers who currently set it through one of those inputs get a
+    plan-time error until they remove the entry. Every n8n pod rolls once
+    for the env removal.
+  - #184 (missing from the upstream release notes): the chart's ConfigMap
+    now emits `N8N_WEBHOOK_URL` instead of `WEBHOOK_URL`. No effect here:
+    the chart emits it only from `webhook.url` or chart ingress, which this
+    module sets neither of, and the module renders `N8N_WEBHOOK_URL` itself
+    through `config.extraEnv`.
+  - #209: chart values validation now reports every failure in one render.
+- **Breaking: `n8n_available_binary_data_modes` removed, replaced by
+  `azure_blob_retain_read_access`** (bool, default `false`). Azure-only:
+  the list existed only to render `N8N_AVAILABLE_BINARY_DATA_MODES`, which
+  n8n 2.x never reads (`BinaryDataConfig.availableModes` has no `@Env`
+  binding). Its one live effect in the module was keeping the Azure
+  connection and Blob role assignment after binary writes moved to
+  `database`; set `azure_blob_retain_read_access = true` for that. The
+  "must include the active write mode" validation is gone with it. No
+  alias: this module is pre-release. Callers who set
+  `n8n_available_binary_data_modes` must delete it, and add the new flag
+  if it contained `azure` while writes are on `database`.
 - CI toolchain currency: `TF_VERSION` `1.16.2` (was `1.15.1`),
   `TFLINT_VERSION` `v0.64.0` (was `v0.53.0`), pinned `CHECKOV_VERSION`
   `3.3.17` (was unpinned via `bridgecrewio/checkov-action@v12`'s own
