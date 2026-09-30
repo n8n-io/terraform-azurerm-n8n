@@ -77,7 +77,22 @@ The module SHALL NOT expose Azure inputs that only imitate AWS features without 
 
 #### Scenario: Review the parity surface
 - **WHEN** an operator reads the customer-managed infrastructure documentation
-- **THEN** the documentation SHALL identify excluded AWS-only capabilities and SHALL not claim support for keyless n8n Azure Key Vault external secrets, IAM permission boundaries, AWS KMS controls, RDS snapshot restoration, or EBS CSI ownership
+- **THEN** the documentation SHALL identify excluded AWS-only capabilities and SHALL not claim support for keyless n8n Azure Key Vault external secrets, IAM permission boundaries, AWS KMS controls on Storage or PostgreSQL, RDS snapshot restoration, or EBS CSI ownership
+
+### Requirement: AKS Key Vault-backed add-ons
+The root module SHALL support optionally enabling the AKS Key Vault Secrets Provider add-on and AKS KMS etcd encryption against a caller-owned Key Vault, both gated on module-managed AKS, and SHALL only optionally manage the minimum role assignment each add-on's identity needs.
+
+#### Scenario: Enable the Key Vault Secrets Provider add-on
+- **WHEN** a caller enables the Key Vault Secrets Provider add-on with module-managed AKS
+- **THEN** the module SHALL configure the AKS-managed Secrets Store CSI driver add-on with autorotation and SHALL grant its auto-created identity Key Vault Secrets User on a caller-named vault only when the caller also enables that role assignment
+
+#### Scenario: Enable KMS etcd encryption
+- **WHEN** a caller supplies a Key Vault key identifier for KMS etcd encryption with module-managed AKS
+- **THEN** the module SHALL configure AKS KMS etcd encryption using that key and SHALL grant the cluster's own identity Key Vault Crypto Service Encryption User on a caller-named vault only when the caller also enables that role assignment
+
+#### Scenario: Reject Key Vault add-ons without module-managed AKS
+- **WHEN** either Key Vault-backed add-on is enabled while AKS creation is disabled
+- **THEN** Terraform planning SHALL fail because there is no module-managed cluster resource to attach the add-on to
 
 ### Requirement: Pre-release state boundary
 The modularity change SHALL NOT promise Terraform state compatibility for resources whose addresses change because of ownership gates or controller extraction.

@@ -171,6 +171,33 @@ resource "azurerm_kubernetes_cluster" "n8n" {
     }
   }
 
+  # Key Vault Secrets Provider add-on (Secrets Store CSI driver). The addon
+  # manages its own identity (exposed as key_vault_secrets_provider[0].secret_identity);
+  # see iam.tf for the optional role assignment granting that identity read
+  # access to a caller-named vault.
+  dynamic "key_vault_secrets_provider" {
+    for_each = var.aks_key_vault_secrets_provider_enabled ? [1] : []
+
+    content {
+      secret_rotation_enabled  = true
+      secret_rotation_interval = var.aks_key_vault_secrets_provider_secret_rotation_interval
+    }
+  }
+
+  # KMS etcd encryption. See the sequencing note above
+  # var.aks_kms_key_vault_key_id in variables.tf: the cluster's own identity
+  # must already hold Key Vault Crypto Service Encryption User on the vault
+  # before this block can be enabled, which on a first-time enable requires
+  # a prior apply.
+  dynamic "key_management_service" {
+    for_each = var.aks_kms_key_vault_key_id != null ? [1] : []
+
+    content {
+      key_vault_key_id         = var.aks_kms_key_vault_key_id
+      key_vault_network_access = var.aks_kms_key_vault_network_access
+    }
+  }
+
   tags = merge(local.common_tags, { Name = local.cluster_name })
 
   # The cluster autoscaler owns default_node_pool[0].node_count after
@@ -328,4 +355,22 @@ data "azurerm_kubernetes_cluster" "existing" {
 
   name                = var.existing_aks_cluster_name
   resource_group_name = var.existing_aks_resource_group_name
+}
+
+# ── Key Vault-backed add-on guards ──────────────────────────────────────
+# Both toggles set an argument on azurerm_kubernetes_cluster.n8n, which only
+# exists when this module manages the cluster. Mirrors
+# keyvault_role_assignment_requires_module_managed_ingress in keyvault.tf.
+check "aks_key_vault_secrets_provider_requires_module_managed_aks" {
+  assert {
+    condition     = var.create_aks ? true : !var.aks_key_vault_secrets_provider_enabled
+    error_message = "aks_key_vault_secrets_provider_enabled is true while create_aks is false, so there is no module-managed AKS cluster to attach the Key Vault Secrets Provider add-on to. Enable the add-on on the existing cluster out-of-band, or set create_aks = true."
+  }
+}
+
+check "aks_kms_requires_module_managed_aks" {
+  assert {
+    condition     = var.create_aks ? true : var.aks_kms_key_vault_key_id == null
+    error_message = "aks_kms_key_vault_key_id is set while create_aks is false, so there is no module-managed AKS cluster to configure KMS etcd encryption on. Configure KMS on the existing cluster out-of-band, or set create_aks = true."
+  }
 }

@@ -886,6 +886,230 @@ run "rejects_aks_api_warmup_seconds_below_floor" {
   ]
 }
 
+run "rejects_malformed_aks_key_vault_secrets_provider_secret_rotation_interval" {
+  command = plan
+
+  variables {
+    aks_key_vault_secrets_provider_secret_rotation_interval = "two minutes"
+  }
+
+  expect_failures = [
+    var.aks_key_vault_secrets_provider_secret_rotation_interval,
+  ]
+}
+
+run "rejects_malformed_aks_key_vault_secrets_provider_keyvault_id" {
+  command = plan
+
+  variables {
+    aks_key_vault_secrets_provider_keyvault_id = "not-a-keyvault-id"
+  }
+
+  expect_failures = [
+    var.aks_key_vault_secrets_provider_keyvault_id,
+  ]
+}
+
+run "rejects_aks_key_vault_secrets_provider_role_assignment_without_keyvault_id" {
+  command = plan
+
+  variables {
+    aks_key_vault_secrets_provider_role_assignment_enabled = true
+  }
+
+  expect_failures = [
+    var.aks_key_vault_secrets_provider_keyvault_id,
+  ]
+}
+
+run "rejects_malformed_aks_kms_key_vault_key_id" {
+  command = plan
+
+  variables {
+    aks_kms_key_vault_key_id = "https://example.com/not-a-key"
+  }
+
+  expect_failures = [
+    var.aks_kms_key_vault_key_id,
+  ]
+}
+
+run "rejects_malformed_aks_kms_key_vault_network_access" {
+  command = plan
+
+  variables {
+    aks_kms_key_vault_network_access = "Everywhere"
+  }
+
+  expect_failures = [
+    var.aks_kms_key_vault_network_access,
+  ]
+}
+
+run "rejects_malformed_aks_kms_key_vault_id" {
+  command = plan
+
+  variables {
+    aks_kms_key_vault_id = "not-a-keyvault-id"
+  }
+
+  expect_failures = [
+    var.aks_kms_key_vault_id,
+  ]
+}
+
+run "rejects_aks_kms_role_assignment_without_keyvault_id" {
+  command = plan
+
+  variables {
+    aks_kms_role_assignment_enabled = true
+  }
+
+  expect_failures = [
+    var.aks_kms_key_vault_id,
+  ]
+}
+
+run "aks_key_vault_secrets_provider_and_kms_render_when_enabled" {
+  command = plan
+
+  variables {
+    aks_key_vault_secrets_provider_enabled                  = true
+    aks_key_vault_secrets_provider_secret_rotation_interval = "5m"
+    aks_kms_key_vault_key_id                                = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd/abc123"
+    aks_kms_key_vault_network_access                        = "Private"
+  }
+
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider[0].secret_rotation_enabled == true &&
+      azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider[0].secret_rotation_interval == "5m"
+    )
+    error_message = "key_vault_secrets_provider must render with autorotation on and the caller-supplied poll interval when aks_key_vault_secrets_provider_enabled is true."
+  }
+
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster.n8n[0].key_management_service[0].key_vault_key_id == var.aks_kms_key_vault_key_id &&
+      azurerm_kubernetes_cluster.n8n[0].key_management_service[0].key_vault_network_access == "Private"
+    )
+    error_message = "key_management_service must render with the caller-supplied key ID and network access when aks_kms_key_vault_key_id is set."
+  }
+}
+
+run "aks_key_vault_secrets_provider_and_kms_omitted_by_default" {
+  command = plan
+
+  assert {
+    condition = (
+      length(azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider) == 0 &&
+      length(azurerm_kubernetes_cluster.n8n[0].key_management_service) == 0 &&
+      length(azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user) == 0 &&
+      length(azurerm_role_assignment.aks_kms_kv_crypto_user) == 0
+    )
+    error_message = "Neither the Key Vault Secrets Provider add-on, KMS etcd encryption, nor their role assignments must render by default."
+  }
+}
+
+run "aks_key_vault_secrets_provider_role_uses_minimum_scope" {
+  command = plan
+
+  variables {
+    create_ingress                                         = false
+    aks_key_vault_secrets_provider_enabled                 = true
+    aks_key_vault_secrets_provider_keyvault_id             = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-shared-rg/providers/Microsoft.KeyVault/vaults/n8ntest-shared-kv"
+    aks_key_vault_secrets_provider_role_assignment_enabled = true
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.n8n[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ContainerService/managedClusters/n8ntest-aks"
+      key_vault_secrets_provider = {
+        secret_identity = [{
+          object_id = "77777777-7777-7777-7777-777777777777"
+        }]
+      }
+    }
+  }
+
+  assert {
+    condition = (
+      length(azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user) == 1 &&
+      azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user[0].scope == var.aks_key_vault_secrets_provider_keyvault_id &&
+      azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user[0].role_definition_name == "Key Vault Secrets User" &&
+      azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user[0].principal_id == "77777777-7777-7777-7777-777777777777"
+    )
+    error_message = "The Key Vault Secrets Provider add-on's identity must receive only Key Vault Secrets User at the supplied vault scope."
+  }
+}
+
+run "aks_kms_role_uses_minimum_scope" {
+  command = plan
+
+  variables {
+    create_ingress                  = false
+    aks_kms_role_assignment_enabled = true
+    aks_kms_key_vault_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-shared-rg/providers/Microsoft.KeyVault/vaults/n8ntest-shared-kv"
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.n8n[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ContainerService/managedClusters/n8ntest-aks"
+      identity = {
+        principal_id = "88888888-8888-8888-8888-888888888888"
+      }
+    }
+  }
+
+  assert {
+    condition = (
+      length(azurerm_role_assignment.aks_kms_kv_crypto_user) == 1 &&
+      azurerm_role_assignment.aks_kms_kv_crypto_user[0].scope == var.aks_kms_key_vault_id &&
+      azurerm_role_assignment.aks_kms_kv_crypto_user[0].role_definition_name == "Key Vault Crypto Service Encryption User" &&
+      azurerm_role_assignment.aks_kms_kv_crypto_user[0].principal_id == "88888888-8888-8888-8888-888888888888"
+    )
+    error_message = "The cluster identity must receive only Key Vault Crypto Service Encryption User at the supplied vault scope."
+  }
+}
+
+run "rejects_aks_key_vault_secrets_provider_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_key_vault_secrets_provider_enabled       = true
+  }
+
+  expect_failures = [
+    check.aks_key_vault_secrets_provider_requires_module_managed_aks,
+  ]
+}
+
+run "rejects_aks_kms_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_kms_key_vault_key_id                     = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd/abc123"
+  }
+
+  expect_failures = [
+    check.aks_kms_requires_module_managed_aks,
+  ]
+}
+
 # ── AKS network/identity hardening (issue #28) ──────────────────────────────
 
 run "rejects_private_cluster_with_authorized_ip_ranges" {

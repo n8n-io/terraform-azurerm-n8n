@@ -551,6 +551,66 @@ another in-cluster process, so caller ownership of it does not reduce
 Terraform's exposure the way it does for the license key, encryption key, or
 database/queue credentials.
 
+### Delivering secrets from Azure Key Vault
+
+This module never reads Key Vault values into Terraform, and it never
+creates a Key Vault. Two opt-in AKS add-ons let a caller sync Key Vault
+objects into the same Kubernetes Secrets the `*_secret_ref` inputs above
+already read, without adding any static credential to Terraform state.
+
+**Key Vault Secrets Provider add-on (`aks_key_vault_secrets_provider_enabled`).**
+When `true` and `create_aks = true`, this module enables the AKS-managed
+Secrets Store CSI driver add-on
+(`azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider`) with
+autorotation on. The add-on creates and manages its own identity; this
+module only optionally grants that identity `Key Vault Secrets User` on a
+caller-named vault when both `aks_key_vault_secrets_provider_role_assignment_enabled
+= true` and `aks_key_vault_secrets_provider_keyvault_id` are set. When the
+toggle is `false` (default), grant that identity access out-of-band instead
+(for example a vault in RBAC mode with your own `azurerm_role_assignment`).
+`aks_key_vault_secrets_provider_secret_rotation_interval` controls the
+autorotation poll interval (default `2m`, matching the AKS default).
+
+With the add-on enabled, mount a `SecretProviderClass` (a Kubernetes CRD this
+module does not manage) that references the vault objects to sync, and set
+its `secretObjects` field to project them into a Kubernetes Secret matching
+the name and keys one of the `*_secret_ref` inputs expects. For
+`n8n_encryption_key_secret_ref`, that Secret must carry all four keys —
+`N8N_ENCRYPTION_KEY`, `N8N_HOST`, `N8N_PORT`, and `N8N_PROTOCOL` — so the
+`SecretProviderClass` needs vault objects for all four (the last three can be
+plain Key Vault secrets holding static values if they don't need rotation).
+See [Microsoft's Secrets Store CSI Driver
+documentation](https://learn.microsoft.com/azure/aks/csi-secrets-store-driver)
+for the `SecretProviderClass` schema. External Secrets Operator is an
+equally valid alternative sync mechanism; this module does not install it,
+but the same target-Secret contract applies regardless of which syncer a
+caller chooses.
+
+**KMS etcd encryption (`aks_kms_key_vault_key_id`).** Set this input (a Key
+Vault key identifier) and `create_aks = true` to enable AKS's Key Management
+Service etcd encryption
+(`azurerm_kubernetes_cluster.n8n[0].key_management_service`) using a
+caller-owned Key Vault key instead of Microsoft's platform-managed key.
+`aks_kms_key_vault_network_access` selects `"Public"` (default) or
+`"Private"` vault network access.
+
+Azure requires the cluster's own identity to already hold `Key Vault Crypto
+Service Encryption User` on the vault **before** KMS can be enabled, and a
+brand-new cluster's `SystemAssigned` identity does not exist until the
+cluster itself is created. Enabling KMS on a cluster this module creates
+therefore takes **two applies**:
+
+1. First apply: set `aks_kms_role_assignment_enabled = true` and
+   `aks_kms_key_vault_id` to the vault, but leave `aks_kms_key_vault_key_id =
+   null`. This creates the cluster and grants its identity the role.
+2. Second apply: set `aks_kms_key_vault_key_id`. AKS enables KMS as an
+   update against the now-authorized identity.
+
+Skipping the first apply, or granting the role out-of-band before the first
+apply against a pre-existing identity, also works — the two-apply sequence
+is only required when this module both creates the cluster and manages the
+role assignment in the same configuration.
+
 ## Secrets that remain in Terraform state
 
 Every credential this module generates or reads for a **module-managed**
@@ -830,7 +890,6 @@ n8n's Redis client support before revisiting this. Until then, treat
 encrypted, access-restricted remote state as the mitigation for this
 credential, the same as for the n8n encryption key and task-runner token
 above.
-
 ## Direct controller composition
 
 `modules/controllers` installs KEDA and is directly callable outside the
@@ -902,9 +961,12 @@ planned for a future parity pass without one:
   no direct equivalent to an AWS IAM permission boundary, and this module
   does not attempt to approximate one with Azure Policy or scoped custom
   roles.
-- **AWS KMS controls.** Azure Storage and PostgreSQL Flexible Server encrypt
-  data at rest by default without an equivalent caller-supplied CMK control
-  surface in this module.
+- **AWS KMS controls on Storage and PostgreSQL.** Azure Storage and
+  PostgreSQL Flexible Server encrypt data at rest by default without an
+  equivalent caller-supplied CMK control surface in this module. (AKS etcd
+  encryption with a caller-owned Key Vault key is supported — see
+  `aks_kms_key_vault_key_id` in [Delivering secrets from Azure Key
+  Vault](#delivering-secrets-from-azure-key-vault).)
 - **RDS snapshot restoration.** PostgreSQL Flexible Server's backup/restore
   model is caller-operated outside Terraform; this module does not expose a
   restore-from-snapshot input.

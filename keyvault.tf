@@ -35,3 +35,29 @@ check "keyvault_role_assignment_requires_module_managed_ingress" {
     error_message = "app_gateway_keyvault_role_assignment_enabled is true while create_ingress is false, so there is no module-managed Application Gateway identity to grant access. Manage certificate access on the caller-owned gateway or disable the toggle."
   }
 }
+
+# ── Key Vault Secrets Provider add-on access ────────────────────────────────
+# The add-on (aks.tf) creates and manages its own identity; this grants that
+# identity read access to a caller-named vault so SecretProviderClass objects
+# in that vault can sync into the Secrets the *_secret_ref inputs read (see
+# docs/customer-managed-infrastructure.md for the full pattern).
+resource "azurerm_role_assignment" "aks_key_vault_secrets_provider_kv_secrets_user" {
+  count = var.create_aks && var.aks_key_vault_secrets_provider_role_assignment_enabled ? 1 : 0
+
+  scope                = var.aks_key_vault_secrets_provider_keyvault_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider[0].secret_identity[0].object_id
+}
+
+# ── AKS KMS etcd encryption access ──────────────────────────────────────────
+# Azure requires the cluster's own identity to already hold this role on the
+# key vault before key_management_service (aks.tf) can be enabled — see the
+# two-apply sequencing note above var.aks_kms_key_vault_key_id in
+# variables.tf.
+resource "azurerm_role_assignment" "aks_kms_kv_crypto_user" {
+  count = var.create_aks && var.aks_kms_role_assignment_enabled ? 1 : 0
+
+  scope                = var.aks_kms_key_vault_id
+  role_definition_name = "Key Vault Crypto Service Encryption User"
+  principal_id         = azurerm_kubernetes_cluster.n8n[0].identity[0].principal_id
+}
