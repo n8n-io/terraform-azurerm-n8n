@@ -15,7 +15,7 @@ A sustained-production reference tier with more warm AKS and n8n capacity than `
 | Storage | Private Azure Blob with ZRS |
 | Ingress | WAF_v2 autoscaling from 2 to 10 instances |
 
-Storage autogrow only grows `pg_storage_mb`, it never shrinks it. After Azure grows the live server past 128 GB, raise `pg_storage_mb` to at least the new live size before the next apply, or the plan will try to shrink storage back down and Azure will reject it.
+Storage autogrow only grows `pg_storage_mb`, it never shrinks it. After Azure grows the live server past 128 GB, raise `pg_storage_mb` to at least the new live size before the next apply, or Terraform plans to **destroy and recreate the entire server** (data loss) instead of failing cleanly, since Azure cannot shrink storage in place. Set `pg_storage_drift_guard_enabled = true` on a later apply (once the server already exists) to turn that into a clean precondition failure instead.
 
 At all workload ceilings, the configured CPU requests remain below the module's modeled supply from two 10-node D8s_v5 pools. This is not a throughput guarantee. Benchmark representative workflows and inspect memory, database connections, queue latency, and external API latency.
 

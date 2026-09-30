@@ -854,6 +854,60 @@ run "pg_storage_auto_grow_enabled_renders_on_managed_server" {
   }
 }
 
+run "pg_storage_drift_guard_disabled_by_default_creates_no_data_source" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled = true
+  }
+
+  assert {
+    condition     = length(data.azurerm_postgresql_flexible_server.current) == 0
+    error_message = "No live-storage data source must be read when pg_storage_drift_guard_enabled is false (the default)."
+  }
+}
+
+run "pg_storage_drift_guard_passes_when_pg_storage_mb_covers_the_live_size" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled   = true
+    pg_storage_drift_guard_enabled = true
+    pg_storage_mb                  = 65536
+  }
+
+  override_data {
+    target = data.azurerm_postgresql_flexible_server.current[0]
+    values = {
+      storage_mb = 65536
+    }
+  }
+
+  assert {
+    condition     = length(data.azurerm_postgresql_flexible_server.current) == 1
+    error_message = "The live-storage data source must be read when both autogrow and the drift guard are enabled."
+  }
+}
+
+run "pg_storage_drift_guard_blocks_apply_when_pg_storage_mb_is_stale" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled   = true
+    pg_storage_drift_guard_enabled = true
+    pg_storage_mb                  = 32768
+  }
+
+  override_data {
+    target = data.azurerm_postgresql_flexible_server.current[0]
+    values = {
+      storage_mb = 65536
+    }
+  }
+
+  expect_failures = [azurerm_postgresql_flexible_server.n8n[0]]
+}
+
 run "rejects_pg_storage_auto_grow_enabled_without_managed_database" {
   command = plan
 

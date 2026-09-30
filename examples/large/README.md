@@ -16,7 +16,7 @@ A high-volume Azure reference topology with larger network ranges, zone-redundan
 | Blob | Private endpoint, ZRS, binary and execution-data modes |
 | Ingress | WAF_v2 Prevention mode, autoscaling from 2 to 30 instances |
 
-Storage autogrow only grows `storage_mb`, it never shrinks it. After Azure grows the live server past 512 GB, raise `storage_mb` on `azurerm_postgresql_flexible_server.n8n` to at least the new live size before the next apply, or the plan will try to shrink storage back down and Azure will reject it (or force a replacement).
+Storage autogrow only grows `pg_storage_mb`, it never shrinks it. After Azure grows the live server past 512 GB, raise `pg_storage_mb` to at least the new live size before the next apply, or Terraform plans to **destroy and recreate the entire server** (data loss) instead of failing cleanly, since Azure cannot shrink storage in place. Set `pg_storage_drift_guard_enabled = true` on a later apply (once the server already exists) to turn that into a clean precondition failure instead.
 
 The maximum n8n CPU requests fit the module's two-pool AKS model. PgBouncer bounds PostgreSQL server connections when all pod families scale out. This configuration is not a throughput guarantee. Load-test representative workflows and measure PostgreSQL I/O, connection waits, Redis queue latency, Blob latency, pod startup, and downstream service limits.
 
