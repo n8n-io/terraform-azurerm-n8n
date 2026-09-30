@@ -720,13 +720,20 @@ fi
 
 # `az aks get-credentials` (non-admin) against an Entra ID (AAD RBAC)
 # cluster (issue #28's aks_entra_rbac) writes an exec-plugin kubeconfig
-# defaulting to kubelogin's interactive devicecode login mode, which hangs
-# forever non-interactively. Convert to azurecli mode so kubelogin reuses
-# this operator's already-authenticated `az login` session instead — a
-# no-op (confirmed: no kubeconfig diff) when the cluster has no AAD
-# integration and the kubeconfig is a plain client-certificate credential,
-# so this is safe to run unconditionally.
-kubelogin convert-kubeconfig -l azurecli &>/dev/null || true
+# referencing kubelogin, defaulting to its interactive devicecode login
+# mode, which hangs forever non-interactively. Convert to azurecli mode so
+# kubelogin reuses this operator's already-authenticated `az login` session
+# instead. Detect whether conversion is even needed by checking for the
+# kubelogin exec plugin in the written kubeconfig first — a non-AAD cluster
+# yields a plain client-certificate kubeconfig with no such plugin
+# (confirmed: no kubeconfig diff), so skip the call entirely there rather
+# than silently ignoring a failure that only matters for Entra clusters.
+if grep -q 'command: kubelogin' "$KUBECONFIG_TMP" 2>/dev/null; then
+  if ! kubelogin convert-kubeconfig -l azurecli &>/dev/null; then
+    fail "kubelogin convert-kubeconfig failed — Entra kubeconfig is still in interactive devicecode mode and 'kubectl cluster-info' will hang; install/upgrade kubelogin and rerun"
+    exit 1
+  fi
+fi
 pass "kubeconfig populated for $AKS_CLUSTER_NAME"
 
 if ! kubectl cluster-info &>/dev/null; then
