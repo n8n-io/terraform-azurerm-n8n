@@ -192,6 +192,91 @@ variable "aks_node_os_disk_size_gb" {
   }
 }
 
+# ── AKS network/identity hardening (issue #28) ──────────────────────────
+# Four independently opt-in toggles, each defaulting to the module's current
+# public-endpoint / local-account / load-balancer-egress / no-network-policy
+# behavior so an existing caller sees no plan diff. Wired into
+# azurerm_kubernetes_cluster.n8n in aks.tf.
+
+variable "aks_private_cluster_enabled" {
+  description = "When true, the AKS API server gets no public endpoint (`private_cluster_enabled`) — only reachable from inside var.vnet_id (or a peered/VPN-connected network). Default false keeps the current publicly reachable control plane. Azure rejects combining a private cluster with var.aks_api_authorized_ip_ranges (IP allow-listing only applies to the public endpoint), so clear that list first. Any caller applying this module (including CI) must run from inside the VNet once enabled."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !(var.aks_private_cluster_enabled && length(var.aks_api_authorized_ip_ranges) > 0)
+    error_message = "aks_private_cluster_enabled = true is incompatible with a non-empty aks_api_authorized_ip_ranges; Azure does not support IP-based access restrictions on a private API server. Clear aks_api_authorized_ip_ranges or leave the cluster public."
+  }
+}
+
+variable "aks_private_dns_zone_id" {
+  description = "Private DNS zone the AKS API server's private FQDN resolves in. One of `\"System\"` (AKS creates and manages a zone), `\"None\"` (no zone; bring your own DNS resolution), or a fully qualified `Microsoft.Network/privateDnsZones` resource ID for a zone you already own. Ignored (must be null) unless aks_private_cluster_enabled is true. Supplying an existing zone ID switches the cluster's identity from SystemAssigned to a module-created UserAssigned identity (aks.tf) granted `Private DNS Zone Contributor` on that zone, because Azure requires the identity to exist and be authorized before cluster create — a SystemAssigned identity cannot be pre-granted a role on a resource it doesn't have an ID for yet."
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.aks_private_dns_zone_id == null ? true : (
+      var.aks_private_dns_zone_id == "System" ||
+      var.aks_private_dns_zone_id == "None" ||
+      can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/privateDnsZones/[^/]+$", var.aks_private_dns_zone_id))
+    )
+    error_message = "aks_private_dns_zone_id must be null, \"System\", \"None\", or a fully qualified /subscriptions/.../providers/Microsoft.Network/privateDnsZones/<name> resource ID."
+  }
+
+  validation {
+    condition     = var.aks_private_dns_zone_id == null || var.aks_private_cluster_enabled
+    error_message = "aks_private_dns_zone_id is set while aks_private_cluster_enabled is false; a private DNS zone only applies to a private AKS API server."
+  }
+}
+
+variable "aks_entra_rbac" {
+  description = "Enables AKS-managed Entra ID (Azure AD) integration and Azure RBAC for Kubernetes authorization when set. `admin_group_object_ids` lists the Entra group object IDs granted cluster-admin via Azure RBAC. `azure_rbac_enabled` (default true) routes authorization through Azure RBAC role assignments instead of in-cluster Kubernetes RBAC bindings; set false to keep Entra ID authentication with Kubernetes-native RBAC. `tenant_id` overrides the subscription's home tenant for multi-tenant setups (default null uses the provider's tenant). Null (the default) leaves the cluster on local Kubernetes accounts only, matching current behavior. Required (non-null) whenever aks_local_account_disabled is true. Callers authenticate with `kubelogin` after enabling this — see docs/customer-managed-infrastructure.md and the README provider-wiring section."
+  type = object({
+    admin_group_object_ids = list(string)
+    azure_rbac_enabled     = optional(bool, true)
+    tenant_id              = optional(string)
+  })
+  default = null
+
+  validation {
+    condition     = var.aks_entra_rbac == null ? true : length(var.aks_entra_rbac.admin_group_object_ids) > 0
+    error_message = "aks_entra_rbac.admin_group_object_ids must list at least one Entra group object ID when aks_entra_rbac is set."
+  }
+}
+
+variable "aks_local_account_disabled" {
+  description = "When true, disables the AKS cluster's local Kubernetes accounts (`local_account_disabled`) — `aks_kube_config`'s client-certificate credential goes empty and only Entra ID identities can authenticate. Requires aks_entra_rbac to be set; Azure itself requires Entra ID integration before local accounts can be disabled. Default false preserves the current local-account admin credential this module's outputs and examples rely on."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = var.aks_local_account_disabled ? var.aks_entra_rbac != null : true
+    error_message = "aks_local_account_disabled = true requires aks_entra_rbac to be set; Azure rejects disabling local accounts without Entra ID (AAD-RBAC) integration configured on the same cluster."
+  }
+}
+
+variable "aks_outbound_type" {
+  description = "AKS egress path (`network_profile.outbound_type`): `\"loadBalancer\"` (default, current behavior — cluster egress via the AKS-managed standard Load Balancer's outbound rule) or `\"userDefinedRouting\"` (egress follows a route table already attached to var.aks_subnet_id, typically a default route to a firewall or NVA). Azure requires that route table (with a working 0.0.0.0/0 next hop and outbound access to the AKS/Azure Monitor/Microsoft Container Registry required FQDNs, plus this module's PostgreSQL/Redis/Blob private endpoints) to already exist on the subnet before the cluster is created — this module does not create or verify it. Switching an existing cluster's outbound_type is disruptive; plan a maintenance window."
+  type        = string
+  default     = "loadBalancer"
+
+  validation {
+    condition     = contains(["loadBalancer", "userDefinedRouting"], var.aks_outbound_type)
+    error_message = "aks_outbound_type must be \"loadBalancer\" or \"userDefinedRouting\"."
+  }
+}
+
+variable "aks_network_policy" {
+  description = "AKS network policy engine (`network_profile.network_policy`): null (default, no NetworkPolicy enforcement — any pod-to-pod traffic is allowed), `\"azure\"`, `\"calico\"`, or `\"cilium\"`. Choosing `\"cilium\"` also switches `network_profile.network_data_plane` to `\"cilium\"` (Azure requires the two to match); the other options keep the `\"azure\"` data plane. This toggle only selects the enforcement engine — it creates no Kubernetes NetworkPolicy objects; write your own once an engine is enabled. Azure recreates the cluster when this changes, so plan a maintenance window."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.aks_network_policy == null || contains(["azure", "calico", "cilium"], var.aks_network_policy)
+    error_message = "aks_network_policy must be null, \"azure\", \"calico\", or \"cilium\"."
+  }
+}
+
 # Consumed by database.tf (section 3).
 variable "postgres_subnet_id" {
   description = "Resource ID of the subnet the PostgreSQL Flexible Server is injected into. Must be delegated to `Microsoft.DBforPostgreSQL/flexibleServers` and contain no other workloads (Flexible Server consumes the entire subnet). Format: /subscriptions/<sub>/.../subnets/<name>."
