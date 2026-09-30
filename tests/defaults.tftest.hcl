@@ -474,6 +474,7 @@ run "renders_aks_system_pool_critical_addons_only_when_enabled" {
 
   variables {
     aks_system_pool_critical_addons_only = true
+    create_ingress                       = false
   }
 
   assert {
@@ -485,6 +486,17 @@ run "renders_aks_system_pool_critical_addons_only_when_enabled" {
     condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].node_taints == null
     error_message = "n8n_user must remain untainted so n8n, KEDA, and the Redis exporter (which set no toleration) still schedule there when the system pool is tainted."
   }
+}
+
+run "warns_when_aks_system_pool_critical_addons_only_conflicts_with_managed_ingress" {
+  command = plan
+
+  variables {
+    aks_system_pool_critical_addons_only = true
+    create_ingress                       = true
+  }
+
+  expect_failures = [check.aks_critical_addons_only_conflicts_with_managed_ingress]
 }
 
 run "rejects_zero_aks_node_os_disk_size_gb" {

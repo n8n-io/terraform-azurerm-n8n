@@ -178,7 +178,11 @@ resource "azurerm_user_assigned_identity" "n8n_workload" {
 # Every downstream Kubernetes-/Helm-provider resource this module creates
 # (controllers.tf, keda.tf, n8n.tf — sections 6+) must depend on this gate,
 # directly or transitively. The `triggers` map re-fires the gate when the
-# cluster is recreated.
+# cluster is recreated. Also depends on `n8n_user` directly: Terraform can
+# otherwise provision that pool in parallel with the warm-up window and the
+# workload/controller resources it schedules onto, so a slow user-pool
+# create could still leave KEDA or n8n Pending after both the warm-up
+# window and those resources' own wait timeouts have elapsed.
 resource "time_sleep" "aks_api_warmup" {
   count = var.create_aks ? 1 : 0
 
@@ -188,7 +192,7 @@ resource "time_sleep" "aks_api_warmup" {
     cluster_id = azurerm_kubernetes_cluster.n8n[0].id
   }
 
-  depends_on = [azurerm_kubernetes_cluster.n8n]
+  depends_on = [azurerm_kubernetes_cluster.n8n, azurerm_kubernetes_cluster_node_pool.n8n_user]
 }
 
 # ── Existing AKS lookup ────────────────────────────────────────────────────

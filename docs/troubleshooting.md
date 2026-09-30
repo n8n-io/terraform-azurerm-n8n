@@ -135,6 +135,8 @@ A valid `aks_node_os_disk_size_gb` value is not a promise that every Azure VM/di
 
 ## Enabling `aks_system_pool_critical_addons_only` moves every workload to the user pool
 
+**Anticipated behavior — pending live validation.** Unlike the entries above, this one is not (yet) an apply observed against a live cluster. It describes the mechanism AzureRM's documented `only_critical_addons_enabled` taint and `temporary_name_for_rotation` semantics predict; the pool-rotation and workload-migration steps below are queued in a combined live-validation run. Treat the mechanics as expected, not confirmed, until that run backs them.
+
 **Symptom**
 
 After setting `aks_system_pool_critical_addons_only = true` on an existing cluster, `terraform apply` succeeds, but the system pool's nodes are recreated and every n8n, KEDA, and Redis-exporter pod restarts on the `n8nuser` pool.
@@ -143,16 +145,17 @@ After setting `aks_system_pool_critical_addons_only = true` on an existing clust
 
 `aks_system_pool_critical_addons_only` is false by default, so n8n, KEDA, and the Redis exporter can schedule on the system pool alongside CoreDNS, konnectivity, and metrics-server. Setting it to true applies AzureRM's `only_critical_addons_enabled` attribute, which taints the system pool `CriticalAddonsOnly=true:NoSchedule`. Because AzureRM cannot add a taint to a live node in place, it cycles the system pool through its `temporary_name_for_rotation` (`systemtemp`): nodes are recreated, not updated in place. This rotation is **not** a cordon-and-drain operation, the same caveat that applies to `aks_node_os_disk_size_gb` above.
 
-None of the workloads this module installs (n8n, KEDA, the Redis exporter) set a `nodeSelector` or `toleration`, so once the taint lands, the scheduler moves all of them onto the `n8n_user` pool. The AKS `ingress_application_gateway` add-on already tolerates `CriticalAddonsOnly` and stays on the system pool.
+None of the workloads this module installs (n8n, KEDA, the Redis exporter) set a `nodeSelector` or `toleration`, so once the taint lands, the scheduler moves all of them onto the `n8nuser` pool. The AKS-managed `ingress_application_gateway` (AGIC) addon is different: AzureRM documents AGIC as a non-critical addon that fails to start once this taint is applied, and AGIC only schedules on AKS's "system mode" nodes, so `n8nuser` (which runs in "User" mode) is not a fallback home for it either. `check.aks_critical_addons_only_conflicts_with_managed_ingress` (scaling.tf) warns (non-failing) whenever both this variable and `create_ingress` are true for exactly this reason — do not enable this taint on a cluster with module-managed ingress.
 
 This control has no effect at all when `create_aks = false`; `check.aks_tuning_requires_module_managed_aks` warns (non-failing) if the input is left non-default in that mode, because the existing cluster's system-pool taint is owned by whoever created it.
 
 **Resolution**
 
-1. Before enabling, confirm `aks_node_count_max` on the user pool leaves enough headroom to absorb the entire workload that used to spread across both pools; the autoscaler will scale the user pool out, but only up to that ceiling.
-2. Apply during a maintenance window. Expect the system-pool nodes to cycle and every schedulable workload on them to restart on the user pool.
-3. Verify pod health and re-run the smoke test (`tests/scripts/smoke-test.sh`) after the rotation completes.
-4. Confirm `kubectl get nodes -o json` shows the `CriticalAddonsOnly` taint on the system-pool nodes, and that n8n, KEDA, and the Redis exporter pods now run on `n8nuser`.
+1. Confirm `create_ingress = false` first — module-managed AGIC does not survive this taint. Route ingress through a caller-owned Application Gateway/AGIC pair outside this module's cluster instead.
+2. Confirm `aks_node_count_max` on the user pool leaves enough headroom to absorb the entire workload that used to spread across both pools; the autoscaler will scale the user pool out, but only up to that ceiling.
+3. Apply during a maintenance window. Expect the system-pool nodes to cycle and every schedulable workload on them to restart on the user pool.
+4. Verify pod health and re-run the smoke test (`tests/scripts/smoke-test.sh`) after the rotation completes.
+5. Confirm `kubectl get nodes -o json` shows the `CriticalAddonsOnly` taint on the system-pool nodes, and that n8n, KEDA, and the Redis exporter pods now run on `n8nuser`.
 
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
