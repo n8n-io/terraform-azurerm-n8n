@@ -35,9 +35,9 @@ Added in `port-aws-050-enhancements`, mirroring the AWS sibling's
 except the ones that need a credentialed, account-scoped Azure API call
 (PostgreSQL major version support and Redis SKU/region availability -
 those need `tests/scripts/preflight-region-check.sh` against a real
-subscription instead). It runs as the report-only `version-drift` job in
-`.github/workflows/terraform-tests.yml` on every push, pull request, and
-manual dispatch (there is no scheduled run yet); run it locally any time
+subscription instead). `.github/workflows/version-drift.yml` runs it every
+Monday (and on manual dispatch) and syncs the report to a single
+"Version drift report (automated)" tracking issue; run it locally any time
 with no credentials required:
 
 ```bash
