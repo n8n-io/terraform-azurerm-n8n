@@ -47,6 +47,11 @@ run "large_tier_plan" {
   }
 
   assert {
+    condition     = azurerm_postgresql_flexible_server.n8n.auto_grow_enabled == true
+    error_message = "The large PostgreSQL server must have storage autogrow enabled."
+  }
+
+  assert {
     condition     = azurerm_postgresql_flexible_server.n8n.high_availability[0].mode == "ZoneRedundant" && azurerm_postgresql_flexible_server.n8n.high_availability[0].standby_availability_zone == "2"
     error_message = "The large PostgreSQL server must use a zone-redundant standby in zone 2."
   }
@@ -73,29 +78,30 @@ run "large_tier_plan" {
 
   assert {
     condition = output.tier_configuration == {
-      aks_node_vm_size             = "Standard_D16s_v5"
-      aks_node_count_min           = 5
-      aks_node_count_max           = 20
-      aks_sku_tier                 = "Standard"
-      postgres_sku_name            = "GP_Standard_D8s_v3"
-      postgres_storage_mb          = 524288
-      postgres_zone_redundant      = true
-      pgbouncer_replicas           = 2
-      redis_sku_name               = "MemoryOptimized_M20"
-      redis_high_availability      = true
-      storage_replication_type     = "ZRS"
-      private_blob_enabled         = true
-      binary_data_storage_mode     = "azure"
-      execution_data_storage_mode  = "azure"
-      main_min_replicas            = 6
-      main_max_replicas            = 60
-      webhook_min_replicas         = 20
-      webhook_max_replicas         = 80
-      worker_min_replicas          = 20
-      worker_max_replicas          = 160
-      worker_concurrency           = 40
-      appgw_autoscale_min_capacity = 2
-      appgw_autoscale_max_capacity = 30
+      aks_node_vm_size                   = "Standard_D16s_v5"
+      aks_node_count_min                 = 5
+      aks_node_count_max                 = 20
+      aks_sku_tier                       = "Standard"
+      postgres_sku_name                  = "GP_Standard_D8s_v3"
+      postgres_storage_mb                = 524288
+      postgres_storage_auto_grow_enabled = true
+      postgres_zone_redundant            = true
+      pgbouncer_replicas                 = 2
+      redis_sku_name                     = "MemoryOptimized_M20"
+      redis_high_availability            = true
+      storage_replication_type           = "ZRS"
+      private_blob_enabled               = true
+      binary_data_storage_mode           = "azure"
+      execution_data_storage_mode        = "azure"
+      main_min_replicas                  = 6
+      main_max_replicas                  = 60
+      webhook_min_replicas               = 20
+      webhook_max_replicas               = 80
+      worker_min_replicas                = 20
+      worker_max_replicas                = 160
+      worker_concurrency                 = 40
+      appgw_autoscale_min_capacity       = 2
+      appgw_autoscale_max_capacity       = 30
     }
     error_message = "The large example must preserve its documented root-module sizing and availability decisions."
   }

@@ -49,6 +49,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `create_aks = false`
   ([#19](https://github.com/n8n-io/terraform-azurerm-n8n/issues/19)).
 
+- `pg_storage_auto_grow_enabled` (bool, default `false`) enables Azure
+  PostgreSQL Flexible Server storage autogrow, which doubles disk space
+  automatically as usage approaches the limit instead of the server going
+  read-only when full. Set to `true` in the `medium` and `large` examples.
+  Autogrow only grows storage, never shrinks it: after it fires, raise
+  `pg_storage_mb` to at least the live size before the next apply, or a
+  stale `pg_storage_mb` can plan a downsize that Azure rejects or forces a
+  replacement. Rejected when `create_database = false`, alongside the
+  other managed-server sizing inputs
+  ([#27](https://github.com/n8n-io/terraform-azurerm-n8n/issues/27)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by
