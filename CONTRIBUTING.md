@@ -48,10 +48,12 @@ command. CI's pinned tool versions and setup steps are in
 We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```text
-<type>(<optional scope>): <imperative summary, <72 chars>
+<type>(<optional scope>): <imperative summary>
 
 <optional body explaining the why>
 ```
+
+Keep the subject line under 72 characters.
 
 Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
 Scope is optional but useful (e.g. `feat(postgres): add read replica

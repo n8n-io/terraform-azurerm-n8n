@@ -56,10 +56,12 @@ for the versioning policy.
 - Findings that require an attacker already inside the Azure
   subscription or Kubernetes cluster. Hardening within an
   already-compromised environment is best-effort and not in scope.
-- Findings against the third-party Helm charts this module or its
-  examples install (KEDA, the n8n chart, and the Application Gateway
-  Ingress Controller in the customer-managed and split-ingress
-  examples). Report those upstream; we bump our chart pins once a fix
-  is available.
-- Findings against Azure service defaults exposed as optional inputs.
-  These are documented configuration choices, not vulnerabilities.
+- Findings against the third-party Helm charts this module installs
+  (KEDA and the n8n chart). Report those upstream; we bump our chart
+  pins once a fix is available.
+- Findings against the Application Gateway Ingress Controller. The
+  module enables it through the AKS-managed `ingress_application_gateway`
+  add-on rather than a Helm chart it pins, so report those to Microsoft.
+- Findings against Azure service defaults exposed as optional inputs
+  (e.g. `appgw_waf_mode = "Detection"`). These are documented
+  configuration choices, not vulnerabilities.

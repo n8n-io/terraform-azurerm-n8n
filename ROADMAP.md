@@ -26,6 +26,11 @@ reusing shared patterns for the Kubernetes workload layer.
 Features we may want to address along the way:
 
 - Custom ENV variables via templates (SSO, Owner, etc.)
+- Bring your own Key Vault for n8n's external secrets. n8n's own Azure Key
+  Vault integration works today with a caller-owned Microsoft Entra
+  application (see
+  [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md)),
+  but the module does not create or wire any of it.
 
 ## Already shipped
 
