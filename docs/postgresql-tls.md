@@ -3,9 +3,22 @@
 Both the module-managed and external PostgreSQL paths connect over TLS by
 default, but `require` (the default on both paths) only encrypts the
 connection: it does not check that the certificate the server presents
-belongs to the host n8n dialed. `verify-ca` and `verify-full` close that gap;
-`verify-full` additionally checks the certificate's hostname against the
-connection host.
+belongs to the host n8n dialed. `verify-ca` and `verify-full` close that gap
+by validating the certificate against a trusted CA.
+
+n8n's Postgres driver (`pg`/node-postgres) does not expose libpq's
+distinction between `verify-ca` (trust the certificate chain, skip the
+hostname check) and `verify-full` (trust the chain and check the hostname).
+Setting `ssl.rejectUnauthorized` on the underlying Node TLS socket always
+performs both the chain and the hostname check. The module renders
+`postgres_managed_ssl_mode` / `postgres_external_ssl_mode` into that single
+`rejectUnauthorized` flag (`true` for both `verify-ca` and `verify-full`,
+`false` otherwise — see `n8n.tf`'s `database.ssl.rejectUnauthorized`), so
+selecting `verify-ca` here does not get you a weaker, hostname-check-skipping
+mode: it renders identical settings to `verify-full` and n8n always checks
+the hostname once either mode is selected. Pick either name for
+documentation/audit purposes; the connection's actual behavior does not
+differ between them.
 
 ## Selecting a mode
 
@@ -17,7 +30,15 @@ connection host.
 - `postgres_external_ssl_mode` controls the external path
   (`create_database = false`) and accepts the full PostgreSQL set
   (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`),
-  since an external server's TLS posture is the caller's choice.
+  since an external server's TLS posture is the caller's choice. `allow` and
+  `prefer` are accepted for compatibility with PostgreSQL's `sslmode` naming,
+  but the module has no plaintext-fallback path: both render
+  `database.ssl.enabled = true` on the Helm chart (any mode other than
+  `disable` does), so the connection is always encrypted the same as
+  `require`. There is no way to request "encrypt if the server supports it,
+  otherwise connect in plaintext" through this module; use `disable` for an
+  unencrypted connection or `require`/`verify-ca`/`verify-full` for an
+  encrypted one.
 
 Both inputs feed `local.postgres_connection.ssl_mode` (`database.tf`), which
 the n8n Helm chart's `database.ssl.enabled` /

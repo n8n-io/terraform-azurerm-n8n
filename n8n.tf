@@ -698,6 +698,7 @@ resource "helm_release" "n8n" {
     # without the Azure reader. Create the grant before the release rolls
     # pods. Role propagation can still lag; see docs/data-storage.md.
     azurerm_role_assignment.n8n_blob_data_contributor,
+    kubernetes_config_map.postgres_ssl_ca,
   ]
 }
 

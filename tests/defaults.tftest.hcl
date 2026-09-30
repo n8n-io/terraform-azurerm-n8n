@@ -1144,6 +1144,40 @@ run "rejects_empty_postgres_ssl_ca_pem" {
   ]
 }
 
+run "postgres_ssl_ca_pem_rejects_volume_name_conflict" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem       = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+    n8n_extra_volumes = [
+      { name = "postgres-ssl-ca", secret = { secret_name = "existing-ca" } },
+    ]
+    n8n_extra_volume_mounts = [
+      { name = "postgres-ssl-ca", mount_path = "/existing/postgres-ssl-ca" },
+    ]
+  }
+
+  expect_failures = [var.postgres_ssl_ca_pem]
+}
+
+run "postgres_ssl_ca_pem_rejects_mount_path_conflict" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem       = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+    n8n_extra_volumes = [
+      { name = "existing-ca", secret = { secret_name = "existing-ca" } },
+    ]
+    n8n_extra_volume_mounts = [
+      { name = "existing-ca", mount_path = "/etc/n8n/postgres-ssl-ca" },
+    ]
+  }
+
+  expect_failures = [var.postgres_ssl_ca_pem]
+}
+
 run "rejects_malformed_pg_admin_username" {
   command = plan
 
@@ -3021,6 +3055,22 @@ run "rejects_reserved_additional_environment_names" {
       { name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME", value = "override" },
       { name = "AZURE_CLIENT_ID", value = "override" },
       { name = "N8N_LICENSE_ACTIVATION_KEY", value = "override" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+# The mixed fixture above already fails n8n_extra_env on several other
+# reserved names, so it cannot prove DB_POSTGRESDB_SSL_CA_FILE alone is
+# reserved (it would fail even if that one entry were allowed through). This
+# isolates it.
+run "rejects_reserved_ssl_ca_file_environment_name" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "DB_POSTGRESDB_SSL_CA_FILE", value = "/tmp/override.pem" },
     ]
   }
 
