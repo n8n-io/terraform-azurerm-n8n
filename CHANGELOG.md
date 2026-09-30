@@ -243,6 +243,19 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `--system-node-count-max` flags and checks vCPU quota per VM family
   across every planned node pool
   ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
+- New `docs/ingress-options.md` documents why the module uses Application
+  Gateway v2 with AGIC instead of Application Gateway for Containers (which
+  does not support a private frontend, checked 2026-09-30) or the
+  application routing add-on with the Gateway API, and the full routing
+  contract (path-prefix ordering, session affinity, `N8N_PROXY_HOPS`) a
+  caller-owned ingress (`create_ingress = false`) must reproduce
+  ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
+- New `n8n_proxy_hops` input (default `1`, matching the module's own
+  single-hop Application Gateway) renders `N8N_PROXY_HOPS`, previously
+  hardcoded to `1`. Callers replacing the module's ingress with a
+  multi-hop topology (for example Application Gateway for Containers
+  behind an additional load balancer) can now set the correct hop count
+  ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
 
 ### Changed
 
@@ -332,6 +345,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
 
 ### Fixed
+
+- `examples/customer-managed-cluster` and
+  `examples/customer-managed-everything` now set
+  `appgw.ingress.kubernetes.io/cookie-based-affinity = "true"` on their
+  caller-owned Ingress, matching the root module's default. Without it,
+  multi-main deployments using these examples as a reference could see
+  intermittent authentication failures as session state diverged between
+  main pods ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
 
 - PostgreSQL `verify-ca` / `verify-full` on the external path connected
   in plaintext. The pinned chart (`1.14.0`, and `1.13.0` before it) renders

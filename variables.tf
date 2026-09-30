@@ -2194,6 +2194,18 @@ variable "n8n_termination_grace_period" {
   }
 }
 
+variable "n8n_proxy_hops" {
+  description = "Number of trusted reverse-proxy hops in front of n8n, rendered as N8N_PROXY_HOPS. The module's own Application Gateway is one hop, so the default of 1 is correct for create_ingress = true. Raise this when a caller-owned ingress (create_ingress = false) adds extra hops (e.g. an Application Gateway for Containers ALB plus a second load balancer) in front of the cluster, otherwise n8n derives client IPs and TLS state from the wrong hop."
+  type        = number
+  default     = 1
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_proxy_hops >= 1 && var.n8n_proxy_hops == floor(var.n8n_proxy_hops)
+    error_message = "n8n_proxy_hops must be a whole number of at least 1."
+  }
+}
+
 variable "n8n_prestop_sleep" {
   description = "Seconds each n8n pod waits in its preStop hook so ingress can drain before SIGTERM."
   type        = number
