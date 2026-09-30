@@ -57,10 +57,24 @@ resource "azurerm_role_assignment" "aks_key_vault_secrets_provider_kv_secrets_us
 # aks_cluster identity here (local.aks_needs_user_assigned_identity in
 # locals.tf is true whenever this role assignment is requested), since
 # AKS's KMS feature rejects a SystemAssigned identity outright.
+#
+# Role choice: "Key Vault Crypto Service Encryption User" (the role this
+# resource granted before this fix) only carries the wrap/unwrap data
+# actions — it does NOT include keys/encrypt/action or keys/decrypt/action.
+# AKS's KMS identity-permission validation checks specifically for
+# encrypt/decrypt, so every apply enabling aks_kms_key_vault_key_id under
+# that role failed with
+# AzureKeyVaultKmsValidateIdentityPermissionCustomerError ("The identity
+# does not have keys encrypt/decrypt permission on key vault ..."), live-
+# reproduced on a brand-new cluster with no identity-type switch involved
+# (see evidence/issue-29.md) — confirming the failure is this wrong role,
+# not RBAC propagation lag. "Key Vault Crypto User" carries encrypt/decrypt
+# (plus wrap/unwrap/sign/verify), matching the role Microsoft's own AKS KMS
+# documentation grants for this exact scenario.
 resource "azurerm_role_assignment" "aks_kms_kv_crypto_user" {
   count = var.create_aks && var.aks_kms_role_assignment_enabled ? 1 : 0
 
   scope                = var.aks_kms_key_vault_id
-  role_definition_name = "Key Vault Crypto Service Encryption User"
+  role_definition_name = "Key Vault Crypto User"
   principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
 }
