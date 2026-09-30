@@ -554,7 +554,7 @@ variable "redis_high_availability_enabled" {
 }
 
 variable "redis_eviction_policy" {
-  description = "Redis eviction policy for the module-managed Azure Managed Redis instance's default_database. Defaults to NoEviction: n8n's Bull queue keys can carry a TTL, so any eviction policy other than NoEviction (including the azurerm provider's own VolatileLRU default) can silently drop in-flight queue jobs under memory pressure instead of rejecting the write with an OOM error. Changing this forces replacement of the instance (Azure sets eviction policy at creation time only) — drain the n8n queue before flipping this on a live deployment; see README -> \"Redis high availability\". Ignored when `create_redis = false`."
+  description = "Redis eviction policy for the module-managed Azure Managed Redis instance's default_database. Defaults to NoEviction: n8n's Bull queue keys can carry a TTL, so any eviction policy other than NoEviction (including the azurerm provider's own VolatileLRU default) can silently drop in-flight queue jobs under memory pressure instead of rejecting the write with an OOM error. Changing this forces replacement of the instance (Azure sets eviction policy at creation time only) — drain the n8n queue before flipping this on a live deployment; see docs/redis.md -> \"Changing high availability, clustering policy, or eviction policy\". Ignored when `create_redis = false`."
   type        = string
   default     = "NoEviction"
 
