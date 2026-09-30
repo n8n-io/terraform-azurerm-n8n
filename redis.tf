@@ -32,6 +32,13 @@
 #   - `access_keys_authentication_enabled = true` — n8n and KEDA both
 #     authenticate with the primary access key (design.md decision 3),
 #     the same bearer-credential shape the legacy Redis Cache used.
+#   - `eviction_policy = var.redis_eviction_policy` (default `"NoEviction"`)
+#     — the azurerm provider's own default is `VolatileLRU`, which can evict
+#     any key carrying a TTL under memory pressure, including n8n's Bull
+#     queue keys. `NoEviction` instead rejects writes with an OOM error when
+#     Redis is full, so a job is never silently dropped. See "Changing
+#     eviction policy" below for the same replacement caveat as
+#     clustering_policy.
 # `public_network_access = "Disabled"` on the top-level resource matches
 # the legacy Redis Cache's hardcoded `public_network_access_enabled = false`.
 #
@@ -103,8 +110,13 @@ resource "azurerm_managed_redis" "n8n" {
     # queue outage) per the azurerm provider docs. The module always
     # requests NoCluster, so this never changes across applies unless a
     # future version of this module changes the hardcoded value itself.
-    clustering_policy                  = "NoCluster"
-    client_protocol                    = "Encrypted"
+    clustering_policy = "NoCluster"
+    client_protocol   = "Encrypted"
+    # Changing eviction_policy also forces database recreation (Azure sets
+    # eviction policy at creation time only, same ForceNew caveat as
+    # clustering_policy above). Drain the queue before flipping this on a
+    # live deployment; see README -> "Redis high availability".
+    eviction_policy                    = var.redis_eviction_policy
     access_keys_authentication_enabled = true
   }
 
@@ -230,12 +242,14 @@ check "redis_tuning_requires_module_managed_redis" {
   assert {
     condition = var.create_redis ? true : (
       var.redis_sku_name == "Balanced_B1" &&
-      var.redis_high_availability_enabled == false
+      var.redis_high_availability_enabled == false &&
+      var.redis_eviction_policy == "NoEviction"
     )
     error_message = join("", [
-      "redis_sku_name or redis_high_availability_enabled is set while create_redis = false. The module ",
-      "creates no Azure Managed Redis instance in that mode, so neither applies. Sizing and high ",
-      "availability are properties of the Redis you supply via redis_external_host.",
+      "redis_sku_name, redis_high_availability_enabled, or redis_eviction_policy is set while create_redis ",
+      "= false. The module creates no Azure Managed Redis instance in that mode, so none of these apply. ",
+      "Sizing, high availability, and eviction policy are properties of the Redis you supply via ",
+      "redis_external_host.",
     ])
   }
 }
