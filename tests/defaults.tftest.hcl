@@ -346,6 +346,11 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].sku_tier == "Free"
+    error_message = "AKS cluster sku_tier must default to \"Free\" (var.aks_sku_tier's default) to keep current behavior."
+  }
+
+  assert {
     condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].name == "n8nuser"
     error_message = "n8n_user node pool name must be 'n8nuser'."
   }
@@ -397,6 +402,31 @@ run "aks_api_authorized_ranges_render_when_supplied" {
     condition     = azurerm_kubernetes_cluster.n8n[0].api_server_access_profile[0].authorized_ip_ranges == toset(["203.0.113.0/24"])
     error_message = "api_server_access_profile.authorized_ip_ranges must render the supplied CIDR list when non-empty."
   }
+}
+
+run "aks_sku_tier_override_renders" {
+  command = plan
+
+  variables {
+    aks_sku_tier = "Standard"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].sku_tier == "Standard"
+    error_message = "AKS cluster sku_tier must render the caller-supplied value."
+  }
+}
+
+run "rejects_invalid_aks_sku_tier" {
+  command = plan
+
+  variables {
+    aks_sku_tier = "Paid"
+  }
+
+  expect_failures = [
+    var.aks_sku_tier,
+  ]
 }
 
 run "rejects_malformed_aks_kubernetes_version" {

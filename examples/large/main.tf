@@ -186,6 +186,7 @@ module "n8n" {
   aks_node_vm_size             = local.tier.aks_node_vm_size
   aks_node_count_min           = local.tier.aks_node_count_min
   aks_node_count_max           = local.tier.aks_node_count_max
+  aks_sku_tier                 = "Standard"
   aks_api_authorized_ip_ranges = var.aks_api_authorized_ip_ranges
 
   create_database            = false

@@ -36,6 +36,7 @@ See [the tier comparison](../README.md).
 | Module input | Default | Purpose |
 | --- | --- | --- |
 | `pg_backup_retention_days` | `14` | Days Azure retains automated PostgreSQL Flexible Server backups. Azure enforces a 7-35 day range; this tier doubles the module's 7-day default for extra recovery headroom. |
+| `aks_sku_tier` | `"Standard"` | AKS SKU tier. This example overrides the module's `"Free"` default so the cluster's API server has a financially backed SLA. |
 | `blob_delete_retention_days` | `null` | Optional Blob soft-delete retention window, in days (1-365). `null` leaves soft delete disabled, so a deleted blob or container is immediately unrecoverable. |
 
 ## Reference
