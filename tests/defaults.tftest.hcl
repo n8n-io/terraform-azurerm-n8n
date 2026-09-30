@@ -5162,6 +5162,20 @@ run "rejects_reserved_ssl_ca_environment_name" {
   expect_failures = [var.n8n_extra_env]
 }
 
+# Isolated so the combined fixture above cannot mask N8N_LICENSE_CERT being
+# accepted (the N8N_LICENSE_ prefix reservation is what rejects it).
+run "rejects_reserved_license_cert_environment_name" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_LICENSE_CERT", value = "override" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
 # ── Credential overwrites (caller-managed Secret reference) ──────────────────
 
 run "credentials_overwrite_secret_ref_defaults_to_null" {
