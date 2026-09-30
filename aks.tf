@@ -45,12 +45,13 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   }
 
   default_node_pool {
-    name                        = "system"
-    temporary_name_for_rotation = "systemtemp"
-    vm_size                     = var.aks_node_vm_size
-    vnet_subnet_id              = var.aks_subnet_id
-    zones                       = var.aks_availability_zones
-    os_disk_size_gb             = var.aks_node_os_disk_size_gb
+    name                         = "system"
+    temporary_name_for_rotation  = "systemtemp"
+    vm_size                      = var.aks_node_vm_size
+    vnet_subnet_id               = var.aks_subnet_id
+    zones                        = var.aks_availability_zones
+    os_disk_size_gb              = var.aks_node_os_disk_size_gb
+    only_critical_addons_enabled = var.aks_system_pool_critical_addons_only
 
     node_count           = var.aks_node_count_min
     auto_scaling_enabled = true
@@ -119,8 +120,10 @@ resource "azurerm_kubernetes_cluster" "n8n" {
 
 # ── Optional user node pool ──
 # Second pool for n8n workloads, mode = "User" by default. Sized identically
-# to the system pool today (same SKU, same autoscaler bounds); split out
-# explicitly so a future story can taint it for n8n-only scheduling.
+# to the system pool today (same SKU, same autoscaler bounds). No taint is
+# applied here: KEDA, the Redis exporter, and n8n set no nodeSelector or
+# toleration, so when aks_system_pool_critical_addons_only taints the system
+# pool, everything this module installs lands on this pool automatically.
 resource "azurerm_kubernetes_cluster_node_pool" "n8n_user" {
   count = var.create_aks ? 1 : 0
 

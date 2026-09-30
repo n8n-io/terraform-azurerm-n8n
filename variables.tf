@@ -192,6 +192,13 @@ variable "aks_node_os_disk_size_gb" {
   }
 }
 
+variable "aks_system_pool_critical_addons_only" {
+  description = "When true, sets `only_critical_addons_enabled = true` on the system default_node_pool, applying the CriticalAddonsOnly=true:NoSchedule taint. Default false preserves today's behavior where n8n, KEDA, and the Redis exporter can schedule on the system pool alongside CoreDNS, konnectivity, and metrics-server. Flipping this on an existing cluster rotates the system pool through its temporary_name_for_rotation (systemtemp); nodes are recreated, not updated in place. Nothing this module installs (n8n, KEDA, the Redis exporter) sets a nodeSelector or toleration, so turning this on moves all of it onto the n8n_user pool; confirm that pool's min/max sizing can absorb the whole workload before enabling in production. Has no effect when create_aks = false; the existing cluster's system-pool taint is unmanaged by this module."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 # Consumed by database.tf (section 3).
 variable "postgres_subnet_id" {
   description = "Resource ID of the subnet the PostgreSQL Flexible Server is injected into. Must be delegated to `Microsoft.DBforPostgreSQL/flexibleServers` and contain no other workloads (Flexible Server consumes the entire subnet). Format: /subscriptions/<sub>/.../subnets/<name>."

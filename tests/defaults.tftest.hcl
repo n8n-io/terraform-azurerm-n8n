@@ -331,6 +331,11 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].only_critical_addons_enabled == false
+    error_message = "default_node_pool.only_critical_addons_enabled must default to false so n8n, KEDA, and the Redis exporter keep scheduling on the system pool unless the caller opts in."
+  }
+
+  assert {
     condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].upgrade_settings[0].max_surge == var.aks_node_upgrade_max_surge
     error_message = "default_node_pool.upgrade_settings.max_surge must equal var.aks_node_upgrade_max_surge (default \"10%\")."
   }
@@ -462,6 +467,24 @@ run "renders_valid_aks_node_os_disk_size_gb" {
   # os_disk_type is left unset in both node-pool resources by this port (no
   # disk-type control was added), so config never assigns it regardless of
   # var.aks_node_os_disk_size_gb.
+}
+
+run "renders_aks_system_pool_critical_addons_only_when_enabled" {
+  command = plan
+
+  variables {
+    aks_system_pool_critical_addons_only = true
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].only_critical_addons_enabled == true
+    error_message = "default_node_pool.only_critical_addons_enabled must equal the supplied aks_system_pool_critical_addons_only."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].node_taints == null
+    error_message = "n8n_user must remain untainted so n8n, KEDA, and the Redis exporter (which set no toleration) still schedule there when the system pool is tainted."
+  }
 }
 
 run "rejects_zero_aks_node_os_disk_size_gb" {
@@ -5251,6 +5274,21 @@ run "warns_when_aks_node_os_disk_size_gb_is_inert_on_existing_cluster" {
     existing_aks_resource_group_name             = "shared-aks-rg"
     existing_aks_cluster_prerequisites_confirmed = true
     aks_node_os_disk_size_gb                     = 256
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "warns_when_aks_system_pool_critical_addons_only_is_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_system_pool_critical_addons_only         = true
   }
 
   expect_failures = [check.aks_tuning_requires_module_managed_aks]
