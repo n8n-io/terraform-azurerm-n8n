@@ -38,6 +38,8 @@ See [the tier comparison](../README.md).
 | `pg_backup_retention_days` | `14` | Days Azure retains automated PostgreSQL Flexible Server backups. Azure enforces a 7-35 day range; this tier doubles the module's 7-day default for extra recovery headroom. |
 | `blob_delete_retention_days` | `null` | Optional Blob soft-delete retention window, in days (1-365). `null` leaves soft delete disabled, so a deleted blob or container is immediately unrecoverable. |
 
+See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for settings above (and elsewhere in the root module) that are fixed at the first `terraform apply`.
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->

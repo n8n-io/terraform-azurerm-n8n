@@ -33,6 +33,10 @@ license, encryption-key, PostgreSQL password, and Redis password Secrets.
 
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
 
+## Production considerations
+
+AKS, PostgreSQL, Redis, and Blob storage are all caller-owned in this example, so their build-time constraints (zone placement, networking mode, HA/clustering policy, replication type) belong to whoever manages those resources, not to this root module's inputs. The one setting this example still owns is the n8n encryption key: back it up immediately after the first apply (`terraform output -raw n8n_encryption_key`). See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for the full list of module-level settings that are fixed at the first `terraform apply`.
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->
