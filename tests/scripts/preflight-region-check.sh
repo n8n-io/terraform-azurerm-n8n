@@ -42,11 +42,14 @@ Usage (from the root you will apply, e.g. examples/small):
   ../../tests/scripts/preflight-region-check.sh [options]
     --dir PATH           Terraform root to plan (default: current directory)
     --region NAME        skip the plan; use this region + flag/root defaults
-    --vm-size SKU        aks_node_vm_size          (root default Standard_D4s_v4)
-    --node-count-max N   aks_node_count_max        (root default 6; the system and user node
-                                                     pools each scale aks_node_count_min..N
-                                                     independently, so peak demand is 2 x N
-                                                     nodes of --vm-size)
+    --vm-size SKU        aks_node_vm_size          (root default Standard_D4s_v4; sizes the
+                                                     user "n8nuser" pool, and the system pool
+                                                     too unless --system-vm-size overrides it)
+    --node-count-max N   aks_node_count_max        (root default 6; ceiling for the user pool,
+                                                     and for the system pool too unless
+                                                     --system-node-count-max overrides it)
+    --system-vm-size SKU        aks_system_node_vm_size   (root default null: falls back to --vm-size)
+    --system-node-count-max N   aks_system_node_count_max (root default null: falls back to --node-count-max)
     --zones 1,2,3        aks_availability_zones    (root default 1,2,3; pass '' for a zone-less region)
     --pg-version N       pg_version                (root default 16)
     --pg-sku SKU         pg_sku_name               (root default GP_Standard_D2s_v3)
@@ -58,7 +61,7 @@ EOF
 
 # `zones_set` distinguishes an explicit `--zones ''` (zone-less region) from
 # an omitted flag, which falls back to the plan or the root default.
-dir=. region='' vm_size='' node_count_max='' node_count_max_set=false zones='' zones_set=false pg_version='' pg_sku='' redis_sku='' probe_redis=false
+dir=. region='' vm_size='' node_count_max='' node_count_max_set=false system_vm_size='' system_node_count_max='' system_node_count_max_set=false zones='' zones_set=false pg_version='' pg_sku='' redis_sku='' probe_redis=false
 need_value() { (($# >= 2)) || { echo "Option $1 requires a value" >&2; usage >&2; exit 2; }; }
 while (($#)); do
   case $1 in
@@ -66,6 +69,8 @@ while (($#)); do
     --region) need_value "$@"; region=$2; shift 2 ;;
     --vm-size) need_value "$@"; vm_size=$2; shift 2 ;;
     --node-count-max) need_value "$@"; node_count_max=$2; node_count_max_set=true; shift 2 ;;
+    --system-vm-size) need_value "$@"; system_vm_size=$2; shift 2 ;;
+    --system-node-count-max) need_value "$@"; system_node_count_max=$2; system_node_count_max_set=true; shift 2 ;;
     --zones) need_value "$@"; zones=$2; zones_set=true; shift 2 ;;
     --pg-version) need_value "$@"; pg_version=$2; shift 2 ;;
     --pg-sku) need_value "$@"; pg_sku=$2; shift 2 ;;
@@ -245,11 +250,9 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 # for any module depth; a resource that the config does not create (e.g.
 # create_redis = false) is simply absent and its check is skipped.
 source=flags/defaults
-# peak_nodes: worst-case node count of --vm-size across every module node pool
-# at max_count. quota_mode: fail when the plan only creates AKS clusters and
-# pools, warn otherwise (see plan_quota_mode). Without a plan we cannot tell,
-# so fail.
-peak_nodes='' quota_mode=fail
+# quota_mode: fail when the plan only creates AKS clusters and pools, warn
+# otherwise (see plan_quota_mode). Without a plan we cannot tell, so fail.
+quota_mode=fail
 if [[ -z $region ]]; then
   command -v terraform >/dev/null || { echo "terraform missing; pass --region to skip the plan" >&2; exit 1; }
   echo "Planning $dir to read region and sizing (override any value with a flag) ..."
@@ -259,23 +262,24 @@ if [[ -z $region ]]; then
   plan=$(<"$tmp/plan.json")
   res() { jq -r --arg t "$1" --arg p "$2" \
     "[$managed | select(.type == \$t)][0].values | getpath(\$p | split(\".\") | map(tonumber? // .)) // empty" <<<"$plan"; }
+  # res_pool: like res(), but selects one node-pool resource by its `name`
+  # attribute. aks.tf always names the user pool "n8nuser" and sizes it from
+  # aks_node_vm_size/aks_node_count_max; the system pool is
+  # azurerm_kubernetes_cluster's default_node_pool, read by res() instead,
+  # and reflects aks_system_node_vm_size/aks_system_node_count_max whenever
+  # either overrides the shared value.
+  res_pool() { jq -r --arg t "$1" --arg n "$2" --arg p "$3" \
+    "[$managed | select(.type == \$t and .values.name == \$n)][0].values | getpath(\$p | split(\".\") | map(tonumber? // .)) // empty" <<<"$plan"; }
   locations=$(jq -r "[$managed | select(.type == \"azurerm_kubernetes_cluster\" or .type == \"azurerm_postgresql_flexible_server\" or .type == \"azurerm_managed_redis\" or .type == \"azurerm_resource_group\") | .values.location // empty] | unique | join(\" \")" <<<"$plan")
   case $(wc -w <<<"$locations" | tr -d ' ') in
     0) echo "could not find a location in the plan; pass --region" >&2; exit 1 ;;
     1) region=$locations ;;
     *) echo "plan spans several regions ($locations); pass --region to pick one" >&2; exit 1 ;;
   esac
-  [[ -n $vm_size ]] || vm_size=$(res azurerm_kubernetes_cluster default_node_pool.0.vm_size)
-  if ! $node_count_max_set && [[ -n $vm_size ]]; then
-    node_count_max=$(res azurerm_kubernetes_cluster default_node_pool.0.max_count)
-    pool_maxes=$(plan_pool_maxes "$tmp/plan.json" "$vm_size")
-    peak_nodes=0
-    for m in $pool_maxes; do
-      is_node_count "$m" || { echo "planned node pool max_count '$m' is not an integer from 1 to 1000; pass --node-count-max N" >&2; exit 2; }
-      peak_nodes=$((peak_nodes + m))
-    done
-    ((peak_nodes > 0)) || peak_nodes=''
-  fi
+  [[ -n $vm_size ]] || vm_size=$(res_pool azurerm_kubernetes_cluster_node_pool n8nuser vm_size)
+  [[ -n $system_vm_size ]] || system_vm_size=$(res azurerm_kubernetes_cluster default_node_pool.0.vm_size)
+  $node_count_max_set || node_count_max=$(res_pool azurerm_kubernetes_cluster_node_pool n8nuser max_count)
+  $system_node_count_max_set || system_node_count_max=$(res azurerm_kubernetes_cluster default_node_pool.0.max_count)
   quota_mode=$(plan_quota_mode "$tmp/plan.json")
   $zones_set || zones=$(res azurerm_kubernetes_cluster default_node_pool.0.zones | jq -r 'join(",")' 2>/dev/null || true)
   [[ -n $pg_version ]] || pg_version=$(res azurerm_postgresql_flexible_server version)
@@ -284,16 +288,13 @@ if [[ -z $region ]]; then
   source="terraform plan of $dir"
 else
   : "${vm_size:=Standard_D4s_v4}" "${pg_version:=16}" "${pg_sku:=GP_Standard_D2s_v3}" "${redis_sku:=Balanced_B1}"
+  [[ -n $system_vm_size ]] || system_vm_size=$vm_size
   $node_count_max_set || node_count_max=6
+  $system_node_count_max_set || system_node_count_max=$node_count_max
   $zones_set || zones=1,2,3
   echo "NOTE: --region given; checking root-module defaults and flags, not the terraform.tfvars of $dir." >&2
 fi
-
-if [[ -n $vm_size && -z $peak_nodes ]]; then
-  is_node_count "$node_count_max" \
-    || { echo "aks_node_count_max must be an integer from 1 to 1000 (got '${node_count_max:-<empty>}'); pass --node-count-max N" >&2; exit 2; }
-  peak_nodes=$((2 * node_count_max))
-fi
+[[ -n $system_vm_size ]] || system_vm_size=$vm_size
 # Run an az command, keeping stdout in $1 (a file) and reporting the first
 # stderr line on failure, so an expired login or a typo is never mistaken for
 # "SKU not offered".
@@ -308,7 +309,7 @@ fi
 [[ $(jq 'length' "$tmp/loc.json") -eq 1 ]] \
   || { echo "Unknown region '$region' for this subscription (az account list-locations -o table lists the valid names)" >&2; exit 1; }
 echo "Region: $region   Subscription: $sub"
-echo "Inputs from $source: vm=${vm_size:-n/a} node_count_max=${node_count_max:-n/a} zones=[${zones:-none}] pg=${pg_version:-n/a}/${pg_sku:-n/a} redis=${redis_sku:-n/a}"
+echo "Inputs from $source: vm=${vm_size:-n/a} node_count_max=${node_count_max:-n/a} system_vm=${system_vm_size:-n/a} system_node_count_max=${system_node_count_max:-n/a} zones=[${zones:-none}] pg=${pg_version:-n/a}/${pg_sku:-n/a} redis=${redis_sku:-n/a}"
 
 echo
 echo "== Resource providers =="
@@ -318,68 +319,117 @@ for rp in Microsoft.ContainerService Microsoft.DBforPostgreSQL Microsoft.Cache M
 done
 
 echo
-echo "== AKS: ${vm_size:-n/a} zones [${zones:-none}] =="
-if [[ -z $vm_size ]]; then
+echo "== AKS: node pools =="
+declare -A family_needed
+grand_needed=0 any_sku_resolved=false
+distinct_sizes=$(printf '%s\n' "$vm_size" "$system_vm_size" | sed '/^$/d' | sort -u)
+if [[ -z $distinct_sizes ]]; then
   skip "no module-managed AKS cluster in the plan (create_aks = false); nothing to check"
-# --all keeps SKUs the subscription is restricted from, so the restriction
-# reason is reported instead of a bare "not offered".
-elif ! az_json "$tmp/skus.json" vm list-skus -l "$region" --size "$vm_size" --resource-type virtualMachines --all; then
-  fail "az vm list-skus failed: $(az_err)"
-elif ! sku_json=$(jq -ce --arg n "$vm_size" '[.[] | select(.name == $n)][0] // empty' "$tmp/skus.json"); then
-  fail "$vm_size is not offered in $region (aks_node_vm_size)"
 else
-  # A Location restriction blocks the SKU outright; a Zone restriction only
-  # removes the listed zones, so subtract those from the offered set instead.
-  loc_restr=$(jq -r '[.restrictions[]? | select(.type == "Location") | .reasonCode] | unique | join(",")' <<<"$sku_json")
-  offered=$(jq -r '([.locationInfo[0].zones[]?]) - ([.restrictions[]? | select(.type == "Zone") | .restrictionInfo.zones[]?]) | sort | join(",")' <<<"$sku_json")
-  missing=$(comm -23 <(tr ',' '\n' <<<"$zones" | sort) <(tr ',' '\n' <<<"$offered" | sort) | paste -sd, -)
-  if [[ -n $loc_restr ]]; then
-    fail "$vm_size restricted for this subscription in $region: $loc_restr (request quota or pick another aks_node_vm_size); zone check skipped"
-  elif [[ -z $missing ]]; then
-    pass "$vm_size offered with no location-level subscription restrictions"
-    pass "zones [${zones:-none}] supported (region offers [${offered:-none}])"
-  else
-    pass "$vm_size offered with no location-level subscription restrictions"
-    hcl=$([[ -n $offered ]] && sed 's/[^,]*/"&"/g' <<<"$offered" || true)
-    fail "zones [$missing] not offered for $vm_size in $region; region offers [${offered:-none}] -> set aks_availability_zones = [$hcl]"
-  fi
+  for size in $distinct_sizes; do
+    if [[ $size == "$vm_size" && $size == "$system_vm_size" ]]; then
+      label="$size (system + user pools)"
+    elif [[ $size == "$system_vm_size" ]]; then
+      label="$size (system pool)"
+    else
+      label="$size (user pool)"
+    fi
+    echo
+    echo "-- $label, zones [${zones:-none}] --"
+    # peak: worst-case node count of $size across every module node pool at
+    # max_count (both pools when they share a size). From the plan, this is
+    # every planned pool's max_count summed (plan_pool_maxes); otherwise it
+    # is aks_node_count_max and/or aks_system_node_count_max, whichever
+    # pool(s) use this size.
+    peak=0
+    if [[ -f "$tmp/plan.json" ]]; then
+      for m in $(plan_pool_maxes "$tmp/plan.json" "$size"); do
+        is_node_count "$m" \
+          || { echo "planned node pool max_count '$m' for $size is not an integer from 1 to 1000" >&2; exit 2; }
+        peak=$((peak + m))
+      done
+    else
+      if [[ $size == "$vm_size" ]]; then
+        is_node_count "$node_count_max" \
+          || { echo "aks_node_count_max must be an integer from 1 to 1000 (got '${node_count_max:-<empty>}'); pass --node-count-max N" >&2; exit 2; }
+        peak=$((peak + node_count_max))
+      fi
+      if [[ $size == "$system_vm_size" ]]; then
+        is_node_count "$system_node_count_max" \
+          || { echo "aks_system_node_count_max must be an integer from 1 to 1000 (got '${system_node_count_max:-<empty>}'); pass --system-node-count-max N" >&2; exit 2; }
+        peak=$((peak + system_node_count_max))
+      fi
+    fi
+    # --all keeps SKUs the subscription is restricted from, so the restriction
+    # reason is reported instead of a bare "not offered".
+    if ! az_json "$tmp/skus-$size.json" vm list-skus -l "$region" --size "$size" --resource-type virtualMachines --all; then
+      fail "az vm list-skus failed for $size: $(az_err)"
+      continue
+    elif ! sku_json=$(jq -ce --arg n "$size" '[.[] | select(.name == $n)][0] // empty' "$tmp/skus-$size.json"); then
+      fail "$size is not offered in $region"
+      continue
+    fi
+    # A Location restriction blocks the SKU outright; a Zone restriction only
+    # removes the listed zones, so subtract those from the offered set instead.
+    loc_restr=$(jq -r '[.restrictions[]? | select(.type == "Location") | .reasonCode] | unique | join(",")' <<<"$sku_json")
+    offered=$(jq -r '([.locationInfo[0].zones[]?]) - ([.restrictions[]? | select(.type == "Zone") | .restrictionInfo.zones[]?]) | sort | join(",")' <<<"$sku_json")
+    missing=$(comm -23 <(tr ',' '\n' <<<"$zones" | sort) <(tr ',' '\n' <<<"$offered" | sort) | paste -sd, -)
+    if [[ -n $loc_restr ]]; then
+      fail "$size restricted for this subscription in $region: $loc_restr (request quota or pick another VM size); zone check skipped"
+    elif [[ -z $missing ]]; then
+      pass "$size offered with no location-level subscription restrictions"
+      pass "zones [${zones:-none}] supported (region offers [${offered:-none}])"
+    else
+      pass "$size offered with no location-level subscription restrictions"
+      hcl=$([[ -n $offered ]] && sed 's/[^,]*/"&"/g' <<<"$offered" || true)
+      fail "zones [$missing] not offered for $size in $region; region offers [${offered:-none}] -> set aks_availability_zones = [$hcl]"
+    fi
+    vcpus=$(jq -r --arg n "$size" '[.[] | select(.name == $n)][0].capabilities[]? | select(.name == "vCPUs") | .value' "$tmp/skus-$size.json")
+    family=$(jq -r --arg n "$size" '[.[] | select(.name == $n)][0].family // empty' "$tmp/skus-$size.json")
+    if ! is_pos_int "$vcpus" || [[ -z $family ]]; then
+      skip "could not read vCPU count/family for $size; vCPU quota unchecked for it"
+      continue
+    fi
+    needed=$((peak * vcpus))
+    family_needed[$family]=$(( ${family_needed[$family]:-0} + needed ))
+    grand_needed=$((grand_needed + needed))
+    any_sku_resolved=true
+  done
 fi
 
 echo
-echo "== vCPU quota headroom: ${vm_size:-n/a} x ${peak_nodes:-n/a} nodes (every node pool at max_count) =="
+echo "== vCPU quota headroom (every node pool at max_count) =="
 # AKS SKU/zone availability (checked above) says nothing about whether the
 # subscription's regional vCPU quota can actually hold the autoscaler's
 # ceiling; a quota wall surfaces only ~10-20 min into apply, as
 # helm_release.n8n's 600s timeout expires waiting for a node the autoscaler
 # could not add (Error: OperationNotAllowed, "Operation results in exceeding
-# quota limits"). Both node pools share var.aks_node_vm_size and each scales
-# aks_node_count_min..aks_node_count_max independently (aks.tf), so worst-case
-# demand is both pools simultaneously at the ceiling: 2 x aks_node_count_max
-# nodes. Upgrade surge (aks_node_upgrade_max_surge) and temporary rotation
-# pools add nodes on top of that later; they are not part of this check.
-if [[ -z $vm_size ]]; then
+# quota limits"). The user (n8nuser) pool scales aks_node_count_min..max of
+# aks_node_vm_size; the system pool scales the same range of the same size
+# unless aks_system_node_vm_size/_count_min/_count_max override it (aks.tf).
+# Worst-case demand sums both pools' vCPU need per distinct VM family, plus
+# the aggregate regional cap. Upgrade surge (aks_node_upgrade_max_surge) and
+# temporary rotation pools add nodes on top of that later; they are not part
+# of this check.
+if [[ -z $distinct_sizes ]]; then
   skip "no module-managed AKS cluster in the plan (create_aks = false); nothing to check"
-elif [[ ! -s "$tmp/skus.json" ]]; then
-  skip "SKU lookup for $vm_size did not run or failed above; vCPU quota unchecked"
+elif ! $any_sku_resolved; then
+  skip "vCPU count/family for the planned VM size(s) could not be read above; vCPU quota unchecked"
+elif ! az_json "$tmp/usage.json" vm list-usage -l "$region"; then
+  fail "az vm list-usage failed: $(az_err)"
 else
-  vcpus=$(jq -r --arg n "$vm_size" '[.[] | select(.name == $n)][0].capabilities[]? | select(.name == "vCPUs") | .value' "$tmp/skus.json")
-  family=$(jq -r --arg n "$vm_size" '[.[] | select(.name == $n)][0].family // empty' "$tmp/skus.json")
-  if ! is_pos_int "$vcpus" || [[ -z $family ]]; then
-    skip "could not read vCPU count/family for $vm_size from the SKU lookup above; vCPU quota unchecked"
-  elif ! az_json "$tmp/usage.json" vm list-usage -l "$region"; then
-    fail "az vm list-usage failed: $(az_err)"
-  else
-    needed=$((peak_nodes * vcpus))
-    # "cores" is the subscription's aggregate regional vCPU cap across every
-    # VM family; the family entry (e.g. standardDSv5Family) is a separate,
-    # usually tighter, per-family cap. Both must clear the ceiling.
-    check_quota "$tmp/usage.json" "$family" "$vm_size family quota" "$needed" "$quota_mode"
-    check_quota "$tmp/usage.json" cores "Regional aggregate vCPU quota" "$needed" "$quota_mode"
-    if [[ $quota_mode == warn ]]; then
-      echo "  (this plan keeps an existing AKS cluster: currentValue already counts its nodes, so an over-limit result is a warning, not a failure.)"
-    elif [[ $source != "terraform plan of $dir" ]]; then
-      echo "  (no plan read: if this cluster already exists, currentValue already counts its nodes and a failure above can be a false positive.)"
-    fi
+  # "cores" is the subscription's aggregate regional vCPU cap across every
+  # VM family; each family entry (e.g. standardDSv5Family) is a separate,
+  # usually tighter, per-family cap. Every family in play, plus cores, must
+  # clear the ceiling.
+  for family in "${!family_needed[@]}"; do
+    check_quota "$tmp/usage.json" "$family" "$family family quota" "${family_needed[$family]}" "$quota_mode"
+  done
+  check_quota "$tmp/usage.json" cores "Regional aggregate vCPU quota" "$grand_needed" "$quota_mode"
+  if [[ $quota_mode == warn ]]; then
+    echo "  (this plan keeps an existing AKS cluster: currentValue already counts its nodes, so an over-limit result is a warning, not a failure.)"
+  elif [[ $source != "terraform plan of $dir" ]]; then
+    echo "  (no plan read: if this cluster already exists, currentValue already counts its nodes and a failure above can be a false positive.)"
   fi
 fi
 

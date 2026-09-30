@@ -103,7 +103,7 @@ variable "aks_kubernetes_version" {
 }
 
 variable "aks_node_vm_size" {
-  description = "Azure VM SKU for both AKS node pools (for example Standard_D4s_v7 or Standard_D8s_v5). The capacity diagnostic models reviewed Dsv4, Dsv5, and Dsv7 SKUs and stays silent for valid SKUs outside that map. Standard_D4s_v7 provides 4 vCPU and 16 GB per node."
+  description = "Azure VM SKU for the user (n8nuser) AKS node pool, and for the system (default) node pool too unless aks_system_node_vm_size overrides it (for example Standard_D4s_v7 or Standard_D8s_v5). The capacity diagnostic models reviewed Dsv4, Dsv5, and Dsv7 SKUs and stays silent for valid SKUs outside that map. Standard_D4s_v7 provides 4 vCPU and 16 GB per node."
   type        = string
   default     = "Standard_D4s_v4"
   nullable    = false
@@ -114,8 +114,19 @@ variable "aks_node_vm_size" {
   }
 }
 
+variable "aks_system_node_vm_size" {
+  description = "Azure VM SKU override for only the system (default) AKS node pool. Null (the default) uses aks_node_vm_size for the system pool too — the shared-sizing behavior every release before this input existed. Set this when the system pool, which runs a stable, low-churn set of AKS/kube-system pods, should stay smaller/cheaper than the n8n-facing user pool sized by aks_node_vm_size."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.aks_system_node_vm_size == null || can(regex("^Standard_[A-Z][A-Za-z0-9_]+$", var.aks_system_node_vm_size))
+    error_message = "aks_system_node_vm_size must be null or a valid Azure VM SKU name (e.g. Standard_D4s_v4, Standard_D8s_v4)."
+  }
+}
+
 variable "aks_node_count_min" {
-  description = "Minimum number of nodes in the AKS default node pool. The cluster autoscaler will not scale below this, and Terraform sets this as the pool's initial node count at creation only — see `aks_node_count_max`'s ignore_changes note. Floor of 2 keeps the multi-main topology (≥2 main pods, ≥1 worker, ≥2 webhook processors) schedulable across single-node failures."
+  description = "Minimum nodes in the user (n8nuser) AKS node pool, and in the system node pool too unless aks_system_node_count_min overrides it. The cluster autoscaler will not scale either pool below this, and Terraform sets this as each pool's initial node count at creation only — see `aks_node_count_max`'s ignore_changes note. Floor of 2 keeps the multi-main topology (≥2 main pods, ≥1 worker, ≥2 webhook processors) schedulable across single-node failures."
   type        = number
   default     = 2
 
@@ -125,8 +136,19 @@ variable "aks_node_count_min" {
   }
 }
 
+variable "aks_system_node_count_min" {
+  description = "Minimum node-count override for only the system AKS node pool. Null (the default) uses aks_node_count_min for the system pool too."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.aks_system_node_count_min == null || var.aks_system_node_count_min >= 1
+    error_message = "aks_system_node_count_min must be null or at least 1."
+  }
+}
+
 variable "aks_node_count_max" {
-  description = "Maximum nodes in each of the system and user AKS node pools. The cluster autoscaler will not scale either pool above this value. The advisory capacity model uses both pools because neither is tainted against n8n pods, then subtracts AKS reservations and system workload requests. Terraform ignores each pool's live node count after creation so plans do not revert autoscaler-owned scale-out."
+  description = "Maximum nodes in the user (n8nuser) AKS node pool, and in the system node pool too unless aks_system_node_count_max overrides it. The cluster autoscaler will not scale either pool above its effective value. The advisory capacity model uses both pools because neither is tainted against n8n pods, then subtracts AKS reservations and system workload requests. Terraform ignores each pool's live node count after creation so plans do not revert autoscaler-owned scale-out."
   type        = number
   default     = 6
   nullable    = false
@@ -134,6 +156,22 @@ variable "aks_node_count_max" {
   validation {
     condition     = var.aks_node_count_max >= 1
     error_message = "aks_node_count_max must be at least 1."
+  }
+}
+
+variable "aks_system_node_count_max" {
+  description = "Maximum node-count override for only the system AKS node pool. Null (the default) uses aks_node_count_max for the system pool too."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.aks_system_node_count_max == null || var.aks_system_node_count_max >= 1
+    error_message = "aks_system_node_count_max must be null or at least 1."
+  }
+
+  validation {
+    condition     = coalesce(var.aks_system_node_count_max, var.aks_node_count_max) >= coalesce(var.aks_system_node_count_min, var.aks_node_count_min)
+    error_message = "The effective aks_system_node_count_max (this override, or aks_node_count_max when unset) must be >= the effective aks_system_node_count_min (aks_system_node_count_min, or aks_node_count_min when unset)."
   }
 }
 

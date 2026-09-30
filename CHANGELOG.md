@@ -7,6 +7,20 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `aks_system_node_vm_size`, `aks_system_node_count_min`, and
+  `aks_system_node_count_max` let the system (default) AKS node pool be
+  sized independently of the n8n-facing user (`n8nuser`) pool. Each
+  defaults to `null`, falling back to the matching shared `aks_node_vm_size`
+  / `aks_node_count_min` / `aks_node_count_max` value, so every existing
+  caller's plan is unchanged. The advisory CPU capacity check
+  (`autoscaling_maxima_fit_aks_capacity`) and
+  `tests/scripts/preflight-region-check.sh` (new `--system-vm-size` /
+  `--system-node-count-max` flags) both model each pool's effective VM
+  size and ceiling separately
+  ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
+
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
@@ -22,6 +36,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   versioned Secret URI, which the App Gateway listener picks up on the
   following `terraform apply`
   ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
+- `aks_node_count_min`'s description now states that it sizes both the
+  system and user AKS node pools (matching `aks_node_count_max`'s
+  description), not just "the AKS default node pool"
+  ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
 
 ### Fixed
 
