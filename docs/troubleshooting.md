@@ -151,7 +151,7 @@ This control has no effect at all when `create_aks = false`; `check.aks_tuning_r
 
 **Resolution**
 
-1. Confirm `create_ingress = false` first — module-managed AGIC does not survive this taint. Route ingress through a caller-owned Application Gateway/AGIC pair outside this module's cluster instead.
+1. Confirm `create_ingress = false` first — module-managed AGIC does not survive this taint. Route ingress through a caller-owned Application Gateway/AGIC pair instead (for example the in-cluster standalone `ingress-azure` pattern in `examples/split-ingress`, which tolerates the taint by running on the user pool).
 2. Confirm `aks_node_count_max` on the user pool leaves enough headroom to absorb the entire workload that used to spread across both pools; the autoscaler will scale the user pool out, but only up to that ceiling.
 3. Apply during a maintenance window. Expect the system-pool nodes to cycle and every schedulable workload on them to restart on the user pool.
 4. Verify pod health and re-run the smoke test (`tests/scripts/smoke-test.sh`) after the rotation completes.
