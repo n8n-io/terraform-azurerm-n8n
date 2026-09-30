@@ -602,8 +602,15 @@ identity block from this module's default `SystemAssigned` to a dedicated
 this module creates and manages for you. On an already-running cluster this
 identity-type switch is applied in place by `terraform apply` (confirmed
 live, no cluster replacement). Azure also requires that identity to already
-hold `Key Vault Crypto Service Encryption User` on the vault **before** KMS
-can be enabled. This ordering hazard is not limited to a brand-new cluster:
+hold `Key Vault Crypto User` on the vault **before** KMS can be enabled —
+not `Key Vault Crypto Service Encryption User`, which only carries the
+wrap/unwrap data actions and was live-confirmed (on a brand-new cluster,
+with no identity-type switch in play) to fail AKS's own
+`AzureKeyVaultKmsValidateIdentityPermissionCustomerError` identity-
+permission validation, which checks specifically for encrypt/decrypt.
+`Key Vault Crypto User` is also the role Microsoft's own AKS KMS
+documentation grants for this scenario. This ordering hazard is not
+limited to a brand-new cluster:
 within a single
 `terraform apply`, Terraform has no way to guarantee the role assignment
 finishes before the cluster's `key_management_service` block is added,

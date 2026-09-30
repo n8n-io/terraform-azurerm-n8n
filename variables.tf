@@ -3220,7 +3220,7 @@ variable "aks_kms_key_vault_network_access" {
 }
 
 variable "aks_kms_key_vault_id" {
-  description = "Resource ID of the Key Vault holding aks_kms_key_vault_key_id. When aks_kms_role_assignment_enabled = true, this module grants the cluster's identity Key Vault Crypto Service Encryption User on the supplied vault. When the toggle is false (default), the caller is responsible for granting that identity access out-of-band. May be null when the toggle is false."
+  description = "Resource ID of the Key Vault holding aks_kms_key_vault_key_id. When aks_kms_role_assignment_enabled = true, this module grants the cluster's identity Key Vault Crypto User on the supplied vault. When the toggle is false (default), the caller is responsible for granting that identity access out-of-band. May be null when the toggle is false."
   type        = string
   default     = null
 
@@ -3238,7 +3238,7 @@ variable "aks_kms_key_vault_id" {
 }
 
 variable "aks_kms_role_assignment_enabled" {
-  description = "When true, grant the cluster's own identity Key Vault Crypto Service Encryption User on aks_kms_key_vault_id. Default false; the caller is then responsible for granting that identity access out-of-band. When set to true, aks_kms_key_vault_id MUST also be supplied. See the sequencing note above the aks_kms_key_vault_key_id variable: on a first-time enable, apply this toggle before setting aks_kms_key_vault_key_id."
+  description = "When true, grant the cluster's own identity Key Vault Crypto User on aks_kms_key_vault_id. Default false; the caller is then responsible for granting that identity access out-of-band. When set to true, aks_kms_key_vault_id MUST also be supplied. See the sequencing note above the aks_kms_key_vault_key_id variable: on a first-time enable, apply this toggle before setting aks_kms_key_vault_key_id."
   type        = bool
   default     = false
 

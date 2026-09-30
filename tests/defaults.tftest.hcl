@@ -1081,10 +1081,10 @@ run "aks_kms_role_uses_minimum_scope" {
     condition = (
       length(azurerm_role_assignment.aks_kms_kv_crypto_user) == 1 &&
       azurerm_role_assignment.aks_kms_kv_crypto_user[0].scope == var.aks_kms_key_vault_id &&
-      azurerm_role_assignment.aks_kms_kv_crypto_user[0].role_definition_name == "Key Vault Crypto Service Encryption User" &&
+      azurerm_role_assignment.aks_kms_kv_crypto_user[0].role_definition_name == "Key Vault Crypto User" &&
       azurerm_role_assignment.aks_kms_kv_crypto_user[0].principal_id == "88888888-8888-8888-8888-888888888888"
     )
-    error_message = "The cluster identity must receive only Key Vault Crypto Service Encryption User at the supplied vault scope."
+    error_message = "The cluster identity must receive only Key Vault Crypto User at the supplied vault scope."
   }
 }
 

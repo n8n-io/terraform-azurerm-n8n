@@ -88,7 +88,7 @@ The root module SHALL support optionally enabling the AKS Key Vault Secrets Prov
 
 #### Scenario: Enable KMS etcd encryption
 - **WHEN** a caller supplies a Key Vault key identifier for KMS etcd encryption with module-managed AKS
-- **THEN** the module SHALL configure AKS KMS etcd encryption using that key and SHALL grant the cluster's own identity Key Vault Crypto Service Encryption User on a caller-named vault only when the caller also enables that role assignment
+- **THEN** the module SHALL configure AKS KMS etcd encryption using that key and SHALL grant the cluster's own identity Key Vault Crypto User on a caller-named vault only when the caller also enables that role assignment
 
 #### Scenario: Reject Key Vault add-ons without module-managed AKS
 - **WHEN** either Key Vault-backed add-on is enabled while AKS creation is disabled
