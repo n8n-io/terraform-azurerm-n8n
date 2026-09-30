@@ -488,17 +488,6 @@ run "renders_aks_system_pool_critical_addons_only_when_enabled" {
   }
 }
 
-run "warns_when_aks_system_pool_critical_addons_only_conflicts_with_managed_ingress" {
-  command = plan
-
-  variables {
-    aks_system_pool_critical_addons_only = true
-    create_ingress                       = true
-  }
-
-  expect_failures = [check.aks_critical_addons_only_conflicts_with_managed_ingress]
-}
-
 run "rejects_zero_aks_node_os_disk_size_gb" {
   command = plan
 

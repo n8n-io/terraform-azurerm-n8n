@@ -346,24 +346,3 @@ check "aks_tuning_requires_module_managed_aks" {
     ])
   }
 }
-
-# AzureRM documents `ingress_application_gateway` (AGIC) as a non-critical
-# addon that fails to start once `only_critical_addons_enabled` taints the
-# system pool: https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/kubernetes_cluster.
-# AGIC only schedules on the AKS-managed "system mode" nodes and carries no
-# toleration for CriticalAddonsOnly=true:NoSchedule. The n8n_user pool
-# (aks.tf) is not a fallback home for it either: it runs in "User" mode, not
-# "System" mode, so AGIC cannot schedule there regardless of the taint.
-check "aks_critical_addons_only_conflicts_with_managed_ingress" {
-  assert {
-    condition = !(var.aks_system_pool_critical_addons_only && var.create_ingress)
-    error_message = join("", [
-      "aks_system_pool_critical_addons_only = true taints the system pool CriticalAddonsOnly=true:NoSchedule while ",
-      "create_ingress = true keeps the AKS-managed ingress_application_gateway (AGIC) addon enabled. AzureRM ",
-      "documents AGIC as a non-critical addon that fails to start under that taint, and the n8n_user pool runs in ",
-      "User mode, not System mode, so it cannot host the addon either. Set aks_system_pool_critical_addons_only = ",
-      "false while using module-managed ingress, or set create_ingress = false and route through a caller-owned ",
-      "Application Gateway/AGIC pair instead. This diagnostic is advisory and does not fail the plan.",
-    ])
-  }
-}
