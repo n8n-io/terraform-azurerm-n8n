@@ -39,6 +39,8 @@ See [the tier comparison](../README.md) before choosing this size.
 | `pg_backup_retention_days` | `7` | Days PostgreSQL Flexible Server retains automated backups. Raise it for longer point-in-time recovery coverage. |
 | `blob_delete_retention_days` | `null` (disabled) | Soft-delete retention window, in days, for the Blob storage account and container. Set it to recover an accidentally deleted blob or container within the window. |
 
+See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for settings above (and elsewhere in the root module) that are fixed at the first `terraform apply`.
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->

@@ -35,6 +35,8 @@ This tier sets binary and execution-data writes to Azure Blob. These features re
 
 `pg_backup_retention_days` does not apply to this example: it sets `create_database = false` and owns PostgreSQL itself (see [PostgreSQL and PgBouncer](#postgresql-and-pgbouncer)), so PostgreSQL backup retention is a property of the Flexible Server resource this example manages directly, not of the root module.
 
+See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for settings above (and elsewhere in the root module) that are fixed at the first `terraform apply`.
+
 ## Apply
 
 Copy `terraform.tfvars.example` to `terraform.tfvars`, replace the placeholders, verify regional SKU and zone availability, then run `terraform init` and `terraform apply`. Delegate `terraform output -json public_dns_zone_name_servers` at your registrar.
