@@ -23,8 +23,9 @@ is `azurerm`, and the private key never passes through Terraform.
 
 - The principal running `terraform apply` must be able to create
   certificates on the supplied `var.key_vault_id` (Key Vault Certificates
-  Officer in RBAC mode, or `Create`, `Get`, and `Import` on certificates
-  plus `Get` and `Set` on secrets in legacy access-policy mode).
+  Officer in RBAC mode, or `Create`, `Get`, `Import`, and `Update` on
+  certificates plus `Get` and `Set` on secrets in legacy access-policy
+  mode). `Update` is what applies tag changes to an existing certificate.
 - The App Gateway's user-assigned identity that consumes the cert at
   runtime needs read access to the vault's secrets. This submodule does
   not grant it. Either set the root module's `app_gateway_keyvault_id` to
@@ -47,9 +48,8 @@ module "tls_self_signed" {
   friendly_name_prefix = "n8nlab"
   common_tags          = { Environment = "lab" }
 
-  # Optional. Defaults to 8760 (1 year). Rounded down to whole months
-  # (730 hours each), so use 730 or more.
-  # validity_period_hours = 2190  # 3 months
+  # Optional. Whole months, 1 to 120. Defaults to 12.
+  # validity_in_months = 3
 }
 
 # Wire into the root module:
@@ -64,14 +64,36 @@ module "n8n" {
 }
 ```
 
+## Inputs
+
+| Name | Description | Type | Default |
+| ---- | ----------- | ---- | ------- |
+| `domain_name` | Fully qualified domain name the certificate is issued for. Becomes the certificate's CN and its only SAN entry. At most 64 characters. | `string` | n/a (required) |
+| `key_vault_id` | Resource ID of the caller-owned Key Vault that issues the certificate with its `Self` issuer and stores it as a PFX secret. | `string` | n/a (required) |
+| `friendly_name_prefix` | Lowercase alphanumeric prefix, 2 to 12 characters. The certificate is named `<friendly_name_prefix>-n8n-tls`. | `string` | n/a (required) |
+| `common_tags` | Tags merged onto the Key Vault certificate, on top of the baseline `ManagedBy = terraform` and `Project = n8n` tags. Caller values win, except `Name`, which is always the certificate name. | `map(string)` | `{}` |
+| `validity_in_months` | Certificate lifetime in whole months, 1 to 120. Passed unchanged to the Key Vault certificate policy. `null` falls back to the default. | `number` | `12` |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| `app_gateway_tls_cert_secret_id` | Versioned Key Vault Secret URI of the issued certificate (PFX). Pass it to the root module's `app_gateway_tls_cert_secret_id` input. Sensitive. |
+
 ## Validity and renewal
 
-Key Vault's certificate policy takes a validity in whole months. The
-submodule converts `validity_period_hours` with
-`floor(validity_period_hours / 730)`, so the default 8760 hours becomes 12
-months. A value below 730 rounds down to 0 months, which the variable's
-current validation (24 to 87600 hours) does not reject. Use 730 hours or
-more.
+Key Vault's certificate policy takes a validity in whole months, and
+`validity_in_months` is passed to it unchanged. The variable accepts whole
+numbers from 1 to 120 (10 years); any other non-null value fails at plan.
+An explicit `null` falls back to the default of 12.
+
+Changing `validity_in_months` on an existing certificate changes its
+policy, so Key Vault issues a new certificate version with a new
+versioned Secret URI. The provider plans this as an in-place update and
+does not mark the Secret URI as changing, so the
+`app_gateway_tls_cert_secret_id` output still returns the old URI after
+that apply. Run a second `terraform apply` to move the App Gateway
+listener to the new version.
 
 Key Vault's `AutoRenew` lifetime action issues a new certificate version
 once 80% of the validity window has elapsed (about 73 days before expiry on
