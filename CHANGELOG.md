@@ -346,8 +346,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Fixed
 
-- `examples/customer-managed-cluster` and
-  `examples/customer-managed-everything` now set
+- `examples/customer-managed-cluster`, `examples/customer-managed-everything`,
+  and the private admin gateway in `examples/split-ingress` now set
   `appgw.ingress.kubernetes.io/cookie-based-affinity = "true"` on their
   caller-owned Ingress, matching the root module's default. Without it,
   multi-main deployments using these examples as a reference could see
