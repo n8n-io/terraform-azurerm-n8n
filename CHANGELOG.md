@@ -58,11 +58,15 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   stale `pg_storage_mb` plans to **destroy and recreate the entire server**
   (data loss), since Azure cannot shrink storage in place. `pg_storage_drift_guard_enabled`
   (bool, default `false`) turns that into a clean precondition failure
-  instead: when both it and autogrow are `true`, the module reads the live
-  server's actual `storage_mb` via a data source before every plan and
-  refuses to apply if `pg_storage_mb` has fallen behind it. Leave it `false`
-  on the apply that first creates the server (the data source has nothing
-  to read yet); enable it on the next apply for ongoing drift protection.
+  instead: while it is `true` (and `create_database` is `true`), the module
+  reads the live server's actual `storage_mb` via a data source before
+  every plan and refuses to apply if `pg_storage_mb` has fallen behind it.
+  This check runs independently of the current `pg_storage_auto_grow_enabled`
+  value, since Azure never shrinks storage back down: a server that already
+  auto-grew stays larger than a stale `pg_storage_mb` even after autogrow is
+  later turned off. Leave the guard `false` on the apply that first creates
+  the server (the data source has nothing to read yet); enable it on the
+  next apply for ongoing drift protection.
   Triggers a non-blocking check warning when `create_database = false`,
   alongside the other managed-server sizing inputs
   ([#27](https://github.com/n8n-io/terraform-azurerm-n8n/issues/27)).

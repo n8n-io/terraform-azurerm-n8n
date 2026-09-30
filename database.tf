@@ -87,12 +87,17 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
 # apply too late to guard a replace this same apply is about to cause.
 # Reading it independently, by the same name/resource-group pair the
 # resource itself uses, returns the server's state as it was BEFORE this
-# plan. count is false by default (and whenever autogrow or the guard
+# plan. count depends only on create_database and the guard itself, not on
+# the current value of pg_storage_auto_grow_enabled: Azure never shrinks
+# storage, so a server that already auto-grew keeps its larger live
+# storage_mb even after a caller later sets pg_storage_auto_grow_enabled
+# back to false, and the guard must still catch that stale pg_storage_mb.
+# count is false by default (and whenever create_database or the guard
 # itself is off), so this never runs on the apply that first creates the
 # server: the server does not exist yet, and this data source would error
 # outright if it tried to read something.
 data "azurerm_postgresql_flexible_server" "current" {
-  count = var.create_database && var.pg_storage_auto_grow_enabled && var.pg_storage_drift_guard_enabled ? 1 : 0
+  count = var.create_database && var.pg_storage_drift_guard_enabled ? 1 : 0
 
   name                = local.postgres_server_name
   resource_group_name = var.resource_group_name
