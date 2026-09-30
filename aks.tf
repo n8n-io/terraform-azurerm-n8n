@@ -187,8 +187,11 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   # KMS etcd encryption. See the sequencing note above
   # var.aks_kms_key_vault_key_id in variables.tf: the cluster's own identity
   # must already hold Key Vault Crypto Service Encryption User on the vault
-  # before this block can be enabled, which on a first-time enable requires
-  # a prior apply.
+  # before this block can be enabled. Terraform has no way to order the
+  # role assignment ahead of this block within one apply, so this requires
+  # a prior apply whenever the role assignment does not already exist,
+  # whether the cluster is new or already module-managed and only now
+  # gaining the grant.
   dynamic "key_management_service" {
     for_each = var.aks_kms_key_vault_key_id != null ? [1] : []
 

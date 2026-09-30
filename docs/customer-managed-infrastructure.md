@@ -595,21 +595,27 @@ caller-owned Key Vault key instead of Microsoft's platform-managed key.
 `"Private"` vault network access.
 
 Azure requires the cluster's own identity to already hold `Key Vault Crypto
-Service Encryption User` on the vault **before** KMS can be enabled, and a
-brand-new cluster's `SystemAssigned` identity does not exist until the
-cluster itself is created. Enabling KMS on a cluster this module creates
-therefore takes **two applies**:
+Service Encryption User` on the vault **before** KMS can be enabled. This
+ordering hazard is not limited to a brand-new cluster: within a single
+`terraform apply`, Terraform has no way to guarantee the role assignment
+finishes before the cluster's `key_management_service` block is added,
+whether the cluster is being created for the first time or already exists
+and is only now gaining the role assignment. Enabling KMS therefore always
+takes **two applies** whenever this module manages the role assignment and
+the grant does not already exist:
 
 1. First apply: set `aks_kms_role_assignment_enabled = true` and
    `aks_kms_key_vault_id` to the vault, but leave `aks_kms_key_vault_key_id =
-   null`. This creates the cluster and grants its identity the role.
+   null`. This grants the identity the role (creating the cluster too, on a
+   first-time deployment).
 2. Second apply: set `aks_kms_key_vault_key_id`. AKS enables KMS as an
    update against the now-authorized identity.
 
-Skipping the first apply, or granting the role out-of-band before the first
-apply against a pre-existing identity, also works — the two-apply sequence
-is only required when this module both creates the cluster and manages the
-role assignment in the same configuration.
+Skipping the first apply, or granting the role out-of-band before either
+apply against a pre-existing identity, also works. Setting both
+`aks_kms_role_assignment_enabled = true` and `aks_kms_key_vault_key_id`
+together in the same apply is only safe when the role assignment is already
+known, from a prior apply, to exist.
 
 ## Secrets that remain in Terraform state
 

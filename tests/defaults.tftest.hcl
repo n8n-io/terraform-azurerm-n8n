@@ -914,11 +914,25 @@ run "rejects_aks_key_vault_secrets_provider_role_assignment_without_keyvault_id"
   command = plan
 
   variables {
+    aks_key_vault_secrets_provider_enabled                 = true
     aks_key_vault_secrets_provider_role_assignment_enabled = true
   }
 
   expect_failures = [
     var.aks_key_vault_secrets_provider_keyvault_id,
+  ]
+}
+
+run "rejects_aks_key_vault_secrets_provider_role_assignment_without_addon_enabled" {
+  command = plan
+
+  variables {
+    aks_key_vault_secrets_provider_role_assignment_enabled = true
+    aks_key_vault_secrets_provider_keyvault_id             = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-shared-rg/providers/Microsoft.KeyVault/vaults/n8ntest-shared-kv"
+  }
+
+  expect_failures = [
+    var.aks_key_vault_secrets_provider_role_assignment_enabled,
   ]
 }
 
