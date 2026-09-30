@@ -23,6 +23,8 @@ Copy `terraform.tfvars.example` to `terraform.tfvars`, replace the placeholders,
 
 The included Key Vault certificate is self-signed. Replace it with the Let's Encrypt helper or a certificate from your public key infrastructure before production.
 
+This example also enables the AKS Key Vault Secrets Provider add-on and grants it read access to the shared `azurerm_key_vault.tls` vault, and grants the cluster's own identity access to a caller-owned KMS key (`azurerm_key_vault_key.aks_kms`) in that same vault without turning KMS on yet. See [Delivering secrets from Azure Key Vault](../../docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault) for the `SecretProviderClass` pattern and the two-apply sequence that turns KMS on.
+
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
 
 ## Cost and operational caveats
@@ -74,6 +76,7 @@ See [the tier comparison](../README.md).
 | ---- | ---- |
 | [azurerm_dns_zone.public](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/dns_zone) | resource |
 | [azurerm_key_vault.tls](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/key_vault) | resource |
+| [azurerm_key_vault_key.aks_kms](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/key_vault_key) | resource |
 | [azurerm_resource_group.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
 | [azurerm_resource_group.network](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
 | [azurerm_role_assignment.key_vault_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
