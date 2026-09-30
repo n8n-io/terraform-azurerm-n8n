@@ -550,6 +550,11 @@ run "managed_postgres_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_postgresql_flexible_server.n8n[0].auto_grow_enabled == var.pg_storage_auto_grow_enabled
+    error_message = "Managed PostgreSQL Flexible Server auto_grow_enabled must equal var.pg_storage_auto_grow_enabled (default false)."
+  }
+
+  assert {
     condition     = azurerm_postgresql_flexible_server.n8n[0].backup_retention_days == var.pg_backup_retention_days
     error_message = "Managed PostgreSQL Flexible Server backup_retention_days must equal var.pg_backup_retention_days (default 7)."
   }
@@ -696,6 +701,35 @@ run "pg_backup_retention_days_null_falls_back_to_default" {
     condition     = azurerm_postgresql_flexible_server.n8n[0].backup_retention_days == 7
     error_message = "pg_backup_retention_days = null must resolve to the default of 7, not fail validation (port-aws-050-enhancements)."
   }
+}
+
+run "pg_storage_auto_grow_enabled_renders_on_managed_server" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled = true
+  }
+
+  assert {
+    condition     = azurerm_postgresql_flexible_server.n8n[0].auto_grow_enabled == true
+    error_message = "auto_grow_enabled must be true when var.pg_storage_auto_grow_enabled is true."
+  }
+}
+
+run "rejects_pg_storage_auto_grow_enabled_without_managed_database" {
+  command = plan
+
+  variables {
+    create_database              = false
+    postgres_external_host       = "postgres.external.example.com"
+    postgres_external_username   = "n8n_app"
+    postgres_external_password   = "synthetic-external-postgres-password"
+    pg_storage_auto_grow_enabled = true
+  }
+
+  expect_failures = [
+    check.postgres_tuning_requires_module_managed_database,
+  ]
 }
 
 # ── External PostgreSQL path ─────────────────────────────────────────────────

@@ -92,7 +92,19 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   version  = var.pg_version
   sku_name = var.pg_sku_name
 
+  # When pg_storage_auto_grow_enabled = true, Azure grows storage_mb on the
+  # live server without Terraform's knowledge. Terraform's next plan then
+  # compares the drifted live value against the still-lower var.pg_storage_mb
+  # and would try to shrink it back down. Azure Flexible Server does not
+  # support shrinking storage in place, so callers who turn on autogrow MUST
+  # bump pg_storage_mb to at least the live size (Azure portal / `az
+  # postgres flexible-server show`) before their next apply, or the apply
+  # will fail. There's no `lifecycle.ignore_changes` fix: it only accepts a
+  # static attribute list, not a condition on var.pg_storage_auto_grow_enabled,
+  # so it can't be scoped to "ignore only when autogrow is on" — always
+  # ignoring storage_mb would silently break manual resizes for everyone.
   storage_mb                   = var.pg_storage_mb
+  auto_grow_enabled            = var.pg_storage_auto_grow_enabled
   backup_retention_days        = var.pg_backup_retention_days
   geo_redundant_backup_enabled = var.pg_geo_redundant_backup_enabled
 
@@ -249,15 +261,16 @@ check "postgres_tuning_requires_module_managed_database" {
     condition = var.create_database ? true : (
       var.pg_sku_name == "GP_Standard_D2s_v3" &&
       var.pg_storage_mb == 32768 &&
+      var.pg_storage_auto_grow_enabled == false &&
       var.pg_enable_high_availability == false &&
       var.pg_backup_retention_days == 7 &&
       var.pg_geo_redundant_backup_enabled == false
     )
     error_message = join("", [
-      "A PostgreSQL sizing or HA input (pg_sku_name, pg_storage_mb, pg_enable_high_availability, ",
-      "pg_backup_retention_days, pg_geo_redundant_backup_enabled) is set while create_database = false. ",
-      "The module creates no PostgreSQL Flexible Server in that mode, so none of them apply. Configure ",
-      "these on the external database you supply via postgres_external_host.",
+      "A PostgreSQL sizing or HA input (pg_sku_name, pg_storage_mb, pg_storage_auto_grow_enabled, ",
+      "pg_enable_high_availability, pg_backup_retention_days, pg_geo_redundant_backup_enabled) is set ",
+      "while create_database = false. The module creates no PostgreSQL Flexible Server in that mode, ",
+      "so none of them apply. Configure these on the external database you supply via postgres_external_host.",
     ])
   }
 }
