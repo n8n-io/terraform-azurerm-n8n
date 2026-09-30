@@ -689,6 +689,7 @@ resource "helm_release" "n8n" {
     azurerm_federated_identity_credential.n8n_workload,
     kubernetes_service_account_v1.n8n,
     kubernetes_secret.n8n_task_runners,
+    kubernetes_config_map.postgres_ssl_ca,
   ]
 }
 

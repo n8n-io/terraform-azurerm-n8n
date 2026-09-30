@@ -20,7 +20,11 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   at `/etc/n8n/postgres-ssl-ca/ca.pem` and sets
   `DB_POSTGRESDB_SSL_CA_FILE` to that path, which `verify-ca` /
   `verify-full` need unless the pod image's default trust store already
-  covers the server's certificate chain. See
+  covers the server's certificate chain. The Helm release now waits on the
+  ConfigMap so pods cannot start before their CA volume exists, and
+  `n8n_extra_volumes` / `n8n_extra_volume_mounts` reject the reserved
+  `postgres-ssl-ca` volume name and `/etc/n8n/postgres-ssl-ca` mount path
+  while this input is set. See
   [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) for mode selection,
   the CA bundle, and Azure's CA rotation schedule
   ([#25](https://github.com/n8n-io/terraform-azurerm-n8n/issues/25)).
