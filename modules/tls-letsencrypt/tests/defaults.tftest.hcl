@@ -105,6 +105,20 @@ run "submodule_plans_clean_with_defaults" {
     error_message = "azurerm_key_vault_certificate.letsencrypt.key_vault_id must equal var.key_vault_id"
   }
 
+  # ── Tags ──────────────────────────────────────────────────────────────────
+  # Matches the root module's tagging contract: baseline ManagedBy/Project,
+  # caller `common_tags` merged on top, and a `Name` tag equal to the
+  # certificate name.
+  assert {
+    condition = azurerm_key_vault_certificate.letsencrypt.tags == tomap({
+      ManagedBy   = "terraform"
+      Project     = "n8n"
+      Environment = "test"
+      Name        = "n8ntest-n8n-tls"
+    })
+    error_message = "azurerm_key_vault_certificate.letsencrypt.tags must be the baseline tags merged with var.common_tags plus Name = <friendly_name_prefix>-n8n-tls"
+  }
+
   # ── Output contract (PRD AC #5 / US-009) ───────────────────────────────────
   # The submodule's single contract output is the versioned KV secret URI
   # the root module's App Gateway listener consumes. Under mock_provider
@@ -116,6 +130,37 @@ run "submodule_plans_clean_with_defaults" {
   assert {
     condition     = length(azurerm_key_vault_certificate.letsencrypt.secret_id) > 0
     error_message = "azurerm_key_vault_certificate.letsencrypt.secret_id must be non-empty in plan (the contract output the root module consumes via app_gateway_tls_cert_secret_id)"
+  }
+}
+
+# Caller tags override the baseline, but `Name` always tracks the
+# certificate name (same precedence as the root module).
+run "caller_tags_override_baseline_but_not_name" {
+  command = plan
+
+  override_resource {
+    target          = azurerm_key_vault_certificate.letsencrypt
+    override_during = plan
+    values = {
+      secret_id = "https://n8ntest-shared-kv.vault.azure.net/secrets/n8ntest-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  variables {
+    common_tags = {
+      ManagedBy = "platform-team"
+      Name      = "ignored"
+    }
+  }
+
+  assert {
+    condition     = azurerm_key_vault_certificate.letsencrypt.tags["ManagedBy"] == "platform-team"
+    error_message = "A caller-supplied ManagedBy tag must override the baseline value"
+  }
+
+  assert {
+    condition     = azurerm_key_vault_certificate.letsencrypt.tags["Name"] == "n8ntest-n8n-tls"
+    error_message = "The Name tag must stay <friendly_name_prefix>-n8n-tls even when common_tags sets Name"
   }
 }
 

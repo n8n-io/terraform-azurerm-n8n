@@ -20,9 +20,9 @@ of the root module when a caller supplies an existing certificate — a lighter
 - The principal running `terraform apply` must hold:
   - `DNS Zone Contributor` on the DNS zone (so lego can write the
     DNS-01 validation TXT record).
-  - Cert-import rights on the supplied `var.key_vault_id` (Key Vault
-    Certificates Officer in RBAC mode, or `Create` / `Import` on
-    certificates in legacy access-policy mode).
+  - Cert-import and tag-update rights on the supplied `var.key_vault_id`
+    (Key Vault Certificates Officer in RBAC mode, or `Create` / `Import` /
+    `Update` on certificates in legacy access-policy mode).
 - Credentials supported by lego's `azuredns` provider on the apply host.
   Service-principal secret authentication uses `AZURE_TENANT_ID`,
   `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET`. Set `AZURE_SUBSCRIPTION_ID`
@@ -63,6 +63,18 @@ module "n8n" {
   # ... remaining root-module inputs
 }
 ```
+
+## Tagging
+
+`azurerm_key_vault_certificate.letsencrypt` is tagged with the baseline
+`ManagedBy = "terraform"` / `Project = "n8n"` pair, `var.common_tags`
+merged on top, and a `Name = <friendly_name_prefix>-n8n-tls` tag that
+always wins over a caller-supplied `Name` value. Existing certificates
+get an in-place tag update on the next apply; they are not replaced, so
+the versioned Secret URI and the App Gateway listener are unaffected.
+In a legacy access-policy vault, the principal running `terraform apply`
+needs the `Update` certificate permission for that tag update (see
+Pre-requisites above).
 
 ## Provider configuration
 

@@ -103,7 +103,7 @@ variable "dns_zone_resource_group_name" {
 }
 
 variable "key_vault_id" {
-  description = "Azure resource ID of the Key Vault the issued PFX is imported into. The principal running `terraform apply` must hold cert-import rights on this vault (Key Vault Certificates Officer in RBAC mode, or Create/Import on certificates in legacy access-policy mode). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
+  description = "Azure resource ID of the Key Vault the issued PFX is imported into. The principal running `terraform apply` must hold cert-import and tag-update rights on this vault (Key Vault Certificates Officer in RBAC mode, or Create/Import/Update on certificates in legacy access-policy mode). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
   type        = string
 
   validation {
@@ -122,15 +122,11 @@ variable "friendly_name_prefix" {
   }
 }
 
-# No taggable Azure resource lives in this submodule (azurerm_key_vault_certificate
-# does not carry tags — tags live on the parent vault, which is caller-owned).
-# Kept on the contract so umbrella examples can pass the same `common_tags`
-# they pass to other submodules without bookkeeping divergence; will be
-# consumed automatically if a future Azure resource gains tag support inside
-# this submodule.
-# tflint-ignore: terraform_unused_declarations
+# Merged with the baseline ManagedBy/Project pair and a Name tag onto
+# azurerm_key_vault_certificate.letsencrypt (see locals.tf). Mirrors the
+# root module's tagging convention.
 variable "common_tags" {
-  description = "Tags merged onto every taggable resource this submodule creates. The Key Vault Certificate resource itself is not directly taggable on Azure (tags live on the parent vault), so today this only flows into the `Name` tag the caller will see in azurerm_key_vault_certificate plan output. Kept on the contract so a future taggable ACME resource picks the value up automatically."
+  description = "Tags merged onto every taggable resource this submodule creates. Merged with the baseline `ManagedBy = \"terraform\"` / `Project = \"n8n\"` pair and a `Name = <friendly_name_prefix>-n8n-tls` tag onto `azurerm_key_vault_certificate.letsencrypt`. A caller-supplied `Name` value is ignored; the certificate name always wins."
   type        = map(string)
   default     = {}
 

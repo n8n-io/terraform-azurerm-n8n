@@ -35,6 +35,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   In a legacy access-policy vault, the principal running `terraform
   apply` now also needs the `Update` certificate permission for that
   tag update.
+- `modules/tls-letsencrypt` now tags its Key Vault certificate the same
+  way (`ManagedBy = terraform`, `Project = n8n`, the caller's
+  `common_tags`, and `Name = <friendly_name_prefix>-n8n-tls`). Before,
+  `common_tags` was accepted but ignored, and the input's description
+  incorrectly said the certificate could not be tagged. Existing
+  certificates get an in-place tag update on the next apply; they are
+  not replaced, so the versioned Secret URI and the App Gateway
+  listener are unaffected. In a legacy access-policy vault, the
+  principal running `terraform apply` now also needs the `Update`
+  certificate permission for that tag update
+  ([#16](https://github.com/n8n-io/terraform-azurerm-n8n/issues/16)).
 
 ## [0.1.0] - 2026-09-29
 
