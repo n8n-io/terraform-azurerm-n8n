@@ -102,6 +102,27 @@ resource "kubernetes_secret" "n8n_db" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
+# Renders the caller-supplied CA bundle for the PostgreSQL connection into a
+# ConfigMap mounted read-only on main, worker, and webhook-processor pods
+# (locals.tf's n8n_extra_volumes / n8n_extra_volume_mounts). CA certificates
+# are public, so this holds plaintext data, not a Secret. Gated to zero when
+# no CA is supplied; DB_POSTGRESDB_SSL_CA_FILE (locals.tf) then also renders
+# nothing, so the volume/mount/env trio stays in lockstep.
+resource "kubernetes_config_map" "postgres_ssl_ca" {
+  count = var.postgres_ssl_ca_pem == null ? 0 : 1
+
+  metadata {
+    name      = local.n8n_postgres_ssl_ca_config_map_name
+    namespace = local.n8n_namespace
+  }
+
+  data = {
+    "ca.pem" = var.postgres_ssl_ca_pem
+  }
+
+  depends_on = [kubernetes_namespace.n8n]
+}
+
 # Created whenever a username is present (module-managed Redis never has one;
 # external Redis may) or the password itself is module-managed — i.e. skipped
 # entirely only when redis_password_secret_ref selects a caller-managed
@@ -412,6 +433,10 @@ resource "helm_release" "n8n" {
         # PostgreSQL connection/health-check runtime tuning (section 3). Null
         # inputs contribute no entries and retain n8n's pinned defaults.
         local.n8n_postgres_runtime_env,
+        # Optional CA bundle for the PostgreSQL connection (locals.tf renders
+        # the matching ConfigMap/volume/mount only when postgres_ssl_ca_pem is
+        # set). Null contributes no entry.
+        local.n8n_postgres_ssl_ca_env,
         # Optional shared V8 heap ceiling (section 6). Null contributes no
         # entries and leaves n8n/Node's own default and any caller NODE_OPTIONS
         # in n8n_extra_env in place.
