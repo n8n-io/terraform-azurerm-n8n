@@ -307,9 +307,13 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 - Optional AKS KMS etcd encryption with a caller-owned Key Vault key
   (`aks_kms_key_vault_key_id`, `aks_kms_key_vault_network_access`) and an
   optional role assignment granting the cluster's own identity `Key
-  Vault Crypto Service Encryption User` on a caller-named vault
-  (`aks_kms_role_assignment_enabled`, `aks_kms_key_vault_id`). Enabling
-  KMS on a cluster this module creates takes two applies — see
+  Vault Crypto User` on a caller-named vault
+  (`aks_kms_role_assignment_enabled`, `aks_kms_key_vault_id`). KMS requires
+  swapping the cluster identity from `SystemAssigned` to a dedicated
+  `UserAssigned` identity, which also needs `Network Contributor` on the
+  AKS subnet (granted automatically, since a `SystemAssigned` identity
+  would otherwise receive it implicitly). Enabling KMS on a cluster this
+  module creates takes two applies — see
   [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault)
   for the sequencing note.
 - Both add-ons are documented in

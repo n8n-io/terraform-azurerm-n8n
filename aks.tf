@@ -212,13 +212,14 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   # requirement and the AWS sibling's aws_eks_node_group.n8n equivalent in
   # eks.tf.
   #
-  # depends_on the private-DNS-zone and VNet role assignments: when they
-  # exist (BYO zone), the cluster must not attempt to create before the
-  # aks_cluster identity is authorized on the zone and VNet; when they
-  # don't exist (count = 0), this is a no-op dependency.
+  # depends_on every grant the aks_cluster identity needs before cluster
+  # create: Private DNS Zone Contributor and VNet Network Contributor for a
+  # BYO private DNS zone (issue #28), and subnet Network Contributor for the
+  # KMS path (issue #29). Grants with count = 0 are no-op dependencies.
   depends_on = [
     azurerm_role_assignment.aks_private_dns_zone_contributor,
     azurerm_role_assignment.aks_cluster_vnet_network_contributor,
+    azurerm_role_assignment.aks_cluster_subnet_network_contributor,
   ]
 
   lifecycle {
@@ -346,6 +347,20 @@ resource "time_sleep" "aks_api_warmup" {
   depends_on = [azurerm_kubernetes_cluster.n8n, azurerm_kubernetes_cluster_node_pool.n8n_user]
 }
 
+# KMS cluster identity subnet access: when the aks_cluster identity above
+# replaces SystemAssigned, Azure also requires it to hold Network
+# Contributor on var.aks_subnet_id before cluster create — the control
+# plane identity manages subnet-backed networking (load balancers, NSG
+# rules) and a SystemAssigned identity would otherwise have received this
+# permission implicitly at creation time.
+resource "azurerm_role_assignment" "aks_cluster_subnet_network_contributor" {
+  count = var.create_aks && local.aks_needs_user_assigned_identity ? 1 : 0
+
+  scope                = var.aks_subnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
+}
+
 # ── Existing AKS lookup ────────────────────────────────────────────────────
 # The only exception to the rule against inspecting customer-managed Azure
 # resources (design.md decision 2): workload federation needs the existing
@@ -375,5 +390,12 @@ check "aks_kms_requires_module_managed_aks" {
   assert {
     condition     = var.create_aks ? true : var.aks_kms_key_vault_key_id == null
     error_message = "aks_kms_key_vault_key_id is set while create_aks is false, so there is no module-managed AKS cluster to configure KMS etcd encryption on. Configure KMS on the existing cluster out-of-band, or set create_aks = true."
+  }
+}
+
+check "aks_kms_role_assignment_requires_module_managed_aks" {
+  assert {
+    condition     = var.create_aks ? true : !var.aks_kms_role_assignment_enabled
+    error_message = "aks_kms_role_assignment_enabled is true while create_aks is false, so there is no module-managed aks_cluster identity or AKS cluster to grant Key Vault Crypto User on. Grant the role on the existing cluster's identity out-of-band, or set create_aks = true."
   }
 }

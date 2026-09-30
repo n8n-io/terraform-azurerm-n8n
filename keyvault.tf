@@ -66,9 +66,9 @@ resource "azurerm_role_assignment" "aks_key_vault_secrets_provider_kv_secrets_us
 # that role failed with
 # AzureKeyVaultKmsValidateIdentityPermissionCustomerError ("The identity
 # does not have keys encrypt/decrypt permission on key vault ..."), live-
-# reproduced on a brand-new cluster with no identity-type switch involved
-# (see evidence/issue-29.md) — confirming the failure is this wrong role,
-# not RBAC propagation lag. "Key Vault Crypto User" carries encrypt/decrypt
+# reproduced on a brand-new cluster with no identity-type switch involved,
+# confirming the failure is this wrong role, not RBAC propagation lag.
+# "Key Vault Crypto User" carries encrypt/decrypt
 # (plus wrap/unwrap/sign/verify), matching the role Microsoft's own AKS KMS
 # documentation grants for this exact scenario.
 resource "azurerm_role_assignment" "aks_kms_kv_crypto_user" {
