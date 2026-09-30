@@ -42,7 +42,7 @@ output "aks_cluster_name" {
 }
 
 output "aks_kube_config" {
-  description = "Local-account kubeconfig block for the effective AKS cluster (module-created or existing). The cluster has no AAD-RBAC integration so this IS the local-account admin credential. A calling root uses this to configure the kubernetes / helm providers against this module's cluster (see examples/small/providers.tf, section 13) without a kubelogin / exec dependency. On existing AKS, the caller's own read permissions on the referenced cluster govern whether this local-account kubeconfig is available."
+  description = "Kubeconfig block for the effective AKS cluster (module-created or existing). By default (var.aks_entra_rbac and var.aks_local_account_disabled both left at their defaults) the cluster has no Entra ID (AAD-RBAC) integration, so this IS the local-account admin credential — a calling root uses this to configure the kubernetes / helm providers directly (see examples/small/providers.tf, section 13) without a kubelogin / exec dependency. When var.aks_local_account_disabled is true, `client_certificate` and `client_key` come back empty — Azure issues no client cert once local accounts are disabled — but `host` and `cluster_ca_certificate` remain populated; wire the kubernetes/helm providers' `exec` block against those two fields plus `kubelogin get-token --login azurecli` (or `spn`/`msi`) instead. See docs/customer-managed-infrastructure.md. On existing AKS, the caller's own read permissions on the referenced cluster govern whether this local-account kubeconfig is available."
   value       = local.effective_aks_kube_config
   sensitive   = true
 }

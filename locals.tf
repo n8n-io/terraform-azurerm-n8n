@@ -37,7 +37,19 @@ locals {
     var.common_tags,
   )
 
-  cluster_name         = "${var.friendly_name_prefix}-aks"
+  cluster_name = "${var.friendly_name_prefix}-aks"
+
+  # true only when aks_private_dns_zone_id names a caller-owned zone (not the
+  # "System"/"None" sentinels or the default null) — aks.tf switches the
+  # cluster's identity to a module-created UserAssigned identity in that case,
+  # since Azure requires the identity to already hold Private DNS Zone
+  # Contributor on the zone before cluster create (a SystemAssigned identity
+  # has no ID to grant a role to until after the cluster exists).
+  aks_uses_custom_private_dns_zone = (
+    var.aks_private_dns_zone_id != null &&
+    var.aks_private_dns_zone_id != "System" &&
+    var.aks_private_dns_zone_id != "None"
+  )
   postgres_server_name = "${var.friendly_name_prefix}-postgres"
   redis_name           = "${var.friendly_name_prefix}-redis"
   storage_account_name = substr("${var.friendly_name_prefix}n8nfiles", 0, 24)
