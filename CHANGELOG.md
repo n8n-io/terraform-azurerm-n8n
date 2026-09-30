@@ -11,6 +11,21 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Added
 
+- Six opt-in AKS network/identity hardening inputs, all defaulting to the
+  module's current behavior so an existing caller sees no plan diff:
+  `aks_private_cluster_enabled` and `aks_private_dns_zone_id` (the latter
+  gated on the former; private API server, where a caller-owned zone
+  switches the cluster to a module-created user-assigned identity granted
+  `Private DNS Zone Contributor`, since Azure requires that grant before
+  cluster create), `aks_entra_rbac` and `aks_local_account_disabled` (the
+  latter gated on the former; Entra ID / Azure RBAC authorization —
+  disabling local accounts requires Entra RBAC and empties
+  `aks_kube_config`'s `client_certificate`/`client_key` — see the README
+  provider-wiring section for the `kubelogin` `exec` block replacement),
+  `aks_outbound_type` (`loadBalancer` or `userDefinedRouting` egress), and
+  `aks_network_policy` (`null`, `azure`, `calico`, or `cilium`, matching
+  `network_data_plane` automatically for `cilium`)
+  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
 - `aks_system_pool_critical_addons_only`: opt-in bool (default false) that
   applies AzureRM's `only_critical_addons_enabled` to the system
   `default_node_pool`, tainting it `CriticalAddonsOnly=true:NoSchedule`.
@@ -155,20 +170,6 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   [`docs/customer-managed-infrastructure.md`](docs/customer-managed-infrastructure.md#caller-supplied-private-dns-zones)
   for the requirements and migration steps
   ([#22](https://github.com/n8n-io/terraform-azurerm-n8n/issues/22)).
-- Four independently opt-in AKS network/identity hardening inputs, all
-  defaulting to the module's current behavior so an existing caller sees
-  no plan diff: `aks_private_cluster_enabled` and `aks_private_dns_zone_id`
-  (private API server; a caller-owned zone switches the cluster to a
-  module-created user-assigned identity granted `Private DNS Zone
-  Contributor`, since Azure requires that grant before cluster create),
-  `aks_entra_rbac` and `aks_local_account_disabled` (Entra ID / Azure RBAC
-  authorization; disabling local accounts requires Entra RBAC and empties
-  `aks_kube_config`'s `client_certificate`/`client_key` — see the README
-  provider-wiring section for the `kubelogin` `exec` block replacement),
-  `aks_outbound_type` (`loadBalancer` or `userDefinedRouting` egress), and
-  `aks_network_policy` (`null`, `azure`, `calico`, or `cilium`, matching
-  `network_data_plane` automatically for `cilium`)
-  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
 
 ### Changed
 
