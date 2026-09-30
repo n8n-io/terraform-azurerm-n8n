@@ -9,14 +9,15 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
-- Four independently opt-in AKS network/identity hardening inputs, all
-  defaulting to the module's current behavior so an existing caller sees
-  no plan diff: `aks_private_cluster_enabled` and `aks_private_dns_zone_id`
-  (private API server; a caller-owned zone switches the cluster to a
-  module-created user-assigned identity granted `Private DNS Zone
-  Contributor`, since Azure requires that grant before cluster create),
-  `aks_entra_rbac` and `aks_local_account_disabled` (Entra ID / Azure RBAC
-  authorization; disabling local accounts requires Entra RBAC and empties
+- Six opt-in AKS network/identity hardening inputs, all defaulting to the
+  module's current behavior so an existing caller sees no plan diff:
+  `aks_private_cluster_enabled` and `aks_private_dns_zone_id` (the latter
+  gated on the former; private API server, where a caller-owned zone
+  switches the cluster to a module-created user-assigned identity granted
+  `Private DNS Zone Contributor`, since Azure requires that grant before
+  cluster create), `aks_entra_rbac` and `aks_local_account_disabled` (the
+  latter gated on the former; Entra ID / Azure RBAC authorization —
+  disabling local accounts requires Entra RBAC and empties
   `aks_kube_config`'s `client_certificate`/`client_key` — see the README
   provider-wiring section for the `kubelogin` `exec` block replacement),
   `aks_outbound_type` (`loadBalancer` or `userDefinedRouting` egress), and

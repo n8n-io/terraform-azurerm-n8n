@@ -199,7 +199,7 @@ variable "aks_node_os_disk_size_gb" {
 # azurerm_kubernetes_cluster.n8n in aks.tf.
 
 variable "aks_private_cluster_enabled" {
-  description = "When true, the AKS API server gets no public endpoint (`private_cluster_enabled`) — only reachable from inside var.vnet_id (or a peered/VPN-connected network). Default false keeps the current publicly reachable control plane. Azure rejects combining a private cluster with var.aks_api_authorized_ip_ranges (IP allow-listing only applies to the public endpoint), so clear that list first. Any caller applying this module (including CI) must run from inside the VNet once enabled."
+  description = "When true, the AKS API server gets no public endpoint (`private_cluster_enabled`) — reachable only via private DNS resolution and network connectivity to var.vnet_id (directly, or through a peered/VPN-connected network). Default false keeps the current publicly reachable control plane. Azure rejects combining a private cluster with var.aks_api_authorized_ip_ranges (IP allow-listing only applies to the public endpoint), so clear that list first. Any caller applying this module (including CI) needs that private connectivity and DNS resolution once enabled."
   type        = bool
   default     = false
 

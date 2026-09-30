@@ -168,11 +168,14 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   # requirement and the AWS sibling's aws_eks_node_group.n8n equivalent in
   # eks.tf.
   #
-  # depends_on the private-DNS-zone role assignment: when it exists (BYO
-  # zone), the cluster must not attempt to create before the aks_cluster
-  # identity is authorized on the zone; when it doesn't exist (count = 0),
-  # this is a no-op dependency.
-  depends_on = [azurerm_role_assignment.aks_private_dns_zone_contributor]
+  # depends_on the private-DNS-zone and subnet role assignments: when they
+  # exist (BYO zone), the cluster must not attempt to create before the
+  # aks_cluster identity is authorized on the zone and subnet; when they
+  # don't exist (count = 0), this is a no-op dependency.
+  depends_on = [
+    azurerm_role_assignment.aks_private_dns_zone_contributor,
+    azurerm_role_assignment.aks_cluster_subnet_network_contributor,
+  ]
 
   lifecycle {
     ignore_changes = [default_node_pool[0].node_count]
@@ -240,6 +243,20 @@ resource "azurerm_role_assignment" "aks_private_dns_zone_contributor" {
 
   scope                = var.aks_private_dns_zone_id
   role_definition_name = "Private DNS Zone Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
+}
+
+# BYO-zone cluster identity subnet access (issue #28 review follow-up): when
+# the aks_cluster identity above replaces SystemAssigned, Azure also
+# requires it to hold Network Contributor on var.aks_subnet_id before
+# cluster create — the control plane identity manages subnet-backed
+# networking (load balancers, NSG rules) and a SystemAssigned identity would
+# otherwise have received this permission implicitly at creation time.
+resource "azurerm_role_assignment" "aks_cluster_subnet_network_contributor" {
+  count = var.create_aks && local.aks_uses_custom_private_dns_zone ? 1 : 0
+
+  scope                = var.aks_subnet_id
+  role_definition_name = "Network Contributor"
   principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
 }
 

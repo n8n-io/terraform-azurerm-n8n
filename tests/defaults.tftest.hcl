@@ -427,6 +427,11 @@ run "aks_cluster_resources_in_plan" {
     condition     = length(azurerm_role_assignment.aks_private_dns_zone_contributor) == 0
     error_message = "azurerm_role_assignment.aks_private_dns_zone_contributor must not exist by default."
   }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
+    error_message = "azurerm_role_assignment.aks_cluster_subnet_network_contributor must not exist by default."
+  }
 }
 
 run "aks_api_authorized_ranges_render_when_supplied" {
@@ -608,6 +613,11 @@ run "aks_private_cluster_enabled_renders_private_cluster" {
     condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
     error_message = "No aks_cluster UAMI must be created without a caller-owned private DNS zone."
   }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
+    error_message = "No subnet Network Contributor role assignment must be created without a caller-owned private DNS zone."
+  }
 }
 
 run "aks_private_cluster_with_system_dns_zone_keeps_system_assigned_identity" {
@@ -631,6 +641,11 @@ run "aks_private_cluster_with_system_dns_zone_keeps_system_assigned_identity" {
   assert {
     condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
     error_message = "No aks_cluster UAMI must be created for the \"System\" sentinel."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
+    error_message = "No subnet Network Contributor role assignment must be created for the \"System\" sentinel."
   }
 }
 
@@ -665,6 +680,21 @@ run "aks_byo_private_dns_zone_switches_identity_and_grants_role" {
   assert {
     condition     = azurerm_role_assignment.aks_private_dns_zone_contributor[0].scope == var.aks_private_dns_zone_id
     error_message = "The role assignment must be scoped to the supplied private DNS zone."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 1
+    error_message = "A caller-owned private DNS zone must create exactly one subnet Network Contributor role assignment."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].role_definition_name == "Network Contributor"
+    error_message = "The subnet role assignment must grant Network Contributor."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].scope == var.aks_subnet_id
+    error_message = "The subnet role assignment must be scoped to var.aks_subnet_id."
   }
 }
 
