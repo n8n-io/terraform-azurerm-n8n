@@ -3047,8 +3047,55 @@ variable "postgres_password_secret_ref" {
   }
 
   validation {
-    condition     = var.create_database ? var.postgres_password_secret_ref == null : true
-    error_message = "postgres_password_secret_ref is ignored when create_database = true; the module always generates and manages the PostgreSQL password for its own server."
+    condition     = (var.create_database && !var.postgres_password_write_only) ? var.postgres_password_secret_ref == null : true
+    error_message = "postgres_password_secret_ref is ignored when create_database = true and postgres_password_write_only = false; the module always generates and manages the PostgreSQL password for its own server. Set postgres_password_write_only = true to supply the password through your own Secret instead."
+  }
+
+  validation {
+    condition     = (var.create_database && var.postgres_password_write_only) ? var.postgres_password_secret_ref != null : true
+    error_message = "postgres_password_secret_ref is required when postgres_password_write_only = true: the module cannot write a write-only value into a Kubernetes Secret, so you must supply your own Secret already populated with the same password."
+  }
+}
+
+variable "postgres_password_write_only" {
+  description = "When true, the module writes the PostgreSQL administrator password through azurerm_postgresql_flexible_server's write-only administrator_password_wo argument (sourced from postgres_admin_password_wo) instead of generating a password with random_password.postgres_admin and storing it in plain text in Terraform state. Requires postgres_admin_password_wo to be set and postgres_password_secret_ref to reference a Kubernetes Secret you populate yourself (for example, synced from Azure Key Vault) — the module cannot copy a write-only value into kubernetes_secret.n8n_db, so it creates no managed Secret and the postgres_admin_password output is null on this path. Ignored (must stay false) when create_database = false; the module never manages a password for an external PostgreSQL endpoint. See docs/customer-managed-infrastructure.md for the full contract."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = var.postgres_password_write_only ? var.create_database : true
+    error_message = "postgres_password_write_only has no effect when create_database = false; the module never manages a password for an external PostgreSQL endpoint."
+  }
+}
+
+variable "postgres_admin_password_wo" {
+  description = "PostgreSQL administrator password, accepted as a write-only value so Terraform never persists it in plan or state files. Required when postgres_password_write_only = true; must stay null otherwise, because the module generates its own password in that mode. Feed this from your own ephemeral source (for example an `ephemeral \"azurerm_key_vault_secret\"` block in the calling root, or a plain sensitive value you manage out of band) and keep the Kubernetes Secret referenced by postgres_password_secret_ref in sync with the same value — Terraform never copies one into the other. Bump postgres_admin_password_wo_version whenever you rotate this value; Terraform cannot detect a write-only value change on its own."
+  type        = string
+  ephemeral   = true
+  sensitive   = true
+  default     = null
+
+  validation {
+    condition     = var.postgres_password_write_only ? var.postgres_admin_password_wo != null : true
+    error_message = "postgres_admin_password_wo is required when postgres_password_write_only = true."
+  }
+
+  validation {
+    condition     = var.postgres_password_write_only ? true : var.postgres_admin_password_wo == null
+    error_message = "postgres_admin_password_wo has no effect when postgres_password_write_only = false; the module generates and manages its own password in that mode."
+  }
+}
+
+variable "postgres_admin_password_wo_version" {
+  description = "Version marker for postgres_admin_password_wo, forwarded to azurerm_postgresql_flexible_server's administrator_password_wo_version. Increment this value whenever you rotate postgres_admin_password_wo — Terraform only re-applies a write-only value when its version number changes. Ignored when postgres_password_write_only = false."
+  type        = number
+  default     = 1
+  nullable    = false
+
+  validation {
+    condition     = var.postgres_admin_password_wo_version >= 1
+    error_message = "postgres_admin_password_wo_version must be a positive integer (start at 1, increment on each rotation)."
   }
 }
 
