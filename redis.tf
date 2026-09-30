@@ -59,16 +59,21 @@
 # creating a database with a size/policy combination Azure would reject at
 # apply time.
 
-# ── Private DNS zone + VNet link (managed path only) ──
+# ── Private DNS zone + VNet link (managed path only, unless caller-supplied) ──
 # The DNS zone name MUST be `privatelink.redis.azure.net` verbatim. Azure
 # Managed Redis retains the `Microsoft.Cache/redisEnterprise` ARM resource
 # type and `redisEnterprise` private-link subresource, but its hostname and
 # private DNS zone differ from legacy Azure Cache for Redis Enterprise. See
 # https://learn.microsoft.com/azure/redis/private-link#azure-managed-redis-private-endpoint-private-dns-zone-value.
 # Not created on the external path: an external Redis endpoint's DNS is the
-# caller's responsibility.
+# caller's responsibility. Also not created when `var.redis_private_dns_zone_id`
+# is set: some landing zones centralize privatelink zones in a connectivity
+# subscription (often under an Azure Policy DeployIfNotExists mandate), and a
+# second same-named zone in the n8n resource group would conflict with that.
+# In that case the caller owns the zone and its VNet link; the module only
+# reads the supplied zone ID.
 resource "azurerm_private_dns_zone" "redis" {
-  count = var.create_redis ? 1 : 0
+  count = var.create_redis && var.redis_private_dns_zone_id == null ? 1 : 0
 
   name                = "privatelink.redis.azure.net"
   resource_group_name = var.resource_group_name
@@ -77,7 +82,7 @@ resource "azurerm_private_dns_zone" "redis" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
-  count = var.create_redis ? 1 : 0
+  count = var.create_redis && var.redis_private_dns_zone_id == null ? 1 : 0
 
   name                  = "${var.friendly_name_prefix}-redis-dns-link"
   resource_group_name   = var.resource_group_name
@@ -85,6 +90,16 @@ resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
   virtual_network_id    = var.vnet_id
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-redis-dns-link" })
+}
+
+# Resolves to the caller-supplied zone ID when set, otherwise the
+# module-managed zone created above. Consumed by the private endpoint's
+# `private_dns_zone_group` below.
+locals {
+  redis_private_dns_zone_id = var.create_redis ? coalesce(
+    var.redis_private_dns_zone_id,
+    one(azurerm_private_dns_zone.redis[*].id),
+  ) : null
 }
 
 # ── Azure Managed Redis (managed path only) ──
@@ -157,7 +172,7 @@ resource "azurerm_private_endpoint" "redis" {
 
   private_dns_zone_group {
     name                 = "${var.friendly_name_prefix}-redis-dns-zone-group"
-    private_dns_zone_ids = [azurerm_private_dns_zone.redis[0].id]
+    private_dns_zone_ids = [local.redis_private_dns_zone_id]
   }
 
   # The VNet link must exist before the private endpoint registers its A

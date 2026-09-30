@@ -51,14 +51,19 @@ resource "random_password" "postgres_admin" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
-# ── Private DNS zone + VNet link (managed path only) ──
+# ── Private DNS zone + VNet link (managed path only, unless caller-supplied) ──
 # The DNS zone name MUST be `privatelink.postgres.database.azure.com`
 # verbatim — Azure's Flexible Server private-DNS auto-registration only fires
 # for that exact name. Do not prefix with `friendly_name_prefix` or otherwise
 # customize. Not created on the external path: an external PostgreSQL
-# endpoint's DNS is the caller's responsibility.
+# endpoint's DNS is the caller's responsibility. Also not created when
+# `var.postgres_private_dns_zone_id` is set: some landing zones centralize
+# privatelink zones in a connectivity subscription (often under an Azure
+# Policy DeployIfNotExists mandate), and a second same-named zone in the
+# n8n resource group would conflict with that. In that case the caller owns
+# the zone and its VNet link; the module only reads the supplied zone ID.
 resource "azurerm_private_dns_zone" "postgres" {
-  count = var.create_database ? 1 : 0
+  count = var.create_database && var.postgres_private_dns_zone_id == null ? 1 : 0
 
   name                = "privatelink.postgres.database.azure.com"
   resource_group_name = var.resource_group_name
@@ -67,7 +72,7 @@ resource "azurerm_private_dns_zone" "postgres" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  count = var.create_database ? 1 : 0
+  count = var.create_database && var.postgres_private_dns_zone_id == null ? 1 : 0
 
   name                  = "${var.friendly_name_prefix}-postgres-dns-link"
   resource_group_name   = var.resource_group_name
@@ -134,6 +139,16 @@ data "azurerm_postgresql_flexible_server" "current" {
   resource_group_name = var.resource_group_name
 }
 
+# Resolves to the caller-supplied zone ID when set, otherwise the
+# module-managed zone created above. Consumed by the Flexible Server's
+# `private_dns_zone_id` below.
+locals {
+  postgres_private_dns_zone_id = var.create_database ? coalesce(
+    var.postgres_private_dns_zone_id,
+    one(azurerm_private_dns_zone.postgres[*].id),
+  ) : null
+}
+
 # ── PostgreSQL Flexible Server (managed path only) ──
 # Public network access is hardcoded off — the private-only posture is the
 # whole point of attaching the server to a delegated subnet + private DNS
@@ -170,7 +185,7 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   geo_redundant_backup_enabled = var.pg_geo_redundant_backup_enabled
 
   delegated_subnet_id           = var.postgres_subnet_id
-  private_dns_zone_id           = azurerm_private_dns_zone.postgres[0].id
+  private_dns_zone_id           = local.postgres_private_dns_zone_id
   public_network_access_enabled = false
 
   administrator_login    = var.pg_admin_username

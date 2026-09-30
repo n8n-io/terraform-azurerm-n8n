@@ -125,6 +125,46 @@ Business license without those entitlements should keep
 `database` even when `create_blob_storage = false` — see
 [`docs/data-storage.md`](./data-storage.md#new-deployment-without-azure-storage-entitlements-business-license).
 
+### Caller-supplied private DNS zones (`postgres_private_dns_zone_id`, `redis_private_dns_zone_id`, `blob_private_dns_zone_id`)
+
+On the managed paths, the module creates its own `privatelink` private DNS
+zone and VNet link for PostgreSQL, Redis, and Blob storage. Many enterprise
+Azure landing zones instead centralize these zones in a connectivity
+subscription, often under an Azure Policy `DeployIfNotExists` mandate that
+registers private endpoints into the central zone automatically. A second
+zone with the same name in the n8n resource group either conflicts with that
+policy or resolves differently than intended.
+
+Setting the matching `*_private_dns_zone_id` input skips creating that
+service's zone and VNet link entirely; the module attaches the managed
+PostgreSQL server or Blob/Redis private endpoint to the supplied zone
+instead. Each input:
+
+- Must be `null` (the default) or a fully qualified private Azure DNS zone
+  resource ID whose zone name matches exactly:
+  `privatelink.postgres.database.azure.com`,
+  `privatelink.redis.azure.net`, or `privatelink.blob.core.windows.net`
+  respectively. Azure's private-DNS auto-registration and the private
+  endpoint's DNS zone group only work against these exact names.
+- Is ignored, and rejected at plan time, when the matching `create_database`,
+  `create_redis`, or `create_blob_storage` is `false` — there is no
+  module-managed resource to attach the zone to in that mode.
+- Requires the caller to link the zone to `var.vnet_id` themselves. The
+  module never creates a VNet link into a zone it does not own.
+- Requires the identity running Terraform to hold **Private DNS Zone
+  Contributor**, or at minimum
+  `Microsoft.Network/privateDnsZones/join/action`, on the supplied zone.
+  PostgreSQL Flexible Server additionally needs read/join access on the
+  zone because it self-registers its A record through the delegated
+  subnet; the zone may live in a different subscription than
+  `var.resource_group_name`.
+
+Because the caller's landing zone may enforce its private DNS zone through
+an Azure Policy `DeployIfNotExists` assignment, expect that policy's own
+remediation task to reconcile the private endpoint's DNS zone group after
+apply; this can appear as an out-of-band change outside Terraform's view and
+is not something this module can detect or prevent.
+
 ### The n8n workload identity stays module-owned
 
 Even when `create_aks = false` and/or `create_blob_storage = false`, the

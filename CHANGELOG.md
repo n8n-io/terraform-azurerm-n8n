@@ -130,6 +130,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   upgrade is not in-place
   ([#31](https://github.com/n8n-io/terraform-azurerm-n8n/issues/31)).
 
+- `postgres_private_dns_zone_id`, `redis_private_dns_zone_id`, and
+  `blob_private_dns_zone_id` let a caller attach the module-managed
+  PostgreSQL Flexible Server and the Redis/Blob private endpoints to an
+  existing privatelink zone instead of creating a new one, for landing
+  zones that centralize these zones in a connectivity subscription (often
+  under an Azure Policy `DeployIfNotExists` mandate). The caller owns the
+  supplied zone's VNet link and needs Private DNS Zone Contributor (or at
+  minimum `Microsoft.Network/privateDnsZones/join/action`) on it. See
+  [`docs/customer-managed-infrastructure.md`](docs/customer-managed-infrastructure.md#caller-supplied-private-dns-zones-postgres_private_dns_zone_id-redis_private_dns_zone_id-blob_private_dns_zone_id)
+  ([#22](https://github.com/n8n-io/terraform-azurerm-n8n/issues/22)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by
