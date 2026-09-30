@@ -679,8 +679,12 @@ single `terraform apply` brings up the full stack:
   and every additional domain, when the caller passes a zone ID and the
   matching record toggle.
 
-An **n8n Enterprise license key** (`var.n8n_license_key`) or, for air-gapped and egress-restricted clusters, an offline **license certificate** (`var.n8n_license_cert_secret_ref`, `N8N_LICENSE_CERT`) is required — the
-module does not provision a community-edition deployment.
+An **n8n Enterprise license credential** is required (the module does not
+provision a community-edition deployment): supply exactly one of
+`var.n8n_license_key`, `var.n8n_license_key_secret_ref` (a caller-managed
+Secret holding the key), or, for air-gapped and egress-restricted clusters,
+`var.n8n_license_cert_secret_ref` (a caller-managed Secret holding an
+offline license certificate rendered as `N8N_LICENSE_CERT`).
 
 The module **expects a pre-existing VNet** and five pre-sized subnets. The
 `examples/small`, `examples/medium`, and `examples/large` roots create those
