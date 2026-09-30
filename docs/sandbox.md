@@ -16,7 +16,7 @@ separate `sandbox` example:
 | Input | Sandbox value | Why |
 |---|---|---|
 | `n8n_main_hpa_min_replicas` | `1` | Single-main mode. Does not require `feat:multipleMainInstances`. |
-| `n8n_main_hpa_max_replicas` | `1` | The effective ceiling clamps to 1 in single-main mode regardless of this value, but setting it to 1 keeps the capacity diagnostics' modeled demand honest. |
+| `n8n_main_hpa_max_replicas` | `1` | Not required: the effective ceiling already clamps to 1 in single-main mode (`locals.tf`), so the capacity diagnostics model one main replica regardless of this value. Setting it to `1` here just keeps the input honest about what single-main mode actually runs. |
 | `n8n_webhook_hpa_min_replicas` / `n8n_webhook_hpa_max_replicas` | `1` | One webhook processor. |
 | `n8n_worker_keda_min_replicas` / `n8n_worker_keda_max_replicas` | `1` | One worker. |
 | `aks_node_count_min` | `1` | The autoscaler's floor on **each** node pool (see below). |
