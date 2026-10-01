@@ -138,14 +138,6 @@ run "submodule_plans_clean_with_defaults" {
 run "caller_tags_override_baseline_but_not_name" {
   command = plan
 
-  override_resource {
-    target          = azurerm_key_vault_certificate.letsencrypt
-    override_during = plan
-    values = {
-      secret_id = "https://n8ntest-shared-kv.vault.azure.net/secrets/n8ntest-n8n-tls/0123456789abcdef0123456789abcdef"
-    }
-  }
-
   variables {
     common_tags = {
       ManagedBy = "platform-team"
@@ -162,6 +154,37 @@ run "caller_tags_override_baseline_but_not_name" {
     condition     = azurerm_key_vault_certificate.letsencrypt.tags["Name"] == "n8ntest-n8n-tls"
     error_message = "The Name tag must stay <friendly_name_prefix>-n8n-tls even when common_tags sets Name"
   }
+}
+
+# Key Vault caps certificates at 15 tags. The module sets three (ManagedBy,
+# Project, Name), so 12 extra caller keys is the boundary. Caller keys that
+# collide with a module key do not count twice.
+run "accepts_common_tags_at_key_vault_tag_limit" {
+  command = plan
+
+  variables {
+    common_tags = merge(
+      { for i in range(12) : "tag${i}" => "v" },
+      { ManagedBy = "platform-team", Name = "ignored" },
+    )
+  }
+
+  assert {
+    condition     = length(azurerm_key_vault_certificate.letsencrypt.tags) == 15
+    error_message = "12 extra caller tags plus ManagedBy, Project, and Name must yield exactly 15 certificate tags"
+  }
+}
+
+run "rejects_common_tags_over_key_vault_tag_limit" {
+  command = plan
+
+  variables {
+    common_tags = { for i in range(13) : "tag${i}" => "v" }
+  }
+
+  expect_failures = [
+    var.common_tags,
+  ]
 }
 
 run "subject_alternative_names_expand_certificate_contract" {
