@@ -281,6 +281,7 @@ On the default, fully module-managed path, the following land in state:
 | Redis access key | `azurerm_managed_redis.n8n`'s `default_database[0].primary_access_key`, `kubernetes_secret.n8n_redis`, the `redis_primary_access_key` output | `create_redis = false` with `redis_password_secret_ref` pointing at a Secret you manage; `redis_external_password` still lands in `kubernetes_secret.n8n_redis` and does not opt out of state. No equivalent exists for the managed path (see below) |
 | n8n encryption key | `random_password.n8n_encryption_key`'s `result`, `kubernetes_secret.n8n_encryption_key`, the `n8n_encryption_key` output | `n8n_encryption_key_secret_ref` (module never reads the Secret's value) |
 | Task-runner authentication token | `random_password.n8n_task_runners_token`'s `result`, `kubernetes_secret.n8n_task_runners` | none — this token is always module-generated (see above) |
+| n8n license key | `var.n8n_license_key`, `kubernetes_secret.n8n_license` | `n8n_license_key_secret_ref` (module never reads the Secret's value) |
 
 ### PostgreSQL write-only password (`postgres_password_write_only`)
 
