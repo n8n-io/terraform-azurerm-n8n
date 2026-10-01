@@ -21,8 +21,15 @@ of the root module when a caller supplies an existing certificate — a lighter
   - `DNS Zone Contributor` on the DNS zone (so lego can write the
     DNS-01 validation TXT record).
   - Cert-import rights on the supplied `var.key_vault_id` (Key Vault
-    Certificates Officer in RBAC mode, or `Create` / `Import` on
-    certificates in legacy access-policy mode).
+    Certificates Officer in RBAC mode, or `Get`, `Import`, and
+    `Update` on certificates in legacy access-policy mode). `Update` is
+    what applies tag changes to an existing certificate. `terraform
+    destroy` also needs `Delete`, plus `Purge` when the `azurerm`
+    provider purges soft-deleted certificates on destroy (its default)
+    and the vault does not have purge protection enabled. If a
+    soft-deleted certificate with the same name exists, creating it
+    again also needs `Recover`, because the provider recovers
+    soft-deleted certificates by default.
 - Credentials supported by lego's `azuredns` provider on the apply host.
   Service-principal secret authentication uses `AZURE_TENANT_ID`,
   `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET`. Set `AZURE_SUBSCRIPTION_ID`
@@ -34,9 +41,12 @@ of the root module when a caller supplies an existing certificate — a lighter
   CLI credentials from `az login`. Azure managed identity is also supported.
   The `azurerm` provider's authentication is independent.
 - The App Gateway's user-assigned identity that consumes the cert at
-  runtime needs `Get` on certificates and secrets on `key_vault_id` —
-  granted by the caller out-of-band (this submodule does not touch
-  access policies / RBAC).
+  runtime needs read access to the vault's secrets. This submodule does
+  not grant it. Either set the root module's `app_gateway_keyvault_id` to
+  the vault ID together with
+  `app_gateway_keyvault_role_assignment_enabled = true`, which grants
+  `Key Vault Secrets User` on the vault, or grant the role yourself. In a
+  legacy access-policy vault, give the identity `Get` on secrets instead.
 
 ## Usage
 
@@ -63,6 +73,48 @@ module "n8n" {
   # ... remaining root-module inputs
 }
 ```
+
+## Inputs
+
+| Name | Description | Type | Default |
+| ---- | ----------- | ---- | ------- |
+| `acme_email` | Email address registered with Let's Encrypt for issuance and renewal notifications. | `string` | n/a (required) |
+| `domain_name` | Canonical fully qualified domain name. Becomes the certificate's CN. Must be the `dns_zone_name` apex or a subdomain of it. At most 64 characters. | `string` | n/a (required) |
+| `subject_alternative_names` | Additional fully qualified domain names on the certificate. Normalized to lowercase, unique, not repeating `domain_name`, and inside `dns_zone_name`. | `list(string)` | `[]` |
+| `dns_zone_name` | Caller-owned Azure DNS zone used for the DNS-01 challenge. | `string` | n/a (required) |
+| `dns_zone_resource_group_name` | Resource group containing `dns_zone_name`. | `string` | n/a (required) |
+| `key_vault_id` | Resource ID of the caller-owned Key Vault the issued PFX is imported into. | `string` | n/a (required) |
+| `friendly_name_prefix` | Lowercase alphanumeric prefix, 2 to 12 characters. The certificate is named `<friendly_name_prefix>-n8n-tls`. | `string` | n/a (required) |
+| `common_tags` | Tags merged onto the Key Vault certificate, on top of the baseline `ManagedBy = terraform` and `Project = n8n` tags. Caller values win, except `Name`, which is always the certificate name. The merged map must stay within Key Vault's limit of 15 tags. | `map(string)` | `{}` |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| `app_gateway_tls_cert_secret_id` | Versioned Key Vault Secret URI of the imported certificate (PFX). Pass it to the root module's `app_gateway_tls_cert_secret_id` input. Sensitive. |
+| `certificate_domain_names` | Normalized set of domain names the certificate covers: `domain_name` plus every `subject_alternative_names` entry. |
+
+## Tags and renewal
+
+The certificate carries `ManagedBy = terraform`, `Project = n8n`,
+`var.common_tags` merged on top, and `Name = <friendly_name_prefix>-n8n-tls`.
+Key Vault allows at most 15 tags per certificate, so `common_tags` can
+add at most 12 keys beyond the three the module sets. A larger map fails
+at plan.
+
+A tag-only change updates the certificate in place. It does not create
+a new certificate version, so the versioned Secret URI stays the same.
+
+When Let's Encrypt renews the certificate and the tags do not change in
+the same apply, the `azurerm` provider imports the new PFX as a new
+certificate version without sending tags. Upstream reports that Key
+Vault then leaves the new version untagged
+([hashicorp/terraform-provider-azurerm#28004](https://github.com/hashicorp/terraform-provider-azurerm/issues/28004)).
+In that case the next `terraform plan` shows the tags as drift, and the
+next apply restores them. If the tags also change in the same apply,
+the provider sends them after the import. The renewal itself is not
+affected. This behavior is taken from the provider source and the
+upstream issue; it has not been verified live with this module.
 
 ## Provider configuration
 
