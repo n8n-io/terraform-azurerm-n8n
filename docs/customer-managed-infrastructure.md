@@ -578,11 +578,19 @@ your own `azurerm_role_assignment`).
 `aks_key_vault_secrets_provider_secret_rotation_interval` controls the
 autorotation poll interval (default `2m`, matching the AKS default).
 
-With the add-on enabled, mount a `SecretProviderClass` (a Kubernetes CRD this
-module does not manage) that references the vault objects to sync, and set
-its `secretObjects` field to project them into a Kubernetes Secret matching
-the name and keys one of the `*_secret_ref` inputs expects. For
-`n8n_encryption_key_secret_ref`, that Secret must carry all four keys —
+With the add-on enabled, create a `SecretProviderClass` (a Kubernetes CRD
+this module does not manage) that references the vault objects to sync, and
+set its `secretObjects` field to project them into a Kubernetes Secret
+matching the name and keys one of the `*_secret_ref` inputs expects. A
+`SecretProviderClass` alone creates nothing: the CSI driver creates the
+synced Secret only while at least one running pod mounts a
+`secrets-store.csi.k8s.io` volume referencing it, and deletes the Secret
+again once no pod does. The n8n pods do not mount that volume, so run a
+small caller-owned Deployment in the n8n namespace (any minimal image, one
+replica) that mounts it, and create it before the n8n Helm release so the
+Secret exists when n8n starts. Otherwise the `*_secret_ref` input points at a
+Secret that never appears, and n8n pods fail with `CreateContainerConfigError`.
+For `n8n_encryption_key_secret_ref`, that Secret must carry all four keys —
 `N8N_ENCRYPTION_KEY`, `N8N_HOST`, `N8N_PORT`, and `N8N_PROTOCOL` — so the
 `SecretProviderClass` needs vault objects for all four. **Never point
 autorotation at the `N8N_ENCRYPTION_KEY` vault object.** n8n cannot rotate
