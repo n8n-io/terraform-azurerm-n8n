@@ -78,5 +78,5 @@ advisory only (it does not fail the plan or apply).
 This profile does not change `redis_sku_name` or
 `storage_replication_type` from the `small` example's `Balanced_B0` /
 `LRS` — Azure Managed Redis is already sized independently of PostgreSQL
-and AKS, and the module's Redis connection-count guidance lives in
-[`docs/redis.md`](./redis.md).
+and AKS; see [`docs/redis.md`](./redis.md) for SKU availability, sizing,
+and `NoCluster` capacity guidance.
