@@ -103,7 +103,7 @@ variable "dns_zone_resource_group_name" {
 }
 
 variable "key_vault_id" {
-  description = "Azure resource ID of the Key Vault the issued PFX is imported into. The principal running `terraform apply` must hold cert-import rights on this vault (Key Vault Certificates Officer in RBAC mode, or Create/Import on certificates in legacy access-policy mode). The App Gateway's user-assigned identity that consumes the cert at runtime needs Get on certificates+secrets — granted by the caller out-of-band (this submodule does not touch access policies / RBAC)."
+  description = "Azure resource ID of the Key Vault the issued PFX is imported into. The principal running `terraform apply` must hold certificate import and update rights on this vault (Key Vault Certificates Officer in RBAC mode, or Get/Import/Update on certificates in legacy access-policy mode; Update applies tag changes to an existing certificate; destroy also needs Delete, plus Purge when the azurerm provider purges soft-deleted certificates, and re-creating a soft-deleted certificate needs Recover). The App Gateway's user-assigned identity that consumes the cert at runtime needs read access to the vault's secrets (Key Vault Secrets User in RBAC mode, or Get on secrets in legacy access-policy mode), which this submodule does not grant: set the root module's app_gateway_keyvault_id with app_gateway_keyvault_role_assignment_enabled = true, or grant it out-of-band."
   type        = string
 
   validation {
@@ -113,7 +113,7 @@ variable "key_vault_id" {
 }
 
 variable "friendly_name_prefix" {
-  description = "Short, lowercase name prefix used in the imported certificate's name and as the value of the `Name` tag (e.g. `n8nprod`, `n8ndev`). Mirrors the root module's variable to keep naming/tagging consistent across the IaaS + TLS surfaces. 2–12 chars, lowercase alphanumeric only."
+  description = "Short, lowercase name prefix used in the imported certificate's name, `<friendly_name_prefix>-n8n-tls`, which is also its `Name` tag (e.g. `n8nprod`, `n8ndev`). Mirrors the root module's variable to keep naming/tagging consistent across the IaaS + TLS surfaces. 2–12 chars, lowercase alphanumeric only."
   type        = string
 
   validation {
@@ -122,18 +122,16 @@ variable "friendly_name_prefix" {
   }
 }
 
-# No taggable Azure resource lives in this submodule (azurerm_key_vault_certificate
-# does not carry tags — tags live on the parent vault, which is caller-owned).
-# Kept on the contract so umbrella examples can pass the same `common_tags`
-# they pass to other submodules without bookkeeping divergence; will be
-# consumed automatically if a future Azure resource gains tag support inside
-# this submodule.
-# tflint-ignore: terraform_unused_declarations
 variable "common_tags" {
-  description = "Tags merged onto every taggable resource this submodule creates. The Key Vault Certificate resource itself is not directly taggable on Azure (tags live on the parent vault), so today this only flows into the `Name` tag the caller will see in azurerm_key_vault_certificate plan output. Kept on the contract so a future taggable ACME resource picks the value up automatically."
+  description = "Tags merged onto the Key Vault certificate this submodule imports, on top of the baseline `ManagedBy = terraform` and `Project = n8n` tags (caller values win). The `Name` tag is always set to the certificate name. Key Vault allows at most 15 tags per certificate, so the merged map must not exceed 15 keys."
   type        = map(string)
   default     = {}
 
-  # no validation: arbitrary string→string tag map; Azure's per-tag length and
-  # per-resource tag-count limits are enforced by the platform at apply.
+  # Key Vault caps certificates at 15 tags. Count the merged map the module
+  # actually sends (baseline + caller + Name) so the limit fails at plan,
+  # not at apply. Azure still enforces per-tag name/value lengths at apply.
+  validation {
+    condition     = length(merge({ ManagedBy = "", Project = "", Name = "" }, var.common_tags)) <= 15
+    error_message = "common_tags plus the module's ManagedBy, Project, and Name tags must total at most 15 keys: Key Vault allows at most 15 tags per certificate."
+  }
 }

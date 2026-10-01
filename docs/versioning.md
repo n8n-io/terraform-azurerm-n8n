@@ -25,7 +25,7 @@ Added in `port-aws-050-enhancements`, mirroring the AWS sibling's
 | Terraform CI toolchain (`TF_VERSION`) | `1.16.4` | `.github/workflows/terraform-tests.yml` | Patch-safe; keep in step with the local dev-loop version noted in `AGENTS.md`. |
 | tflint (`TFLINT_VERSION`) | `v0.64.0` | `.github/workflows/terraform-tests.yml` | Patch-safe; re-run `tflint` locally and triage any new rule findings. |
 | checkov (`CHECKOV_VERSION`) | `3.3.20` | `.github/workflows/terraform-tests.yml` | Verification-required: a checkov version bump can change which checks a resource draws (see the `AGENTS.md` correction on `redis_exporter`'s count-0 visibility); triage findings in the same commit as the bump. |
-| Helm CLI (`azure/setup-helm`) | `v4.3.0` action, `v3.16.4` binary | `.github/workflows/terraform-tests.yml` | Patch-safe. |
+| Helm CLI (`azure/setup-helm`) | `v4.3.0` action, `v3.16.4` binary | `.github/workflows/terraform-tests.yml`, `.github/workflows/version-drift.yml` | Patch-safe; bump both workflows together. |
 | `terraform-docs` | `v0.24.0` | `.github/workflows/terraform-tests.yml` | Patch-safe; a version drift between local and CI produces spurious README diff noise (whitespace only), not a functional break. |
 | markdownlint | (see CI workflow) | `.github/workflows/terraform-tests.yml`, `.markdownlint.yml` | Patch-safe. |
 
@@ -35,9 +35,9 @@ Added in `port-aws-050-enhancements`, mirroring the AWS sibling's
 except the ones that need a credentialed, account-scoped Azure API call
 (PostgreSQL major version support and Redis SKU/region availability -
 those need `tests/scripts/preflight-region-check.sh` against a real
-subscription instead). It runs as the report-only `version-drift` job in
-`.github/workflows/terraform-tests.yml` on every push, pull request, and
-manual dispatch (there is no scheduled run yet); run it locally any time
+subscription instead). `.github/workflows/version-drift.yml` runs it every
+Monday (and on manual dispatch) and syncs the report to a single
+"Version drift report (automated)" tracking issue; run it locally any time
 with no credentials required:
 
 ```bash

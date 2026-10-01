@@ -4,6 +4,8 @@ All notable changes to this module are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Before 1.0.0, minor versions are the breaking-change boundary; see
+[README.md, Stability & versioning](./README.md#stability--versioning).
 
 ## [Unreleased]
 
@@ -77,6 +79,19 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   since the Kubernetes-native RBAC cluster-admin binding has no other way
   to grant cluster-admin access
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
+- `modules/tls-letsencrypt` applies the same tags to its imported Key
+  Vault certificate: `ManagedBy = terraform`, `Project = n8n`, the
+  caller's `common_tags`, and `Name = <friendly_name_prefix>-n8n-tls`.
+  Before, `common_tags` was accepted but ignored. Existing certificates
+  get an in-place tag update on the next apply; they are not replaced,
+  so when tags are the only change the versioned Secret URI stays the
+  same. In a legacy access-policy vault, the principal running
+  `terraform apply` now also needs the `Update` certificate permission.
+  `common_tags` now fails at plan when it would push the certificate
+  past Key Vault's limit of 15 tags. The documented access-policy
+  permissions are corrected to `Get`, `Import`, and `Update` (plus
+  `Delete` and `Purge` for destroy); `Create` was never used
+  ([#16](https://github.com/n8n-io/terraform-azurerm-n8n/issues/16)).
 
 ## [0.1.0] - 2026-09-29
 

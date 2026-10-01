@@ -22,6 +22,7 @@ An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this m
 - [Sizing and capacity](#sizing-and-capacity)
 - [Examples](#examples)
 - [Operator documentation](#operator-documentation)
+- [Stability & versioning](#stability--versioning)
 - [Compatibility](#compatibility)
 - [Support](#support)
 - [Out of scope](#out-of-scope)
@@ -412,6 +413,23 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history.
 - [`AGENTS.md`](./AGENTS.md) — contributor guide, Azure-specific deltas vs the AWS sibling, and the registry quality bar this module is held to.
 
+## Stability & versioning
+
+This module is pre-1.0. We use minor versions (0.1, 0.2, ...) as the
+breaking-change boundary and patches (0.1.0, 0.1.1, ...) for additive and
+bug-fix changes.
+
+| Across | What may change |
+| ------ | --------------- |
+| `0.MINOR.PATCH` -> `0.MINOR.PATCH+1` | Bug fixes, new optional inputs, new outputs, new resources whose absence would not affect existing callers. No removed or renamed inputs/outputs, no changed defaults that move infra, no changed resource addresses. |
+| `0.MINOR` -> `0.MINOR+1` | Anything else, including removed or renamed inputs, default changes that force resource replacement, refactored resource addresses, and bumped provider version floors. Each such change is called out in [`CHANGELOG.md`](./CHANGELOG.md) with an upgrade note. |
+
+Pin `version = "~> 0.1.0"` to auto-receive 0.1.x patches without accidentally
+crossing the 0.1 -> 0.2 boundary. Note that the three-component constraint
+`~> 0.1.0` resolves to `>= 0.1.0, < 0.2.0`, whereas the two-component `~> 0.1`
+would resolve to `>= 0.1, < 1.0` and let you cross minor boundaries
+unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
+
 ## Compatibility
 
 - **Kubernetes provider:** `~> 3.0`. Bumped from `~> 2.0` in
@@ -431,6 +449,14 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 ## Support
 
 This module is open source software, maintained by the n8n Solutions team independently of n8n's enterprise products. While the n8n Support team provides dedicated support for the enterprise offerings, this module isn't included.
+
+**Bug reports and feature requests:** open a [GitHub issue](https://github.com/n8n-io/terraform-azurerm-n8n/issues). We triage on a best-effort basis; there is no SLA.
+
+**Security issues:** see [`SECURITY.md`](./SECURITY.md) for the disclosure process. **Do not** open public issues for security findings.
+
+**General n8n questions** (not specific to this module): use the [n8n community forum](https://community.n8n.io/).
+
+Contributions: see [`CONTRIBUTING.md`](./CONTRIBUTING.md). Planned work: [`ROADMAP.md`](./ROADMAP.md).
 
 ## Out of scope
 

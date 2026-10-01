@@ -122,7 +122,7 @@ tasks:
       - ./tests/scripts/chart-values-diff.sh "{{.CANDIDATE}}"
 
   version-drift:
-    desc: Report every version pin that has fallen behind upstream (see docs/versioning.md). Report-only like the non-blocking CI job, so a failure (including a missing curl or python3) is printed but never stops task ci.
+    desc: Report every version pin that has fallen behind upstream (see docs/versioning.md). Report-only like the weekly version-drift workflow, so a failure (including a missing curl or python3) is printed but never stops task ci.
     cmds:
       - cmd: ./tests/scripts/check-version-drift.sh
         ignore_error: true
