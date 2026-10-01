@@ -946,13 +946,13 @@ variable "azure_blob_retain_read_access" {
 # variable, the ignore, and its two tests in the release after next.
 # tflint-ignore: terraform_unused_declarations
 variable "n8n_available_binary_data_modes" {
-  description = "Removed after 0.1.0. Must stay null; kept for one release only so a configuration that still sets it fails with migration guidance instead of a bare \"Unsupported argument\" error. n8n 2.x never reads N8N_AVAILABLE_BINARY_DATA_MODES, which this input rendered. If the list contained azure while a storage mode is database, set azure_blob_retain_read_access = true in the same change, or the Azure connection and Blob role assignment are removed and n8n can no longer read the retained Azure objects."
+  description = "Removed after 0.1.0. Must stay null; kept for one release only so a configuration that still sets it fails with migration guidance instead of a bare \"Unsupported argument\" error. n8n 2.x never reads N8N_AVAILABLE_BINARY_DATA_MODES, which this input rendered. If the list contained azure and neither n8n_binary_data_storage_mode nor n8n_execution_data_storage_mode is azure, set azure_blob_retain_read_access = true in the same change, or the Azure connection (and, with workload-identity authentication, the Blob role assignment) is removed and n8n can no longer read the retained Azure objects."
   type        = list(string)
   default     = null
 
   validation {
     condition     = var.n8n_available_binary_data_modes == null
-    error_message = "n8n_available_binary_data_modes was removed after 0.1.0: n8n 2.x never reads N8N_AVAILABLE_BINARY_DATA_MODES. Delete the argument. If it contained \"azure\" while n8n_binary_data_storage_mode or n8n_execution_data_storage_mode is \"database\", also set azure_blob_retain_read_access = true, or n8n loses access to the objects it wrote to Azure. See the CHANGELOG and docs/data-storage.md."
+    error_message = "n8n_available_binary_data_modes was removed after 0.1.0: n8n 2.x never reads N8N_AVAILABLE_BINARY_DATA_MODES. Delete the argument. If it contained \"azure\" and neither n8n_binary_data_storage_mode nor n8n_execution_data_storage_mode is \"azure\", also set azure_blob_retain_read_access = true, or n8n loses access to the objects it wrote to Azure. See the CHANGELOG and docs/data-storage.md."
   }
 }
 

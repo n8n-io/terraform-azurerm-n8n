@@ -23,17 +23,21 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   for one release as a tombstone: any non-null value fails the plan with a
   migration message instead of a bare "Unsupported argument" error.
   Migration: delete `n8n_available_binary_data_modes`. If it contained
-  `azure` while `n8n_binary_data_storage_mode` or
-  `n8n_execution_data_storage_mode` is `database`, set
+  `azure` and both `n8n_binary_data_storage_mode` and
+  `n8n_execution_data_storage_mode` are `database`, set
   `azure_blob_retain_read_access = true` in the same change. Deleting the
-  list alone removes the Azure connection and the role assignment, and
-  n8n does not fail at startup; reads of the retained Azure objects fail
-  later. See `docs/data-storage.md`.
+  list alone removes the Azure connection (and, with the default
+  workload-identity authentication, the role assignment), and n8n does
+  not fail at startup; reads of the retained Azure objects fail later.
+  An Azure write mode already keeps the connection, so no flag is needed
+  then. See `docs/data-storage.md`.
 - `azurerm_role_assignment.n8n_blob_data_contributor` is now gated on
   Azure being in use (an Azure storage mode, or
   `azure_blob_retain_read_access = true`). A deployment where both modes
   are `database` no longer grants the workload identity Storage Blob Data
   Contributor; the next apply destroys that role assignment.
+  `helm_release.n8n` now also depends on that role assignment, so a newly
+  granted role exists before n8n pods roll.
 - **Default `n8n_chart_version` bumped to `1.14.0`** (was `1.13.0`),
   matching `terraform-aws-n8n` #160. Every n8n pod rolls once, for the
   removed `N8N_AVAILABLE_BINARY_DATA_MODES` env entry. See

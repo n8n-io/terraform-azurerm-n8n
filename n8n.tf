@@ -668,6 +668,11 @@ resource "helm_release" "n8n" {
     azurerm_federated_identity_credential.n8n_workload,
     kubernetes_service_account_v1.n8n,
     kubernetes_secret.n8n_task_runners,
+    # n8n only exits on an Azure connection failure while Azure is a write
+    # mode; for azure_blob_retain_read_access it logs nothing and starts
+    # without the Azure reader. Create the grant before the release rolls
+    # pods. Role propagation can still lag; see docs/data-storage.md.
+    azurerm_role_assignment.n8n_blob_data_contributor,
   ]
 }
 

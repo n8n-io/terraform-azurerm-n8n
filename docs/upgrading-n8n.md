@@ -39,7 +39,7 @@ different for this module's configurations. The three upstream changes:
   n8n 2.x never read the variable, so the env removal changes no behavior,
   but it is a pod-template change: every n8n pod rolls once on this apply.
   Setting the old input now fails the plan with a migration message. If
-  your list contained `azure` while a storage mode is `database`, set
+  your list contained `azure` and both storage modes are `database`, set
   `azure_blob_retain_read_access = true` in the same change that deletes
   it; see [Binary data modes](./data-storage.md#binary-data-modes).
 - **Values validation reports every failure in one render** (n8n-hosting

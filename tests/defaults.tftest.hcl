@@ -3401,6 +3401,127 @@ run "retained_azure_read_access_scopes_role_to_existing_container" {
   }
 }
 
+# The three runs below decode the rendered Helm values, so they use external
+# PostgreSQL/Redis and an identity override to keep helm_release.n8n.values
+# known at plan time (see AGENTS.md).
+run "retained_azure_read_access_renders_existing_container_connection" {
+  command = plan
+
+  variables {
+    create_database                       = false
+    postgres_external_host                = "external-pg.example.com"
+    postgres_external_username            = "n8n"
+    postgres_external_password            = "external-password-value"
+    create_redis                          = false
+    redis_external_host                   = "redis.external.example.com"
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "existingaccount"
+    existing_blob_container_name          = "existing-container"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/existingaccount/blobServices/default/containers/existing-container"
+    existing_blob_endpoint                = "https://existingaccount.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+    n8n_binary_data_storage_mode          = "database"
+    n8n_execution_data_storage_mode       = "database"
+    azure_blob_retain_read_access         = true
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for name, value in {
+        N8N_DEFAULT_BINARY_DATA_MODE                = "database"
+        N8N_EXECUTION_DATA_STORAGE_MODE             = "database"
+        N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME   = "existing-container"
+        N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME     = "existingaccount"
+        N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT = "true"
+      } : contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = name, value = value })
+    ])
+    error_message = "Retained Azure read access on a caller-managed container must render that container's connection with workload-identity auto-detection while both write modes are database."
+  }
+}
+
+run "retained_azure_read_access_renders_account_key_connection" {
+  command = plan
+
+  variables {
+    create_database                 = false
+    postgres_external_host          = "external-pg.example.com"
+    postgres_external_username      = "n8n"
+    postgres_external_password      = "external-password-value"
+    create_redis                    = false
+    redis_external_host             = "redis.external.example.com"
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+    azure_blob_retain_read_access   = true
+    azure_blob_account_key          = "synthetic-storage-account-key"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      length(azurerm_role_assignment.n8n_blob_data_contributor) == 0 &&
+      contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME", value = "n8n-data" }) &&
+      contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_KEY", value = "synthetic-storage-account-key" }) &&
+      length([
+        for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
+        if env.name == "N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT"
+      ]) == 0
+    )
+    error_message = "Retained Azure read access with account-key authentication must render the container and account key, no auto-detection, and no workload-identity role assignment."
+  }
+}
+
+run "database_only_modes_render_no_azure_connection" {
+  command = plan
+
+  variables {
+    create_database                 = false
+    postgres_external_host          = "external-pg.example.com"
+    postgres_external_username      = "n8n"
+    postgres_external_password      = "external-password-value"
+    create_redis                    = false
+    redis_external_host             = "redis.external.example.com"
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = length([
+      for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
+      if startswith(env.name, "N8N_EXTERNAL_STORAGE_AZURE_")
+    ]) == 0
+    error_message = "Without an Azure mode or azure_blob_retain_read_access, no Azure storage connection variable may render."
+  }
+}
+
 # Tombstone for the input removed after 0.1.0. Any non-null value, including
 # the old default, must fail with the migration message rather than be
 # silently ignored.
