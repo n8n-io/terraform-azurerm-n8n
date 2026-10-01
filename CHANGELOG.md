@@ -34,8 +34,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 - `azurerm_role_assignment.n8n_blob_data_contributor` is now gated on
   Azure being in use (an Azure storage mode, or
   `azure_blob_retain_read_access = true`). A deployment where both modes
-  are `database` no longer grants the workload identity Storage Blob Data
-  Contributor; the next apply destroys that role assignment.
+  are `database` and `azure_blob_retain_read_access` is `false` no longer
+  grants the workload identity Storage Blob Data Contributor; the next
+  apply destroys that role assignment.
   `helm_release.n8n` now also depends on that role assignment, so a newly
   granted role exists before n8n pods roll.
 - **Default `n8n_chart_version` bumped to `1.14.0`** (was `1.13.0`),
