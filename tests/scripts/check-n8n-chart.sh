@@ -115,6 +115,9 @@ export_values single_main "$tmp/single-main-values.json"
 echo "== Rendering PostgreSQL runtime-tuning values fixture (all four timing overrides) =="
 export_values pg_runtime "$tmp/pg-runtime-values.json"
 
+echo "== Rendering PostgreSQL TLS CA values fixture (verify-full + postgres_ssl_ca_pem) =="
+export_values ssl_ca "$tmp/ssl-ca-values.json"
+
 echo "== Rendering Bull worker timing values fixture (all three timing overrides) =="
 export_values worker_timing "$tmp/worker-timing-values.json"
 
@@ -154,6 +157,10 @@ done
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/pg-runtime-values.json" pg-runtime "$template"
+done
+
+for template in deployment-main deployment-worker deployment-webhook-processor configmap; do
+  render "$tmp/ssl-ca-values.json" ssl-ca "$template"
 done
 
 for template in deployment-main deployment-worker deployment-webhook-processor configmap; do
@@ -371,6 +378,52 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
 done
 
 echo "PASS: PostgreSQL connection/ping timing renders on all three application pod families and is omitted by default"
+
+echo "== Verify PostgreSQL TLS CA manifests (DB_POSTGRESDB_SSL_ENABLED / DB_POSTGRESDB_SSL_CA_FILE) =="
+
+# Regression check for the bug this fixture exists to catch: the pinned
+# chart renders database.ssl.enabled into a ConfigMap key named
+# DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
+# upstream). The module works around this with its own
+# DB_POSTGRESDB_SSL_ENABLED entry in config.extraEnv; assert on the
+# container env directly so a future chart bump that fixes the upstream
+# name does not silently mask a regression in the module's own workaround.
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_SSL_ENABLED")] | length == 1
+    and .[0].value == "true"
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must carry exactly one DB_POSTGRESDB_SSL_ENABLED=true entry when the effective ssl_mode is not disable" >&2; exit 1; }
+done
+
+# n8n reads DB_POSTGRESDB_SSL_CA as a filesystem path (readFileSync), not
+# inline PEM content, so the module must not pass the PEM through the
+# chart's native database.ssl.ca value (which would land it verbatim in the
+# ConfigMap under that same key). It instead mounts a dedicated Secret and
+# points DB_POSTGRESDB_SSL_CA_FILE at the mounted file.
+jq -e '.data | has("DB_POSTGRESDB_SSL_CA") | not' \
+  "$tmp/ssl-ca-configmap.json" >/dev/null \
+  || { echo "FAIL: the chart ConfigMap must not carry DB_POSTGRESDB_SSL_CA; n8n reads that setting as a file path, not inline PEM content" >&2; exit 1; }
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_SSL_CA_FILE")] | length == 1
+    and .[0].value == "/etc/n8n/postgres-ssl-ca/ca.pem"
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must carry exactly one DB_POSTGRESDB_SSL_CA_FILE entry pointing at the mounted CA file" >&2; exit 1; }
+
+  jq -e '
+    [.spec.template.spec.volumes[] | select(.name == "postgres-ssl-ca" and .secret.secretName == "n8n-postgres-ssl-ca")] | length == 1
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must mount the postgres-ssl-ca Secret volume" >&2; exit 1; }
+
+  jq -e '
+    [.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ssl-ca" and .mountPath == "/etc/n8n/postgres-ssl-ca" and .readOnly == true)] | length == 1
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must mount the postgres-ssl-ca volume read-only at /etc/n8n/postgres-ssl-ca" >&2; exit 1; }
+done
+
+echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders on every application pod family and postgres_ssl_ca_pem reaches n8n through a mounted file, not the chart's ConfigMap"
 
 echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval/graceful shutdown timeout) =="
 

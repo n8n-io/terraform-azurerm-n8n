@@ -114,6 +114,15 @@ run "pg_runtime" {
   }
 }
 
+run "ssl_ca" {
+  command = plan
+
+  variables {
+    postgres_external_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem        = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+  }
+}
+
 run "worker_timing" {
   command = plan
 

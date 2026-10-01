@@ -185,6 +185,20 @@ locals {
         }
       },
     ],
+    var.postgres_ssl_ca_pem == null ? [] : [
+      {
+        name = "postgres-ssl-ca"
+        secret = {
+          secretName = local.postgres_ssl_ca_secret_name
+          items = [
+            {
+              key  = "ca.pem"
+              path = "ca.pem"
+            },
+          ]
+        }
+      },
+    ],
   )
 
   n8n_extra_volume_mounts = concat(
@@ -205,6 +219,13 @@ locals {
         readOnly  = true
       },
     ],
+    var.postgres_ssl_ca_pem == null ? [] : [
+      {
+        name      = "postgres-ssl-ca"
+        mountPath = "/etc/n8n/postgres-ssl-ca"
+        readOnly  = true
+      },
+    ],
   )
 
   # CREDENTIALS_OVERWRITE_DATA_FILE is deliberately absent from
@@ -217,6 +238,37 @@ locals {
     {
       name  = "CREDENTIALS_OVERWRITE_DATA_FILE"
       value = "/etc/n8n/credentials-overwrite/${var.n8n_credentials_overwrite_secret_ref.key}"
+    },
+  ]
+
+  # n8n reads DB_POSTGRESDB_SSL_ENABLED, not the chart-rendered
+  # DB_POSTGRESDB_SSL ConfigMap key (n8n-io/n8n-hosting#175 upstream), so the
+  # chart's database.ssl.enabled alone leaves the connection plaintext.
+  # Setting this directly whenever the effective ssl_mode is not "disable"
+  # fixes that regardless of chart version. DB_POSTGRESDB_SSL_ENABLED is
+  # deliberately absent from local.n8n_managed_env_names below: the "DB_"
+  # prefix already reserves it in n8n_extra_env.
+  n8n_postgres_ssl_enabled_env = local.postgres_connection.ssl_mode == "disable" ? [] : [
+    {
+      name  = "DB_POSTGRESDB_SSL_ENABLED"
+      value = "true"
+    },
+  ]
+
+  # n8n reads DB_POSTGRESDB_SSL_CA as a filesystem path, not inline PEM
+  # content (readFileSync under the hood), so the chart's native
+  # database.ssl.ca value cannot be used here: it renders the PEM text
+  # straight into DB_POSTGRESDB_SSL_CA, which n8n would then try to open as
+  # a file named after the certificate contents. The module instead creates
+  # a dedicated Secret (n8n.tf), mounts it read-only via the reserved
+  # postgres-ssl-ca volume/mount above, and points DB_POSTGRESDB_SSL_CA_FILE
+  # at the mounted path so n8n reads the CA bundle from disk.
+  postgres_ssl_ca_secret_name = "n8n-postgres-ssl-ca"
+
+  n8n_postgres_ssl_ca_file_env = var.postgres_ssl_ca_pem == null ? [] : [
+    {
+      name  = "DB_POSTGRESDB_SSL_CA_FILE"
+      value = "/etc/n8n/postgres-ssl-ca/ca.pem"
     },
   ]
 

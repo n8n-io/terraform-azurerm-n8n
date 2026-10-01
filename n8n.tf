@@ -181,6 +181,26 @@ resource "kubernetes_secret" "n8n_task_runners" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
+# Gated to zero when postgres_ssl_ca_pem is unset. n8n reads
+# DB_POSTGRESDB_SSL_CA as a file path (readFileSync), not inline PEM content,
+# so the CA bundle has to land on disk through a mounted Secret rather than
+# the chart's native database.ssl.ca value. See locals.tf's
+# n8n_postgres_ssl_ca_file_env and the postgres-ssl-ca volume/mount above it.
+resource "kubernetes_secret" "n8n_postgres_ssl_ca" {
+  count = var.postgres_ssl_ca_pem == null ? 0 : 1
+
+  metadata {
+    name      = local.postgres_ssl_ca_secret_name
+    namespace = local.n8n_namespace
+  }
+
+  data = {
+    "ca.pem" = var.postgres_ssl_ca_pem
+  }
+
+  depends_on = [kubernetes_namespace.n8n]
+}
+
 # ── Helm release ──────────────────────────────────────────────────────────────
 # The chart is pinned to 1.13.0 (see var.n8n_chart_version for the delta
 # since 1.11.0). The application and task-runner images are pinned to one n8n
@@ -211,6 +231,20 @@ resource "helm_release" "n8n" {
         name = local.n8n_license_secret_name
         key  = local.n8n_license_secret_key
       }
+    }
+
+    # The chart's own deployment templates already merge checksum/config and
+    # checksum/secret annotations (hashes of its rendered configmap.yaml and
+    # secrets.yaml) into podAnnotations, so a Helm values change always
+    # triggers a rollout. postgres_ssl_ca_pem is mounted through the
+    # out-of-band kubernetes_secret.n8n_postgres_ssl_ca Terraform resource
+    # (see n8n_postgres_ssl_ca_file_env below), not through chart values, so
+    # changing the CA content alone produces no Helm values diff and no
+    # automatic rollout. Adding its own checksum here closes that gap: any
+    # change to the CA PEM changes this annotation, which changes the pod
+    # template, which Helm then rolls out.
+    podAnnotations = var.postgres_ssl_ca_pem == null ? {} : {
+      "checksum/postgres-ssl-ca" = sha256(var.postgres_ssl_ca_pem)
     }
 
     # spec.replicas ownership differs per Deployment on chart 1.13.0:
@@ -297,6 +331,11 @@ resource "helm_release" "n8n" {
       database    = local.postgres_connection.database
       schema      = "public"
       user        = local.postgres_connection.username
+      # No ca here: the chart renders database.ssl.ca straight into
+      # DB_POSTGRESDB_SSL_CA as inline PEM text, but n8n treats that value as
+      # a file path (readFileSync), not certificate content. The CA bundle is
+      # instead mounted as a file and pointed to by DB_POSTGRESDB_SSL_CA_FILE
+      # in config.extraEnv below (local.n8n_postgres_ssl_ca_file_env).
       ssl = {
         enabled            = local.postgres_connection.ssl_mode != "disable"
         rejectUnauthorized = contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
@@ -408,6 +447,19 @@ resource "helm_release" "n8n" {
         # PostgreSQL connection/health-check runtime tuning (section 3). Null
         # inputs contribute no entries and retain n8n's pinned defaults.
         local.n8n_postgres_runtime_env,
+        # DB_POSTGRESDB_SSL_ENABLED works around a chart bug: the pinned
+        # chart renders database.ssl.enabled into a ConfigMap key named
+        # DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
+        # upstream). Setting the correct name directly here fixes TLS
+        # enablement regardless of chart version.
+        local.n8n_postgres_ssl_enabled_env,
+        # Optional CA bundle for the PostgreSQL connection. The PEM is
+        # mounted read-only from kubernetes_secret.n8n_postgres_ssl_ca via
+        # the postgres-ssl-ca volume (locals.tf), and this points
+        # DB_POSTGRESDB_SSL_CA_FILE at the mounted file so n8n reads the CA
+        # bundle from disk instead of treating inline PEM text as a path.
+        # Null contributes no entry.
+        local.n8n_postgres_ssl_ca_file_env,
         # Optional shared V8 heap ceiling (section 6). Null contributes no
         # entries and leaves n8n/Node's own default and any caller NODE_OPTIONS
         # in n8n_extra_env in place.
