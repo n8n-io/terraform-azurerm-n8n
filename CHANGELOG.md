@@ -449,6 +449,19 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   constraints. Upgrade the Terraform CLI and let
   the `azurerm` provider resolve within the new range before applying
   ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
+- **Breaking:** `required_version` is now `>= 1.12` (was `>= 1.11`) for
+  the root module and every example. The `var.x == null || var.x.attr`
+  validations in `variables.tf` rely on `||` short-circuiting, which
+  Terraform added in 1.12. On 1.11 and earlier both sides are evaluated,
+  so the plan fails with "Attempt to get attribute from null value" as
+  soon as such an input is null. `pg_maintenance_window` defaults to
+  `null`, so this hits almost every plan of the root module on those
+  versions. `modules/controllers` and the two TLS helper modules have no
+  such guards and keep their existing constraints. Module inputs do not
+  change: upgrade the Terraform CLI used locally and in automation, and
+  adjust any caller `required_version` or runtime pin that excludes 1.12
+  (for example `~> 1.11.0`). CI now also runs every `terraform test`
+  suite on 1.12.0, so the floor stays tested.
 
 - `aks_node_count_min`'s description now states that it sizes both the
   system and user AKS node pools (matching `aks_node_count_max`'s
