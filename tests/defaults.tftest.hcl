@@ -602,6 +602,18 @@ run "rejects_malformed_aks_kms_key_vault_key_id" {
   ]
 }
 
+run "rejects_aks_kms_key_vault_key_id_with_disallowed_key_name_characters" {
+  command = plan
+
+  variables {
+    aks_kms_key_vault_key_id = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n?aks=etcd"
+  }
+
+  expect_failures = [
+    var.aks_kms_key_vault_key_id,
+  ]
+}
+
 run "rejects_malformed_aks_kms_key_vault_network_access" {
   command = plan
 

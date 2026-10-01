@@ -269,10 +269,14 @@ Secrets Store CSI driver add-on
 (`azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider`) with
 autorotation on. The add-on creates and manages its own identity; this
 module only optionally grants that identity `Key Vault Secrets User` on a
-caller-named vault when both `aks_key_vault_secrets_provider_role_assignment_enabled
-= true` and `aks_key_vault_secrets_provider_keyvault_id` are set. When the
-toggle is `false` (default), grant that identity access out-of-band instead
-(for example a vault in RBAC mode with your own `azurerm_role_assignment`).
+caller-named vault **using Azure RBAC** when both
+`aks_key_vault_secrets_provider_role_assignment_enabled = true` and
+`aks_key_vault_secrets_provider_keyvault_id` are set. `Key Vault Secrets
+User` only authorizes reads under Azure RBAC; on an access-policy vault this
+role assignment leaves the identity unauthorized, so grant access through an
+access policy instead. When the toggle is `false` (default), grant that
+identity access out-of-band instead (for example a vault in RBAC mode with
+your own `azurerm_role_assignment`).
 `aks_key_vault_secrets_provider_secret_rotation_interval` controls the
 autorotation poll interval (default `2m`, matching the AKS default).
 
@@ -282,8 +286,15 @@ its `secretObjects` field to project them into a Kubernetes Secret matching
 the name and keys one of the `*_secret_ref` inputs expects. For
 `n8n_encryption_key_secret_ref`, that Secret must carry all four keys —
 `N8N_ENCRYPTION_KEY`, `N8N_HOST`, `N8N_PORT`, and `N8N_PROTOCOL` — so the
-`SecretProviderClass` needs vault objects for all four (the last three can be
-plain Key Vault secrets holding static values if they don't need rotation).
+`SecretProviderClass` needs vault objects for all four. **Never point
+autorotation at the `N8N_ENCRYPTION_KEY` vault object.** n8n cannot rotate
+its encryption key in place: changing it makes every credential already
+stored in n8n's database permanently unrecoverable (see "Back up the n8n
+encryption key" below), so a rotated vault secret silently bricks the
+deployment on the next sync.
+Keep that vault object a static value. `N8N_HOST`, `N8N_PORT`, and
+`N8N_PROTOCOL` have no such restriction and can be plain Key Vault secrets
+holding static values or genuinely rotated ones.
 See [Microsoft's Secrets Store CSI Driver
 documentation](https://learn.microsoft.com/azure/aks/csi-secrets-store-driver)
 for the `SecretProviderClass` schema. External Secrets Operator is an
