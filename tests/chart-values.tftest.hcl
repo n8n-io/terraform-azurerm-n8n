@@ -271,3 +271,17 @@ run "worker_pools_authenticated" {
     ]
   }
 }
+
+# Offline license activation (issue #24). The fixture's n8n_license_key_secret_ref
+# is swapped out for n8n_license_cert_secret_ref to prove the config.extraEnv
+# secretKeyRef shape passes the chart's real (non-skipped) JSON-schema
+# validation and reaches every application pod's env, and that license.enabled
+# stays true with no existingSecret/activationKey rendered.
+run "license_cert" {
+  command = plan
+
+  variables {
+    n8n_license_key_secret_ref  = null
+    n8n_license_cert_secret_ref = { name = "test-license-cert", key = "cert" }
+  }
+}

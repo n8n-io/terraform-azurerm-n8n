@@ -2744,14 +2744,16 @@ variable "app_gateway_keyvault_role_assignment_enabled" {
 }
 
 variable "n8n_license_key" {
-  description = "n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Leave null when n8n_license_key_secret_ref selects a caller-managed Kubernetes Secret instead — exactly one of the two must be set. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF_VAR_n8n_license_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below."
+  description = "n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Leave null when n8n_license_key_secret_ref selects a caller-managed Kubernetes Secret holding the key instead, or when n8n_license_cert_secret_ref selects a caller-managed Secret holding an offline N8N_LICENSE_CERT certificate for air-gapped or egress-restricted clusters that cannot reach n8n's license server — exactly one of the three must be set. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF_VAR_n8n_license_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below."
   type        = string
   default     = null
   sensitive   = true
 
   validation {
-    condition     = (var.n8n_license_key != null) != (var.n8n_license_key_secret_ref != null)
-    error_message = "Set exactly one of n8n_license_key or n8n_license_key_secret_ref."
+    condition = length([
+      for v in [var.n8n_license_key, var.n8n_license_key_secret_ref, var.n8n_license_cert_secret_ref] : v if v != null
+    ]) == 1
+    error_message = "Set exactly one of n8n_license_key, n8n_license_key_secret_ref, or n8n_license_cert_secret_ref."
   }
 
   validation {
@@ -3001,7 +3003,7 @@ variable "n8n_webhook_hpa_enabled" {
 }
 
 variable "n8n_license_key_secret_ref" {
-  description = "Existing Kubernetes Secret name and key holding the n8n Enterprise license key, for callers who manage this credential outside Terraform. Mutually exclusive with n8n_license_key — exactly one must be set. The module does not read the Secret's value; Terraform renders only the name and key into the n8n chart."
+  description = "Existing Kubernetes Secret name and key holding the n8n Enterprise license key, for callers who manage this credential outside Terraform. Mutually exclusive with n8n_license_key and n8n_license_cert_secret_ref — exactly one of the three must be set. The module does not read the Secret's value; Terraform renders only the name and key into the n8n chart."
   type = object({
     name = string
     key  = string
@@ -3011,6 +3013,20 @@ variable "n8n_license_key_secret_ref" {
   validation {
     condition     = var.n8n_license_key_secret_ref == null ? true : (trimspace(var.n8n_license_key_secret_ref.name) != "" && trimspace(var.n8n_license_key_secret_ref.key) != "")
     error_message = "n8n_license_key_secret_ref.name and .key must be non-empty when set."
+  }
+}
+
+variable "n8n_license_cert_secret_ref" {
+  description = "Existing Kubernetes Secret name and key holding a base64-encoded n8n Enterprise offline license certificate (N8N_LICENSE_CERT), for air-gapped or egress-restricted clusters that cannot reach n8n's license server to activate var.n8n_license_key. Mutually exclusive with n8n_license_key and n8n_license_key_secret_ref — exactly one of the three must be set. The module does not read the Secret's value; Terraform renders only the name and key into the shared config.extraEnv list as a secretKeyRef (n8n.tf), not into the chart's license.existingSecret block, which only ever maps to N8N_LICENSE_ACTIVATION_KEY. license.enabled still renders true on this path because the chart also gates N8N_MULTI_MAIN_SETUP_ENABLED on license.enabled, independent of which credential backs it."
+  type = object({
+    name = string
+    key  = string
+  })
+  default = null
+
+  validation {
+    condition     = var.n8n_license_cert_secret_ref == null ? true : (trimspace(var.n8n_license_cert_secret_ref.name) != "" && trimspace(var.n8n_license_cert_secret_ref.key) != "")
+    error_message = "n8n_license_cert_secret_ref.name and .key must be non-empty when set."
   }
 }
 

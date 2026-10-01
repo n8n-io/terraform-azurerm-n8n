@@ -9,6 +9,21 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ## [Unreleased]
 
+### Added
+
+- `n8n_license_cert_secret_ref` supports offline license activation
+  (`N8N_LICENSE_CERT`) for air-gapped or egress-restricted clusters that
+  cannot reach n8n's license server. It is mutually exclusive with
+  `n8n_license_key` and `n8n_license_key_secret_ref` — exactly one of the
+  three must be set. The certificate renders through the shared
+  `config.extraEnv` list as a `secretKeyRef`, not through the chart's
+  `license.existingSecret` block, which only ever maps to
+  `N8N_LICENSE_ACTIVATION_KEY`. `license.enabled` stays `true` on this path
+  because the chart also gates `N8N_MULTI_MAIN_SETUP_ENABLED` on
+  `license.enabled`, not on which credential backs it. See ["Offline license
+  activation"](./README.md#offline-license-activation)
+  ([#24](https://github.com/n8n-io/terraform-azurerm-n8n/issues/24)).
+
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`

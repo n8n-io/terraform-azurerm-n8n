@@ -129,9 +129,11 @@ resource "kubernetes_secret" "n8n_redis" {
 }
 
 # Gated to zero when n8n_license_key_secret_ref selects a caller-managed
-# Secret instead.
+# Secret instead, or when n8n_license_cert_secret_ref selects the offline
+# N8N_LICENSE_CERT path (rendered through config.extraEnv instead — see
+# local.n8n_license_cert_env).
 resource "kubernetes_secret" "n8n_license" {
-  count = local.n8n_license_key_uses_secret_ref ? 0 : 1
+  count = (local.n8n_license_key_uses_secret_ref || local.n8n_license_uses_cert) ? 0 : 1
 
   metadata {
     name      = "n8n-license-secret"
@@ -205,13 +207,21 @@ resource "helm_release" "n8n" {
       var.n8n_image_repository == null ? {} : { repository = var.n8n_image_repository },
     )
 
-    license = {
-      enabled = true
-      existingSecret = {
-        name = local.n8n_license_secret_name
-        key  = local.n8n_license_secret_key
-      }
-    }
+    # license.enabled stays true on the cert path too: the chart also gates
+    # N8N_MULTI_MAIN_SETUP_ENABLED on license.enabled (not on which credential
+    # backs it), so turning it off would silently break multi-main leader
+    # election. existingSecret is omitted on the cert path because the chart's
+    # license helper only ever maps it to N8N_LICENSE_ACTIVATION_KEY, never
+    # N8N_LICENSE_CERT (local.n8n_license_cert_env renders that entry instead).
+    license = merge(
+      { enabled = true },
+      local.n8n_license_uses_cert ? {} : {
+        existingSecret = {
+          name = local.n8n_license_secret_name
+          key  = local.n8n_license_secret_key
+        }
+      },
+    )
 
     # spec.replicas ownership differs per Deployment on chart 1.13.0:
     # - main: the chart renders it unconditionally (multiMain.replicas or
@@ -405,6 +415,9 @@ resource "helm_release" "n8n" {
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
           { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = tostring(var.n8n_license_detach_floating_on_shutdown) },
         ],
+        # Offline license activation (issue #24). Empty unless
+        # n8n_license_cert_secret_ref is set; see local.n8n_license_cert_env.
+        local.n8n_license_cert_env,
         # PostgreSQL connection/health-check runtime tuning (section 3). Null
         # inputs contribute no entries and retain n8n's pinned defaults.
         local.n8n_postgres_runtime_env,

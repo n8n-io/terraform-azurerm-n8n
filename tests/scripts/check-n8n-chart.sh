@@ -144,6 +144,9 @@ export_values worker_pools_authenticated "$tmp/worker-pools-auth-values.json"
 echo "== Rendering paused worker autoscaling values fixture (pause with a zero hold count) =="
 export_values worker_pause "$tmp/worker-pause-values.json"
 
+echo "== Rendering offline license activation values fixture (N8N_LICENSE_CERT) =="
+export_values license_cert "$tmp/license-cert-values.json"
+
 for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
@@ -186,6 +189,10 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
 done
 
 render "$tmp/worker-pause-values.json" worker-pause scaledobject-worker
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  render "$tmp/license-cert-values.json" license-cert "$template"
+done
 
 # Against the preview chart: Helm's schema validation runs on every one of
 # these calls, so a values shape the workerGroups schema rejects (for example
@@ -598,6 +605,24 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
   fi
 done
 echo "PASS: duplicate-entry detector is effective, and no module-rendered container has a duplicate name"
+
+echo "== Verify offline license activation (N8N_LICENSE_CERT) =="
+
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_LICENSE_CERT")] as $entries
+    | ($entries | length) == 1
+    and ($entries[0].valueFrom.secretKeyRef.name == "test-license-cert")
+    and ($entries[0].valueFrom.secretKeyRef.key == "cert")
+    and ($entries[0] | has("value") | not)
+  ' "$tmp/license-cert-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must render exactly one N8N_LICENSE_CERT entry sourced from a secretKeyRef, with no literal value" >&2; exit 1; }
+
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_LICENSE_ACTIVATION_KEY")] | length == 0
+  ' "$tmp/license-cert-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must not render N8N_LICENSE_ACTIVATION_KEY on the offline-certificate path" >&2; exit 1; }
+done
 
 echo
 echo "PASS: check-n8n-chart.sh (chart ${chart_version})"

@@ -135,7 +135,14 @@ main, worker, and webhook containers. Keep feature variables omitted when
 their defaults match n8n, but always render
 `N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false` because n8n's upstream `true`
 default can invalidate the shared floating certificate during a multi-main
-rollout.
+rollout. Offline license activation (`n8n_license_cert_secret_ref`,
+`N8N_LICENSE_CERT`) is mutually exclusive with `n8n_license_key` and
+`n8n_license_key_secret_ref` and renders through `config.extraEnv` as a
+`secretKeyRef`, not through the chart's `license.existingSecret` block — that
+block's `licenseEnv` helper only ever maps to `N8N_LICENSE_ACTIVATION_KEY`.
+`license.enabled` stays `true` on the cert path because the chart also gates
+`N8N_MULTI_MAIN_SETUP_ENABLED` on `license.enabled`, not on which credential
+backs it.
 
 **Custom workload configuration.** The chart does not render image pull
 Secrets, so root Terraform takes over the n8n ServiceAccount only when
@@ -672,8 +679,12 @@ single `terraform apply` brings up the full stack:
   and every additional domain, when the caller passes a zone ID and the
   matching record toggle.
 
-An **n8n Enterprise license key** is required (`var.n8n_license_key`) — the
-module does not provision a community-edition deployment.
+An **n8n Enterprise license credential** is required (the module does not
+provision a community-edition deployment): supply exactly one of
+`var.n8n_license_key`, `var.n8n_license_key_secret_ref` (a caller-managed
+Secret holding the key), or, for air-gapped and egress-restricted clusters,
+`var.n8n_license_cert_secret_ref` (a caller-managed Secret holding an
+offline license certificate rendered as `N8N_LICENSE_CERT`).
 
 The module **expects a pre-existing VNet** and five pre-sized subnets. The
 `examples/small`, `examples/medium`, and `examples/large` roots create those

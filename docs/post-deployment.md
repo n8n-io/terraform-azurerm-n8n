@@ -70,6 +70,10 @@ The license is now bound to this n8n installation. Subsequent restarts re-valida
 
 A Business license without `feat:multipleMainInstances` still activates normally, but only against the optional single-main topology (`n8n_main_hpa_min_replicas = 1`) — the default multi-main topology requires that entitlement. See ["Main topology: multi-main and single-main"](../README.md#main-topology-multi-main-and-single-main) in the root README before your first apply if you're deploying on a Business license.
 
+### Offline license activation
+
+If you deployed with `var.n8n_license_cert_secret_ref` instead of `var.n8n_license_key` (an air-gapped or egress-restricted cluster; see ["Offline license activation"](../README.md#offline-license-activation) in the root README), there is no key to paste in **Settings** → **Usage and plan**: the certificate in your caller-managed Secret already activated the license as `N8N_LICENSE_CERT` at pod startup, with no round trip to n8n's license server. Confirm activation from **Settings** → **Usage and plan** instead of the key-entry flow, or with `kubectl -n n8n exec deploy/n8n-main -- n8n license:info`. Rotating the certificate means updating the caller-managed Secret's payload and restarting the `n8n-main`, `n8n-worker`, and `n8n-webhook-processor` deployments, plus any `var.n8n_worker_pools` group deployments (`kubectl rollout restart deployment -l app.kubernetes.io/component=worker-group -n n8n`); the module never reads the Secret's value, so Terraform has no way to detect that the payload changed.
+
 ## Verify the deployment
 
 A handful of post-apply checks that confirm the deployment came up cleanly:
