@@ -96,6 +96,19 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
 # itself is off), so this never runs on the apply that first creates the
 # server: the server does not exist yet, and this data source would error
 # outright if it tried to read something.
+#
+# CAVEAT: this reads by `local.postgres_server_name` / `var.resource_group_name`,
+# the SAME inputs the managed resource below derives its own name/RG from.
+# There is no plan-time way to pin "the old identity" independent of those
+# inputs without a much larger redesign (e.g. a separate caller-supplied
+# prior-identity variable). So an apply that both enables this guard AND
+# changes `friendly_name_prefix` or `resource_group_name` (a rename or a
+# move) makes this data source look up a server at the NEW coordinates,
+# which does not exist there yet (it is still at the old coordinates), and
+# the apply fails with a 404 instead of the intended precondition failure.
+# Set `pg_storage_drift_guard_enabled = false` for any apply that renames
+# or moves the server, then re-enable it on a later apply once the server
+# has settled at its new identity.
 data "azurerm_postgresql_flexible_server" "current" {
   count = var.create_database && var.pg_storage_drift_guard_enabled ? 1 : 0
 
