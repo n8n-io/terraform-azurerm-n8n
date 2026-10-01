@@ -105,3 +105,5 @@ For a single-shot end-to-end check that exercises every layer (AKS API, namespac
 | `n8n_encryption_key`       | The n8n encryption key — back up to a password manager.                                               |
 | `postgres_fqdn`            | Private Postgres FQDN — resolves only from inside the linked VNet.                                    |
 | `redis_hostname`           | Redis hostname (TLS port only — non-TLS is disabled).                                                 |
+
+`aks_kube_config` is a local-account credential only while `var.aks_entra_rbac` and `var.aks_local_account_disabled` stay at their defaults. With `aks_local_account_disabled = true`, `client_certificate`/`client_key` come back empty and `kubectl`/`az aks get-credentials --admin` are rejected — authenticate with `az aks get-credentials` (non-admin) plus `kubelogin` instead. See the [README provider-wiring section](../README.md#usage).

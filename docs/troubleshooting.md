@@ -230,7 +230,7 @@ module "n8n" {
 }
 ```
 
-If a downstream apply is *still* failing after a 10-minute gate, the cluster is genuinely unreachable from the apply host (typical when AKS is provisioned into a VNet with private DNS and the apply host is outside that VNet — Phase 1 of this module always uses the public AKS API endpoint, so this only fires if you've forked and enabled `private_cluster_enabled = true`). Confirm reachability:
+If a downstream apply is *still* failing after a 10-minute gate, the cluster is genuinely unreachable from the apply host — typical when `var.aks_private_cluster_enabled = true` (the API server has no public endpoint; only in-VNet or peered/VPN-connected hosts can reach it) or when a BYO `var.aks_private_dns_zone_id` doesn't resolve from the apply host's DNS. The default (`aks_private_cluster_enabled = false`) always uses the public AKS API endpoint. Confirm reachability:
 
 ```bash
 az account show

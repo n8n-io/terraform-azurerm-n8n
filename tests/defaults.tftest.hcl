@@ -379,6 +379,59 @@ run "aks_cluster_resources_in_plan" {
     condition     = time_sleep.aks_api_warmup[0].create_duration == "90s"
     error_message = "time_sleep.aks_api_warmup[0].create_duration default must be 90s."
   }
+
+  # ── AKS network/identity hardening defaults (issue #28) ────────────────
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].private_cluster_enabled == false
+    error_message = "private_cluster_enabled must default to false (the current publicly reachable API server)."
+  }
+
+  # private_dns_zone_id is optional+computed on the mock azurerm provider, so
+  # explicitly passing null in config still plans as unknown here (the same
+  # issue the os_disk_size_gb comment above documents). The explicit-override
+  # runs below (aks_private_cluster_with_system_dns_zone_keeps_system_assigned_identity,
+  # aks_byo_private_dns_zone_switches_identity_and_grants_role) prove the
+  # value is config-driven whenever the variable is set.
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].local_account_disabled == false
+    error_message = "local_account_disabled must default to false, preserving the local-account admin credential aks_kube_config exposes."
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control) == 0
+    error_message = "azure_active_directory_role_based_access_control block must be omitted when var.aks_entra_rbac is null (the default)."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].network_profile[0].outbound_type == "loadBalancer"
+    error_message = "network_profile.outbound_type must default to \"loadBalancer\"."
+  }
+
+  # network_policy is optional+computed on the mock azurerm provider, same
+  # caveat as private_dns_zone_id above; renders_cilium_network_policy_with_matching_data_plane
+  # and renders_azure_network_policy_keeps_azure_data_plane below prove it is
+  # config-driven whenever the variable is set.
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].network_profile[0].network_data_plane == "azure"
+    error_message = "network_profile.network_data_plane must default to \"azure\"."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
+    error_message = "azurerm_user_assigned_identity.aks_cluster must not exist unless aks_private_dns_zone_id names a caller-owned zone."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_private_dns_zone_contributor) == 0
+    error_message = "azurerm_role_assignment.aks_private_dns_zone_contributor must not exist by default."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
+    error_message = "azurerm_role_assignment.aks_cluster_subnet_network_contributor must not exist by default."
+  }
 }
 
 run "aks_api_authorized_ranges_render_when_supplied" {
@@ -522,6 +575,399 @@ run "rejects_aks_api_warmup_seconds_below_floor" {
   expect_failures = [
     var.aks_api_warmup_seconds,
   ]
+}
+
+# ── AKS network/identity hardening (issue #28) ──────────────────────────────
+
+run "rejects_private_cluster_with_authorized_ip_ranges" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled  = true
+    aks_api_authorized_ip_ranges = ["203.0.113.0/24"]
+  }
+
+  expect_failures = [
+    var.aks_private_cluster_enabled,
+  ]
+}
+
+run "aks_private_cluster_enabled_renders_private_cluster" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled = true
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].private_cluster_enabled == true
+    error_message = "private_cluster_enabled must render true when var.aks_private_cluster_enabled is true."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "SystemAssigned"
+    error_message = "Identity must stay SystemAssigned when no caller-owned private DNS zone is supplied."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
+    error_message = "No aks_cluster UAMI must be created without a caller-owned private DNS zone."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
+    error_message = "No subnet Network Contributor role assignment must be created without a caller-owned private DNS zone."
+  }
+}
+
+run "aks_private_cluster_with_system_dns_zone_keeps_system_assigned_identity" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled = true
+    aks_private_dns_zone_id     = "System"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].private_dns_zone_id == "System"
+    error_message = "private_dns_zone_id must render the \"System\" sentinel verbatim."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "SystemAssigned"
+    error_message = "The \"System\" sentinel must not switch the cluster identity to UserAssigned."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
+    error_message = "No aks_cluster UAMI must be created for the \"System\" sentinel."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
+    error_message = "No subnet Network Contributor role assignment must be created for the \"System\" sentinel."
+  }
+}
+
+run "aks_byo_private_dns_zone_switches_identity_and_grants_role" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled = true
+    aks_private_dns_zone_id     = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.eastus.azmk8s.io"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "UserAssigned"
+    error_message = "A caller-owned private DNS zone must switch the cluster identity to UserAssigned."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 1
+    error_message = "A caller-owned private DNS zone must create exactly one aks_cluster UAMI."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_private_dns_zone_contributor) == 1
+    error_message = "A caller-owned private DNS zone must create exactly one Private DNS Zone Contributor role assignment."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.aks_private_dns_zone_contributor[0].role_definition_name == "Private DNS Zone Contributor"
+    error_message = "The role assignment must grant Private DNS Zone Contributor."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.aks_private_dns_zone_contributor[0].scope == var.aks_private_dns_zone_id
+    error_message = "The role assignment must be scoped to the supplied private DNS zone."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 1
+    error_message = "A caller-owned private DNS zone must create exactly one subnet Network Contributor role assignment."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].role_definition_name == "Network Contributor"
+    error_message = "The subnet role assignment must grant Network Contributor."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].scope == var.aks_subnet_id
+    error_message = "The subnet role assignment must be scoped to var.aks_subnet_id."
+  }
+}
+
+run "aks_private_dns_zone_custom_identity_override_true_forces_custom_identity" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled          = true
+    aks_private_dns_zone_id              = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.eastus.azmk8s.io"
+    aks_private_dns_zone_custom_identity = true
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "UserAssigned"
+    error_message = "aks_private_dns_zone_custom_identity = true must switch the cluster identity to UserAssigned when explicitly set, driving the decision from the plan-known override rather than a comparison on aks_private_dns_zone_id's value."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 1
+    error_message = "aks_private_dns_zone_custom_identity = true must create the aks_cluster UAMI."
+  }
+}
+
+run "rejects_aks_private_dns_zone_custom_identity_true_without_a_zone_id" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled          = true
+    aks_private_dns_zone_id              = "System"
+    aks_private_dns_zone_custom_identity = true
+  }
+
+  expect_failures = [
+    var.aks_private_dns_zone_custom_identity,
+  ]
+}
+
+run "aks_private_dns_zone_custom_identity_override_false_keeps_system_assigned" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled          = true
+    aks_private_dns_zone_id              = "System"
+    aks_private_dns_zone_custom_identity = false
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "SystemAssigned"
+    error_message = "aks_private_dns_zone_custom_identity = false must keep SystemAssigned when aks_private_dns_zone_id is \"System\"."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
+    error_message = "aks_private_dns_zone_custom_identity = false must not create the aks_cluster UAMI."
+  }
+}
+
+run "rejects_aks_private_dns_zone_custom_identity_false_with_a_real_zone_id" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled          = true
+    aks_private_dns_zone_id              = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.eastus.azmk8s.io"
+    aks_private_dns_zone_custom_identity = false
+  }
+
+  expect_failures = [
+    var.aks_private_dns_zone_custom_identity,
+  ]
+}
+
+run "rejects_malformed_aks_private_dns_zone_id" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled = true
+    aks_private_dns_zone_id     = "not-a-resource-id"
+  }
+
+  expect_failures = [
+    var.aks_private_dns_zone_id,
+  ]
+}
+
+run "rejects_aks_private_dns_zone_id_without_private_cluster" {
+  command = plan
+
+  variables {
+    aks_private_dns_zone_id = "System"
+  }
+
+  expect_failures = [
+    var.aks_private_dns_zone_id,
+  ]
+}
+
+run "aks_entra_rbac_renders_role_based_access_control" {
+  command = plan
+
+  variables {
+    aks_entra_rbac = {
+      admin_group_object_ids = ["11111111-1111-1111-1111-111111111111"]
+    }
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control) == 1
+    error_message = "azure_active_directory_role_based_access_control block must render when var.aks_entra_rbac is set."
+  }
+
+  assert {
+    condition = (
+      length(azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control[0].admin_group_object_ids) == 1 &&
+      contains(azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control[0].admin_group_object_ids, "11111111-1111-1111-1111-111111111111")
+    )
+    error_message = "admin_group_object_ids must render the supplied list."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control[0].azure_rbac_enabled == true
+    error_message = "azure_rbac_enabled must default to true."
+  }
+}
+
+run "accepts_empty_aks_entra_rbac_admin_group_object_ids_with_azure_rbac_enabled" {
+  command = plan
+
+  variables {
+    aks_entra_rbac = {
+      admin_group_object_ids = []
+    }
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control) == 1
+    error_message = "An empty admin_group_object_ids list must be accepted when azure_rbac_enabled defaults to true; authorization can then come entirely from caller-managed azurerm_role_assignment resources."
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control[0].admin_group_object_ids) == 0
+    error_message = "admin_group_object_ids must render as an empty list."
+  }
+}
+
+run "rejects_empty_aks_entra_rbac_admin_group_object_ids_without_azure_rbac" {
+  command = plan
+
+  variables {
+    aks_entra_rbac = {
+      admin_group_object_ids = []
+      azure_rbac_enabled     = false
+    }
+  }
+
+  expect_failures = [
+    var.aks_entra_rbac,
+  ]
+}
+
+run "rejects_local_account_disabled_without_entra_rbac" {
+  command = plan
+
+  variables {
+    aks_local_account_disabled = true
+  }
+
+  expect_failures = [
+    var.aks_local_account_disabled,
+  ]
+}
+
+run "accepts_local_account_disabled_with_entra_rbac" {
+  command = plan
+
+  variables {
+    aks_entra_rbac = {
+      admin_group_object_ids = ["11111111-1111-1111-1111-111111111111"]
+    }
+    aks_local_account_disabled = true
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].local_account_disabled == true
+    error_message = "local_account_disabled must render true when paired with a non-null aks_entra_rbac."
+  }
+}
+
+run "rejects_invalid_aks_outbound_type" {
+  command = plan
+
+  variables {
+    aks_outbound_type = "notAType"
+  }
+
+  expect_failures = [
+    var.aks_outbound_type,
+  ]
+}
+
+run "renders_user_defined_routing_outbound_type" {
+  command = plan
+
+  variables {
+    aks_outbound_type = "userDefinedRouting"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].network_profile[0].outbound_type == "userDefinedRouting"
+    error_message = "network_profile.outbound_type must render the supplied value."
+  }
+}
+
+run "rejects_invalid_aks_network_policy" {
+  command = plan
+
+  variables {
+    aks_network_policy = "notAPolicy"
+  }
+
+  expect_failures = [
+    var.aks_network_policy,
+  ]
+}
+
+run "renders_cilium_network_policy_with_matching_data_plane" {
+  command = plan
+
+  variables {
+    aks_network_policy = "cilium"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].network_profile[0].network_policy == "cilium"
+    error_message = "network_profile.network_policy must render \"cilium\"."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].network_profile[0].network_data_plane == "cilium"
+    error_message = "network_profile.network_data_plane must switch to \"cilium\" whenever network_policy is \"cilium\" (Azure requires the two to match)."
+  }
+}
+
+run "renders_azure_network_policy_keeps_azure_data_plane" {
+  command = plan
+
+  variables {
+    aks_network_policy = "azure"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].network_profile[0].network_policy == "azure"
+    error_message = "network_profile.network_policy must render \"azure\"."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].network_profile[0].network_data_plane == "azure"
+    error_message = "network_profile.network_data_plane must stay \"azure\" for the azure and calico policies."
+  }
+}
+
+run "warns_when_aks_hardening_inputs_are_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_private_cluster_enabled                  = true
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
 }
 
 # ── PostgreSQL topologies (align-azure-with-aws-capabilities section 3) ──────
@@ -4999,6 +5445,21 @@ run "warns_when_aks_tuning_is_inert_on_existing_cluster" {
     existing_aks_resource_group_name             = "shared-aks-rg"
     existing_aks_cluster_prerequisites_confirmed = true
     aks_node_vm_size                             = "Standard_D8s_v4"
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "accepts_aks_local_account_disabled_without_entra_rbac_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_local_account_disabled                   = true
   }
 
   expect_failures = [check.aks_tuning_requires_module_managed_aks]
