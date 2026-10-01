@@ -54,13 +54,15 @@ was not, with the reason given.
 
 ## Findings carried into this round's PR descriptions
 
-- **#20 / PR #36:** the module's `check.aks_tuning_requires_module_managed_aks`
+- **#20 / PR #36:** the module's `check.aks_critical_addons_only_conflicts_with_managed_ingress`
   warning text describing AGIC as failing to start under
   `CriticalAddonsOnly=true:NoSchedule` does not hold for the current
   AKS-managed AGIC add-on (it carries its own toleration). The two GitHub
   issues the check's corroborating text cites describe the upstream,
   self-hosted `application-gateway-kubernetes-ingress` Helm chart, not this
-  module's own code path.
+  module's own code path. The check and its test were removed outright
+  (commit `0ede977`) rather than reworded, since live evidence disproved
+  the advisory's premise entirely.
 - **#28 / PR #44:** `admin_group_object_ids` alone grants no cluster access
   under Azure RBAC mode (the module's default). A separate Azure role
   assignment (one of the built-in "Azure Kubernetes Service RBAC *" roles)
