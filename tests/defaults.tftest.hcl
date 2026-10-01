@@ -875,19 +875,33 @@ run "aks_private_dns_zone_custom_identity_override_false_keeps_system_assigned" 
 
   variables {
     aks_private_cluster_enabled          = true
-    aks_private_dns_zone_id              = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.eastus.azmk8s.io"
+    aks_private_dns_zone_id              = "System"
     aks_private_dns_zone_custom_identity = false
   }
 
   assert {
     condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "SystemAssigned"
-    error_message = "aks_private_dns_zone_custom_identity = false must keep SystemAssigned even when aks_private_dns_zone_id names a caller-owned zone."
+    error_message = "aks_private_dns_zone_custom_identity = false must keep SystemAssigned when aks_private_dns_zone_id is \"System\"."
   }
 
   assert {
     condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
     error_message = "aks_private_dns_zone_custom_identity = false must not create the aks_cluster UAMI."
   }
+}
+
+run "rejects_aks_private_dns_zone_custom_identity_false_with_a_real_zone_id" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled          = true
+    aks_private_dns_zone_id              = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.eastus.azmk8s.io"
+    aks_private_dns_zone_custom_identity = false
+  }
+
+  expect_failures = [
+    var.aks_private_dns_zone_custom_identity,
+  ]
 }
 
 run "rejects_malformed_aks_private_dns_zone_id" {
