@@ -194,6 +194,47 @@ time — this is a plan-time attestation, not a runtime check.
 private ChartMuseum or ACR Helm registry instead of reaching
 `https://kedacore.github.io/charts` directly.
 
+### External artifacts and private-registry mirrors
+
+Every Helm chart and container image this module pulls, and the input that
+overrides its registry:
+
+| Artifact | Default | Override |
+|---|---|---|
+| n8n Helm chart | `oci://ghcr.io/n8n-io/n8n-helm-chart` | `n8n_chart_repository` |
+| KEDA Helm chart | `https://kedacore.github.io/charts` | `keda_chart_repository` (passed through to `modules/controllers`) |
+| KEDA container images (operator, metrics API server, admission webhooks) | `ghcr.io/kedacore/keda`, `ghcr.io/kedacore/keda-metrics-apiserver`, `ghcr.io/kedacore/keda-admission-webhooks` | none — this module and `modules/controllers` expose no image-repository override for KEDA's pods |
+| n8n application image | `docker.n8n.io/n8nio/n8n` | `n8n_image_repository` |
+| n8n task-runner sidecar image | `n8nio/runners` | `n8n_task_runner_image_repository` |
+| Redis queue metrics exporter image (optional, `redis_exporter_enabled`) | `oliver006/redis_exporter:v1.90.0@sha256:...` | `redis_exporter_image` (a full image reference, not a bare repository) |
+
+`keda_chart_repository` only redirects where `helm_release.keda` downloads the
+chart archive from; it does not change the image repositories the chart
+renders into KEDA's Deployments. A cluster with no egress to
+`ghcr.io/kedacore/*` still needs those three images mirrored and reachable
+by the cluster's container runtime — mirroring the chart alone is not
+enough to bring KEDA pods up.
+
+A cluster or workstation with no egress to the public registries above needs
+every row mirrored before `terraform apply` can pull the chart it deploys —
+`helm_release.n8n` and `module.controllers`'s `helm_release.keda` both run
+from wherever `terraform apply` runs, not only from inside the cluster.
+`n8n_chart_repository` must serve the exact version named by
+`n8n_chart_version`; this module does not verify that a mirrored repository
+actually carries it. `n8n_image_repository` and
+`n8n_task_runner_image_repository` are independent so the two images can live
+in different repositories on the same mirror, and `n8n_image_pull_secrets`
+grants both images' pods registry authentication through the same Secret
+names. `check.graceful_shutdown_fits_grace_period` (n8n.tf) is skipped
+whenever `n8n_chart_repository` is not the upstream default, since this
+module cannot verify a mirror's `values.yaml` default graceful-shutdown
+timeout. Setting `n8n_graceful_shutdown_timeout` explicitly does not
+reactivate that check (its condition stays true whenever the chart
+repository is non-default, regardless of the timeout); it does subject the
+value to `n8n_graceful_shutdown_timeout`'s own always-on validation, which
+independently rejects a timeout that leaves no margin before
+`n8n_termination_grace_period`.
+
 ### Kubernetes Secret references
 
 Five inputs support a caller-managed Kubernetes Secret reference. The four

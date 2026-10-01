@@ -162,6 +162,57 @@ run "chart_version_is_required_and_must_be_exact" {
   expect_failures = [var.n8n_chart_version]
 }
 
+run "rejects_malformed_chart_repository" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "not-a-url"
+  }
+
+  expect_failures = [var.n8n_chart_repository]
+}
+
+run "chart_repository_defaults_to_upstream" {
+  command = plan
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nwpool-tls-test.vault.azure.net/secrets/n8nwpool-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = var.n8n_chart_repository == "oci://ghcr.io/n8n-io/n8n-helm-chart"
+    error_message = "n8n_chart_repository must default to the same upstream registry the official preview build publishes to."
+  }
+}
+
+# No assert on purpose beyond the default check above: main.tf wires
+# n8n_chart_repository straight through to module "n8n"'s own input of the
+# same name, and the root module's own test suite
+# (passes_custom_n8n_chart_repository_to_the_helm_release in
+# tests/defaults.tftest.hcl) already proves that input reaches
+# helm_release.n8n.repository. A non-default value here has nothing further
+# to assert on from outside the module, so the coverage is that the plan
+# still succeeds with it set.
+run "chart_repository_accepts_a_private_mirror" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://n8nchartmirror.azurecr.io/n8n-helm-chart"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nwpool-tls-test.vault.azure.net/secrets/n8nwpool-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+}
+
 # No assert on purpose: the coverage is that the plan succeeds. A prerelease
 # has to pass this example's own format validation, and a run whose plan
 # errors fails the run.

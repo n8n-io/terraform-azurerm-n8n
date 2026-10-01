@@ -1005,6 +1005,18 @@ variable "n8n_chart_version" {
   }
 }
 
+variable "n8n_chart_repository" {
+  description = "Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Terraform's Helm provider fetches the chart from wherever `terraform apply` runs, not from inside the AKS cluster, so point this at a private mirror, e.g. an ACR OCI repository, when the machine running Terraform (not the cluster) has no egress to ghcr.io. This does not affect runtime container images pulled by the cluster's nodes; use n8n_image_repository (and n8n_task_runner_image_repository) to mirror those separately. The mirror must serve the exact chart version named by n8n_chart_version; this module does not verify that a mirrored repository actually carries it. check.graceful_shutdown_fits_grace_period (n8n.tf) is skipped whenever this is not the default, because this module cannot verify a mirror's values.yaml default shutdown timeout."
+  type        = string
+  default     = "oci://ghcr.io/n8n-io/n8n-helm-chart"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^(https|oci)://[^[:space:]]+$", var.n8n_chart_repository))
+    error_message = "n8n_chart_repository must be an https:// or oci:// URL with no whitespace."
+  }
+}
+
 variable "n8n_helm_timeout" {
   description = "Seconds Terraform waits for the n8n Helm release to converge. Increase this for large deployments whose rolling update cannot finish within the 600-second default."
   type        = number
@@ -1944,6 +1956,25 @@ variable "n8n_task_runner_image_tag" {
   }
 }
 
+variable "n8n_task_runner_image_repository" {
+  description = "Optional container image repository for the n8nio/runners task-runner sidecar, without a tag or digest. Null uses the chart default n8nio/runners. Set alongside n8n_image_repository when mirroring both images into the same private registry; the two are independent because the application and runner images can live in different repositories on the same mirror. Use n8n_task_runner_image_tag for the runner tag. Any private-registry pull access is granted the same way as n8n_image_repository, through n8n_image_pull_secrets on the module-managed ServiceAccount."
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.n8n_task_runner_image_repository == null ? true : (
+      length(var.n8n_task_runner_image_repository) <= 255 &&
+      can(regex("^(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:]+\\])(?::[0-9]+)?/)?[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*)*$", var.n8n_task_runner_image_repository))
+    )
+    error_message = "n8n_task_runner_image_repository must be a bare Docker repository reference with no scheme, whitespace, tag, digest, uppercase path component, or empty path component, such as registry.internal:5000/runners or n8nio/runners."
+  }
+
+  validation {
+    condition     = var.n8n_task_runner_image_repository == null ? true : !can(regex(":", reverse(split("/", var.n8n_task_runner_image_repository))[0]))
+    error_message = "n8n_task_runner_image_repository must not include a tag or digest because the chart appends n8n_task_runner_image_tag."
+  }
+}
+
 variable "n8n_task_runner_cpu_request" {
   description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every worker replica when task runners are enabled, and for every main replica only when n8n_chart_version is not one of the upstream charts verified to place runners on workers alone (1.12.0 and 1.13.0, n8n-hosting #179): on those, queue-mode main pods carry no sidecar because n8n offloads manual executions to workers, so the main ceiling is not multiplied by this."
   type        = string
@@ -2411,7 +2442,7 @@ variable "n8n_worker_extra_env" {
 # per entry, alongside the chart's own unlabelled worker deployment.
 
 variable "n8n_worker_pools" {
-  description = "EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N_WORKER_POOL_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n_chart_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). Also requires n8n_image_tag 2.39.0 or later (validated on that variable). Each pool's KEDA ScaledObject authenticates to Redis through the same TriggerAuthentication the default worker's scaler uses. An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, the chart repository this module hardcodes (there is no repository override), at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n_chart_version. See examples/worker-pools/README.md for the exact command and a private-mirror fallback."
+  description = "EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N_WORKER_POOL_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n_chart_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). Also requires n8n_image_tag 2.39.0 or later (validated on that variable). Each pool's KEDA ScaledObject authenticates to Redis through the same TriggerAuthentication the default worker's scaler uses. An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, n8n_chart_repository's default, at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n_chart_version; a caller who cannot dispatch that Action, or whose Terraform runner has no egress to ghcr.io, can point n8n_chart_repository at their own mirror instead (this redirects only the chart download for `terraform apply`, not the runtime images the cluster's nodes pull; see n8n_image_repository for those). See examples/worker-pools/README.md for the exact command and a private-mirror fallback."
   type = list(object({
     name         = string
     min_replicas = optional(number, 1)

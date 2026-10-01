@@ -42,14 +42,14 @@ Pool names are lowercase letters, digits, and hyphens, 1 to 43 characters, start
 
 - A domain you control, delegatable to the public Azure DNS zone this example creates.
 - An n8n Enterprise license carrying `feat:workerPools`. For multi-main (the default) it also needs `feat:multipleMainInstances`; set `n8n_main_hpa_min_replicas = 1` to run single-main on a Business-tier license instead.
-- A chart that renders `queueMode.workerGroups`, reachable from your workstation: the official preview build `1.11.0-preview.workerpools.1` is already published to the root module's hardcoded chart repository, `oci://ghcr.io/n8n-io/n8n-helm-chart` (see the next section for how it was built).
+- A chart that renders `queueMode.workerGroups`, reachable from your workstation: the official preview build `1.11.0-preview.workerpools.1` is already published to the default chart repository, `oci://ghcr.io/n8n-io/n8n-helm-chart` (see the next section for how it was built, and for pointing this example at a private mirror instead via `n8n_chart_repository`).
 - `helm` 3.8+ on your workstation, to confirm the pinned chart resolves before applying.
 
 ## Getting a chart that renders pools
 
 Skip this section, and pin your released chart directly with `n8n_worker_pools_chart_verified = true`, once you have confirmed your target chart renders `queueMode.workerGroups`.
 
-Until then, the fastest path is the chart repo's own **official preview build**. [n8n-io/n8n-hosting#191](https://github.com/n8n-io/n8n-hosting/pull/191) registered a `Preview chart` GitHub Action on `main` that packages the `preview/worker-pools` branch (carrying [#189](https://github.com/n8n-io/n8n-hosting/pull/189)) and pushes a prerelease build to `oci://ghcr.io/n8n-io/n8n-helm-chart`, the same registry `helm_release.n8n` in this module's `n8n.tf` hardcodes. Anyone with write access to n8n-io/n8n-hosting can dispatch it:
+Until then, the fastest path is the chart repo's own **official preview build**. [n8n-io/n8n-hosting#191](https://github.com/n8n-io/n8n-hosting/pull/191) registered a `Preview chart` GitHub Action on `main` that packages the `preview/worker-pools` branch (carrying [#189](https://github.com/n8n-io/n8n-hosting/pull/189)) and pushes a prerelease build to `oci://ghcr.io/n8n-io/n8n-helm-chart`, the module's default `n8n_chart_repository`. Anyone with write access to n8n-io/n8n-hosting can dispatch it:
 
 ```bash
 # From the GitHub UI: Actions -> Preview chart -> Run workflow, ref preview/worker-pools.
@@ -69,7 +69,7 @@ n8n_chart_version = "1.11.0-preview.workerpools.1"
 n8n_image_tag     = "2.39.0"
 ```
 
-**No write access to n8n-io/n8n-hosting, or want a mirror you control?** Unlike the AWS sibling module, this module does not expose an `n8n_chart_repository` override: `helm_release.n8n` (`n8n.tf`) pins `repository = "oci://ghcr.io/n8n-io/n8n-helm-chart"` literally, so pushing a build to your own Azure Container Registry does not by itself make this module pull from it. Today that leaves two options: use the official GHCR preview build above, or fork the module to parameterize that one line. If you take the fork path, package and push exactly the same way the AWS module's private-mirror fallback does, adapted to `az acr`:
+**No write access to n8n-io/n8n-hosting, or want a mirror you control?** The root module's `n8n_chart_repository` input overrides `helm_release.n8n`'s repository (`n8n.tf`), and this example passes it through as its own `n8n_chart_repository` variable, so pushing a build to your own Azure Container Registry is enough to make this module pull from it — no fork required. Package and push exactly the same way the AWS module's private-mirror fallback does, adapted to `az acr`:
 
 ```bash
 RESOURCE_GROUP=n8n-chart-mirror-rg
@@ -101,12 +101,18 @@ helm registry login "$ACR_NAME.azurecr.io" \
   --password "$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
 helm push "/tmp/chart-pkg/n8n-$CHART_VERSION.tgz" "oci://$ACR_NAME.azurecr.io/n8n-helm-chart"
 
-# 5. Confirm the push landed. This module still cannot pull from it until the
-#    fork replaces the hardcoded repository in n8n.tf with this address.
+# 5. Confirm the push landed.
 helm show chart "oci://$ACR_NAME.azurecr.io/n8n-helm-chart/n8n" --version "$CHART_VERSION" | head -5
 ```
 
-`CHART_VERSION` above is suffixed as a prerelease so a fork's chart-version guard would take it at your word without any extra input, the same as the official build. If you would rather package and distribute this internally under a real numbered version (dropping the `-preview.workerpools.1` suffix), pair that fork with `n8n_worker_pools_chart_verified = true`: that is the one thing the guard cannot infer from a numbered version string, so it has to be an explicit attestation that you have already confirmed that exact chart renders pools.
+Point this example at the mirror in `terraform.tfvars`:
+
+```hcl
+n8n_chart_repository = "oci://<ACR_NAME>.azurecr.io/n8n-helm-chart"
+n8n_chart_version    = "1.11.0-preview.workerpools.1"
+```
+
+`CHART_VERSION` above is suffixed as a prerelease so the chart-version guard takes it at your word without any extra input, the same as the official build. If you would rather package and distribute this internally under a real numbered version (dropping the `-preview.workerpools.1` suffix), pair the mirror with `n8n_worker_pools_chart_verified = true`: that is the one thing the guard cannot infer from a numbered version string, so it has to be an explicit attestation that you have already confirmed that exact chart renders pools.
 
 ## Apply
 
@@ -279,6 +285,7 @@ These inputs are passed straight through to the root module; set them in `terraf
 | <a name="input_common_tags"></a> [common\_tags](#input\_common\_tags) | Additional Azure tags applied to example and module resources. | `map(string)` | `{}` | no |
 | <a name="input_friendly_name_prefix"></a> [friendly\_name\_prefix](#input\_friendly\_name\_prefix) | Lowercase alphanumeric prefix used for Azure resource names. Change it to avoid globally unique name collisions. | `string` | `"n8nwpool"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region for the example. Confirm that the selected AKS, PostgreSQL, Redis, zone, and storage SKUs are available there. | `string` | `"eastus"` | no |
+| <a name="input_n8n_chart_repository"></a> [n8n\_chart\_repository](#input\_n8n\_chart\_repository) | Helm chart repository for the n8n chart, passed through to the module's n8n\_chart\_repository. Override to point this example at a private mirror, e.g. an ACR OCI repository carrying a self-built preview chart. | `string` | `"oci://ghcr.io/n8n-io/n8n-helm-chart"` | no |
 | <a name="input_n8n_chart_version"></a> [n8n\_chart\_version](#input\_n8n\_chart\_version) | n8n Helm chart version to deploy, passed to the module's n8n\_chart\_version. Required by this example because the module default predates queueMode.workerGroups and would render no pools once local.worker\_pools is wired in. Pin the first release that carries the feature once it exists, or a prerelease build (e.g. 1.11.0-preview.workerpools.1, published via n8n-io/n8n-hosting's Preview chart GitHub Action) in the meantime. | `string` | n/a | yes |
 | <a name="input_n8n_domain"></a> [n8n\_domain](#input\_n8n\_domain) | Canonical fully-qualified domain for n8n. It must be the Azure DNS zone apex or a subdomain of public\_dns\_zone\_name. | `string` | n/a | yes |
 | <a name="input_n8n_image_tag"></a> [n8n\_image\_tag](#input\_n8n\_image\_tag) | Pinned n8n application version, passed to the module's n8n\_image\_tag. Defaults to 2.39.0, the first n8n release that reads N8N\_WORKER\_POOLS\_ENABLED and N8N\_WORKER\_POOL\_NAME; an older image accepts both and silently ignores them once local.worker\_pools is wired in, so the pods come up healthy with the feature doing nothing. The root module's own default (2.35.0) predates that floor, which is why this example pins its own default rather than leaving the module default in place. | `string` | `"2.39.0"` | no |

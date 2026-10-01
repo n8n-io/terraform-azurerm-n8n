@@ -8,11 +8,12 @@ n8n_license_key      = "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
 # module's default n8n_chart_version predates queueMode.workerGroups and would
 # render no pools once local.worker_pools is wired into module "n8n" in
 # main.tf. This is the official prerelease build published from
-# n8n-io/n8n-hosting's preview/worker-pools branch to the module's hardcoded
-# chart repository, oci://ghcr.io/n8n-io/n8n-helm-chart; see README.md,
+# n8n-io/n8n-hosting's preview/worker-pools branch to the default chart
+# repository, oci://ghcr.io/n8n-io/n8n-helm-chart; see README.md,
 # "Getting a chart that renders pools", for the exact command and what to do
 # if it has not been dispatched yet.
 n8n_chart_version = "1.11.0-preview.workerpools.1"
+# n8n_chart_repository = "oci://<ACR_NAME>.azurecr.io/n8n-helm-chart"  # override for a private mirror; see README.md
 # n8n_worker_pools_chart_verified = true  # only if you have confirmed a numbered chart build renders pools
 
 # First n8n release that reads N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME
