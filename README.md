@@ -58,7 +58,7 @@ The module **expects a pre-existing VNet** and five pre-sized subnets (AKS, Appl
 
 ## Prerequisites
 
-- **Terraform** `>= 1.9` (the floor that supports the cross-variable validation this module relies on, e.g. `var.app_gateway_keyvault_id` against `var.app_gateway_keyvault_role_assignment_enabled`).
+- **Terraform** `>= 1.12` (the first release that short-circuits `||` and `&&`; the module's `var.x == null || var.x.attr` validations fail on 1.9 to 1.11 whenever such an input is left null).
 - **Azure CLI** `>= 2.50` (`az login`, plus the few imperative steps in the docs under `docs/`); `>= 2.75` to run `tests/scripts/preflight-region-check.sh`, which parses the newer `az postgres flexible-server list-skus` payload and uses the `redisenterprise` extension.
 - **jq** (used by `tests/scripts/preflight-region-check.sh` and the offline chart check; the module itself never shells out to it).
 - **Region preflight (recommended before the first `apply` in a new region or subscription):** run `tests/scripts/preflight-region-check.sh` from your root. It reads the region, sizing, and SKUs from your own `terraform plan` and checks AKS zone support, subscription vCPU quota headroom against the worst case of every node pool at `max_count` (`aks_node_vm_size` x `2 x aks_node_count_max`), PostgreSQL Flexible Server version/SKU availability, and (with `--probe-redis`) Azure Managed Redis capacity, the four gaps that otherwise fail 10-20 minutes into an apply. See the first four entries of [`docs/troubleshooting.md`](./docs/troubleshooting.md) and...
@@ -463,7 +463,7 @@ This module does not:
 
 | Name | Version |
 | ---- | ------- |
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.12 |
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
