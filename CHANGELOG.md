@@ -11,6 +11,15 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Changed
 
+- **Breaking:** the minimum Terraform version is now `>= 1.12` (was
+  `>= 1.9`) in the root module, all three submodules, and every example.
+  The `var.x == null || var.x.attr` validations in `variables.tf` rely on
+  `||` short-circuiting, which Terraform added in 1.12. On 1.9 to 1.11
+  they fail with "Attempt to get attribute from null value" on almost
+  every plan (for example `pg_maintenance_window` left at its default
+  `null`), so those versions never worked in practice. Upgrade the
+  Terraform CLI to 1.12 or later; no configuration change is needed.
+
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
   with `validity_in_months` (whole number, 1 to 120, default 12), matching
   the Key Vault certificate policy's own unit. The old input was converted

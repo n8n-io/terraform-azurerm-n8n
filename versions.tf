@@ -29,16 +29,18 @@
 # migration completes, this file only declares the combined requirement —
 # see `openspec/changes/align-azure-with-aws-capabilities/tasks.md`.
 #
-# `required_version >= 1.9` is required by every cross-variable `validation`
-# block this module and its predecessors use (stabilized in Terraform
-# 1.9.0). No `provider {}` blocks — provider configuration (subscription,
+# `required_version >= 1.12`: cross-variable `validation` blocks need 1.9,
+# and the `var.x == null || var.x.attr` guards used throughout variables.tf
+# need 1.12, the first release that short-circuits `||` and `&&`. On 1.9 to
+# 1.11 those guards error with "Attempt to get attribute from null value" on
+# every plan that leaves such an input null. No `provider {}` blocks: provider configuration (subscription,
 # auth, kube/helm wiring against the AKS cluster this module creates) is
 # the caller's job. See `examples/small/providers.tf` (added in section 13)
 # for the canonical wiring, mirroring `terraform-aws-n8n`'s
 # `examples/small/providers.tf`.
 
 terraform {
-  required_version = ">= 1.9"
+  required_version = ">= 1.12"
 
   required_providers {
     azurerm = {

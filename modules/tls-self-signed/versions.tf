@@ -14,7 +14,7 @@
 # job — see the provider example in this submodule's README.
 
 terraform {
-  required_version = ">= 1.9"
+  required_version = ">= 1.12"
 
   required_providers {
     azurerm = {

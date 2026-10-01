@@ -8,7 +8,7 @@ Added in `port-aws-050-enhancements`, mirroring the AWS sibling's
 
 | Pin | Current | File | Bump tier |
 |---|---|---|---|
-| `terraform` floor | `>= 1.9` | `versions.tf` (root + every submodule/example) | Minor-required: raising the floor can drop support for older caller pipelines. |
+| `terraform` floor | `>= 1.12` | `versions.tf` (root + every submodule/example) | Minor-required: raising the floor can drop support for older caller pipelines. 1.12 is the first release that short-circuits `\|\|`/`&&`, which the `var.x == null \|\| var.x.attr` validations rely on. |
 | `azurerm` provider | `~> 4.0` | `versions.tf` | Verification-required: re-run the full offline matrix; a major bump needs a live-apply check per `docs/manual-azure-qualification.md`. |
 | `kubernetes` provider | `~> 3.0` | `versions.tf` (root, `modules/controllers`, all 8 examples) | Verification-required for a major bump (2.x to 3.x deprecated unversioned resource types with no working `moved` block; see `AGENTS.md`'s "Historical retirements"). Patch-safe within `~> 3.0`. |
 | `helm` provider | `~> 2.12` | `versions.tf` | Patch-safe. |
