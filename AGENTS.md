@@ -585,7 +585,10 @@ rejected through `local.n8n_deprecated_env_names`), matching the AWS sibling
 after `terraform-aws-n8n` #160. The removed `n8n_available_binary_data_modes`
 stays declared for one release as a tombstone (null-only validation plus a
 `tflint-ignore`); delete it with its two `rejects_removed_*` runs in the
-release after. At the time, `n8n_chart_version` defaulted to
+release after. Like the AWS sibling, `WEBHOOK_URL` is sent only to
+`n8n_image_tag` versions below 2.30.0 (`local.n8n_needs_legacy_webhook_url_env`),
+the first release that reads `N8N_WEBHOOK_URL`; since this module always
+pins a concrete tag, it needs none of AWS's null-tag fallbacks. At the time, `n8n_chart_version` defaulted to
 `1.13.0`, matching the AWS sibling after `terraform-aws-n8n` #145. Run
 `tests/scripts/chart-values-diff.sh
 <candidate>` before any future bump, but also diff `templates/` directly:

@@ -105,6 +105,27 @@ locals {
   n8n_editor_base_url       = "https://${var.n8n_domain}"
   n8n_effective_webhook_url = coalesce(var.n8n_webhook_url, local.n8n_editor_base_url)
 
+  # n8n reads N8N_WEBHOOK_URL from 2.30.0 on and logs WEBHOOK_URL as
+  # deprecated from that release. An older image reads only WEBHOOK_URL and
+  # otherwise builds webhook URLs from N8N_PROTOCOL://N8N_HOST:N8N_PORT, which
+  # here is the internal http://<n8n_domain>:5678/. So the legacy name is sent
+  # only to images older than 2.30.0. n8n_image_tag's own validation
+  # guarantees a leading major.minor.patch version, so the regex always
+  # matches. Same cut-over as terraform-aws-n8n's
+  # n8n_needs_legacy_webhook_url_env, without its null-tag and custom-image
+  # fallbacks: this module never leaves the tag to the chart.
+  n8n_image_version_parts = regex("^([0-9]+)\\.([0-9]+)\\.", var.n8n_image_tag)
+  n8n_needs_legacy_webhook_url_env = (
+    tonumber(local.n8n_image_version_parts[0]) < 2 || (
+      tonumber(local.n8n_image_version_parts[0]) == 2 &&
+      tonumber(local.n8n_image_version_parts[1]) < 30
+    )
+  )
+  n8n_webhook_url_env = concat(
+    [{ name = "N8N_WEBHOOK_URL", value = local.n8n_effective_webhook_url }],
+    local.n8n_needs_legacy_webhook_url_env ? [{ name = "WEBHOOK_URL", value = local.n8n_effective_webhook_url }] : [],
+  )
+
   appgw_frontend_ip_configuration_name = "appgw-frontend-ip"
   appgw_ingress_default_annotations = merge(
     {
@@ -361,6 +382,8 @@ locals {
     "N8N_WORKER_POOLS_ENABLED",
     "N8N_WORKER_POOL_NAME",
     # Keep the deprecated name reserved so callers cannot configure both forms.
+    # The module itself still sends it to images older than n8n 2.30.0
+    # (local.n8n_needs_legacy_webhook_url_env).
     "WEBHOOK_URL",
   ]
 

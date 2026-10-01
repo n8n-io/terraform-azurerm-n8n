@@ -399,7 +399,11 @@ resource "helm_release" "n8n" {
           { name = "N8N_LOG_OUTPUT", value = var.n8n_log_output },
           { name = "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", value = "true" },
           { name = "N8N_EDITOR_BASE_URL", value = local.n8n_editor_base_url },
-          { name = "N8N_WEBHOOK_URL", value = local.n8n_effective_webhook_url },
+        ],
+        # N8N_WEBHOOK_URL, plus the legacy WEBHOOK_URL for images older than
+        # n8n 2.30.0 (local.n8n_needs_legacy_webhook_url_env).
+        local.n8n_webhook_url_env,
+        [
           { name = "N8N_PROXY_HOPS", value = "1" },
           { name = "DB_POSTGRESDB_POOL_SIZE", value = tostring(local.postgres_connection.pool_size) },
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },

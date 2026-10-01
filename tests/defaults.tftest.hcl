@@ -3439,6 +3439,43 @@ run "database_only_modes_grant_no_blob_role" {
   }
 }
 
+# n8n reads N8N_WEBHOOK_URL from 2.30.0 on; an older image reads only the
+# legacy WEBHOOK_URL and would otherwise advertise http://<host>:5678.
+run "renders_legacy_webhook_url_for_pre_2_30_images" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+    n8n_image_tag                   = "2.29.9-custom"
+    n8n_task_runner_image_tag       = "2.29.9"
+    n8n_webhook_url                 = "https://hooks.example.com"
+  }
+
+  assert {
+    condition = local.n8n_needs_legacy_webhook_url_env && local.n8n_webhook_url_env == [
+      { name = "N8N_WEBHOOK_URL", value = "https://hooks.example.com" },
+      { name = "WEBHOOK_URL", value = "https://hooks.example.com" },
+    ]
+    error_message = "An n8n image older than 2.30.0 must receive WEBHOOK_URL with the same value as N8N_WEBHOOK_URL."
+  }
+}
+
+run "omits_legacy_webhook_url_from_2_30_0" {
+  command = plan
+
+  variables {
+    n8n_image_tag = "2.30.0"
+  }
+
+  assert {
+    condition = !local.n8n_needs_legacy_webhook_url_env && local.n8n_webhook_url_env == [
+      { name = "N8N_WEBHOOK_URL", value = "https://n8n.example.com" },
+    ]
+    error_message = "n8n 2.30.0 and later read N8N_WEBHOOK_URL, so the deprecated WEBHOOK_URL must not render."
+  }
+}
+
 run "retained_azure_read_access_enforces_n8n_2_29_floor" {
   command = plan
 

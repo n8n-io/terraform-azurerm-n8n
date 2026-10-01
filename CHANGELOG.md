@@ -73,6 +73,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Fixed
 
+- Webhook URLs on n8n images older than `2.30.0`. Those images do not read
+  `N8N_WEBHOOK_URL`, which was the only webhook variable the module
+  rendered, so they advertised `http://<n8n_domain>:5678/` instead of the
+  public HTTPS URL. The module now also renders the legacy `WEBHOOK_URL`,
+  with the same value, when `n8n_image_tag` is older than `2.30.0`.
+  `2.30.0` and later images get only `N8N_WEBHOOK_URL`, so the default
+  `2.35.0` deployment renders no new variable. Same cut-over as
+  `terraform-aws-n8n` #160.
 - `modules/tls-self-signed` now tags its Key Vault certificate with
   `ManagedBy = terraform`, `Project = n8n`, the caller's `common_tags`,
   and `Name = <friendly_name_prefix>-n8n-tls`, matching the root module.
