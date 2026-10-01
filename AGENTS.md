@@ -707,7 +707,7 @@ concern, and one deliberate nested call to the directly composable
 
 | File / dir                        | Purpose                                                     |
 | --------------------------------- | ----------------------------------------------------------- |
-| `versions.tf`                     | `required_providers` (`azurerm`, `kubernetes`, `helm`, `random`, `time`, `kubectl`), `required_version = ">= 1.12"` (first release that short-circuits `||`/`&&`, which the `var.x == null || var.x.attr` validations need). **No `provider {}` blocks.** |
+| `versions.tf`                     | `required_providers` (`azurerm`, `kubernetes`, `helm`, `random`, `time`, `kubectl`), `required_version = ">= 1.12"` (the first release that short-circuits the logical OR and AND operators, which the null-guard validations in `variables.tf` need). **No `provider {}` blocks.** |
 | `variables.tf` / `locals.tf` / `outputs.tf` | Root input, naming/tag, and output contract. |
 | `aks.tf`, `iam.tf`                | AKS cluster + node pool, workload/AGIC UAMIs, AKS API warm-up gate, workload-identity federated credential. No dormant identities: a kubelet UAMI (private-ACR pulls, CMK disks) is added only when a story binds it. |
 | `database.tf`                     | Managed PostgreSQL Flexible Server or external-endpoint contract; `local.postgres_connection`. |
