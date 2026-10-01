@@ -238,6 +238,15 @@ variable "aks_private_dns_zone_custom_identity" {
     condition     = var.aks_private_dns_zone_custom_identity != true || (var.aks_private_dns_zone_id != null && var.aks_private_dns_zone_id != "System" && var.aks_private_dns_zone_id != "None")
     error_message = "aks_private_dns_zone_custom_identity = true requires aks_private_dns_zone_id to name a zone (not null, \"System\", or \"None\"): the module-managed identity's role assignment must be scoped to an actual private DNS zone resource ID."
   }
+
+  validation {
+    condition = var.aks_private_dns_zone_custom_identity != false || (
+      var.aks_private_dns_zone_id == null ||
+      var.aks_private_dns_zone_id == "System" ||
+      var.aks_private_dns_zone_id == "None"
+    )
+    error_message = "aks_private_dns_zone_custom_identity = false with aks_private_dns_zone_id naming an actual zone resource ID selects SystemAssigned and suppresses the module-managed UserAssigned identity and its Private DNS Zone Contributor role assignment; Azure then rejects cluster creation because the zone requires that pre-created grant. Set this to true (or leave it null to infer from the zone ID) when aks_private_dns_zone_id is a real zone resource ID."
+  }
 }
 
 variable "aks_entra_rbac" {
