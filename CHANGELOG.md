@@ -26,6 +26,12 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `aks_network_policy` (`null`, `azure`, `calico`, or `cilium`, matching
   `network_data_plane` automatically for `cilium`)
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
+- `aks_outbound_type`'s description now documents a live finding against an
+  Azure Firewall deployment: Microsoft's published AKS+Firewall FQDN list
+  is incomplete for the default n8n image, both the image's actual
+  registry mirror domain and Docker Hub's blob-layer CDN redirect domain
+  need to be allow-listed in addition to Microsoft's documented list
+  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
 - `aks_system_pool_critical_addons_only`: opt-in bool (default false) that
   applies AzureRM's `only_critical_addons_enabled` to the system
   `default_node_pool`, tainting it `CriticalAddonsOnly=true:NoSchedule`.
