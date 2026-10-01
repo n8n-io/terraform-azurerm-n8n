@@ -5450,6 +5450,21 @@ run "warns_when_aks_tuning_is_inert_on_existing_cluster" {
   expect_failures = [check.aks_tuning_requires_module_managed_aks]
 }
 
+run "accepts_aks_local_account_disabled_without_entra_rbac_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_local_account_disabled                   = true
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
 run "warns_when_aks_node_os_disk_size_gb_is_inert_on_existing_cluster" {
   command = plan
 
