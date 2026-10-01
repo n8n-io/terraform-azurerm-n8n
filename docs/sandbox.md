@@ -4,14 +4,23 @@ The [`small`](../examples/small/) example is already the module's cheapest
 end-to-end reference, but it is still a multi-main footprint: two AKS node
 pools with at least two nodes each (`aks_node_count_min = 2`), two main
 pods, two webhook processors, and a worker with a task-runner sidecar. This
-document describes a cheaper single-main sandbox profile you can layer on
-top of `small` (or your own root module) today, and calls out the one piece
-that is not available yet.
+document describes a cheaper single-main sandbox profile and calls out the
+one piece that is not available yet.
 
 ## What you can set today
 
-Every input below is a plain override on the root module; there is no
-separate `sandbox` example:
+Two of the inputs below, `aks_node_vm_size` and `n8n_main_hpa_min_replicas`,
+are plain tfvars overrides on the `small` example today. The rest are not
+exposed as example-level variables: `small`'s `locals.tier` block
+(`examples/small/main.tf`) hardcodes `aks_node_count_min`,
+`aks_node_count_max`, and `pg_sku_name`, and never passes
+`postgres_pool_size`, `n8n_main_hpa_max_replicas`,
+`n8n_webhook_hpa_min_replicas`, or `n8n_worker_keda_min_replicas` /
+`n8n_worker_keda_max_replicas` through to the module at all. Applying the
+sandbox values for those inputs means editing `examples/small/main.tf`
+directly (either its `locals.tier` block or the `module "n8n"` call), or
+passing them through your own root module if you are not starting from
+`small`:
 
 | Input | Sandbox value | Why |
 |---|---|---|
