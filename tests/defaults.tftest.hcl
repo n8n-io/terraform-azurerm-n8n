@@ -7469,6 +7469,11 @@ run "accepts_postgres_password_write_only_with_secret_ref" {
     condition     = local.postgres_password_secret_name == "platform-n8n-db-password"
     error_message = "local.postgres_password_secret_name must reflect postgres_password_secret_ref when postgres_password_write_only is set."
   }
+
+  assert {
+    condition     = output.postgres_admin_password == null
+    error_message = "output.postgres_admin_password must be null when postgres_password_write_only is set — the password never leaves the write-only administrator_password_wo argument."
+  }
 }
 
 run "rejects_postgres_password_write_only_without_secret_ref" {

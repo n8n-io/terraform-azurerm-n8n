@@ -572,7 +572,7 @@ variable "postgres_external_username" {
 }
 
 variable "postgres_external_password" {
-  description = "Password for the external PostgreSQL endpoint specified by `postgres_external_host`. Required when `create_database = false`, unless `postgres_password_secret_ref` is set instead. Ignored when `create_database = true` (the module generates a random password for its managed Flexible Server)."
+  description = "Password for the external PostgreSQL endpoint specified by `postgres_external_host`. Required when `create_database = false`, unless `postgres_password_secret_ref` is set instead. Ignored when `create_database = true` (the module generates a random password for its managed Flexible Server, unless `postgres_password_write_only = true`, in which case the password instead comes from `postgres_admin_password_wo`)."
   type        = string
   default     = null
   sensitive   = true
@@ -3340,14 +3340,14 @@ variable "postgres_password_secret_ref" {
 }
 
 variable "postgres_password_write_only" {
-  description = "When true, the module writes the PostgreSQL administrator password through azurerm_postgresql_flexible_server's write-only administrator_password_wo argument (sourced from postgres_admin_password_wo) instead of generating a password with random_password.postgres_admin and storing it in plain text in Terraform state. Requires postgres_admin_password_wo to be set and postgres_password_secret_ref to reference a Kubernetes Secret you populate yourself (for example, synced from Azure Key Vault) — the module cannot copy a write-only value into kubernetes_secret.n8n_db, so it creates no managed Secret and the postgres_admin_password output is null on this path. Ignored (must stay false) when create_database = false; the module never manages a password for an external PostgreSQL endpoint. See docs/customer-managed-infrastructure.md for the full contract."
+  description = "When true, the module writes the PostgreSQL administrator password through azurerm_postgresql_flexible_server's write-only administrator_password_wo argument (sourced from postgres_admin_password_wo) instead of generating a password with random_password.postgres_admin and storing it in plain text in Terraform state. Requires postgres_admin_password_wo to be set and postgres_password_secret_ref to reference a Kubernetes Secret you populate yourself (for example, synced from Azure Key Vault) — the module cannot copy a write-only value into kubernetes_secret.n8n_db, so it creates no managed Secret and the postgres_admin_password output is null on this path. Rejected (plan fails) when create_database = false; the module never manages a password for an external PostgreSQL endpoint. See docs/customer-managed-infrastructure.md for the full contract."
   type        = bool
   default     = false
   nullable    = false
 
   validation {
     condition     = var.postgres_password_write_only ? var.create_database : true
-    error_message = "postgres_password_write_only has no effect when create_database = false; the module never manages a password for an external PostgreSQL endpoint."
+    error_message = "postgres_password_write_only is only valid when create_database = true; it cannot be set to true when create_database = false, since the module never manages a password for an external PostgreSQL endpoint."
   }
 }
 
