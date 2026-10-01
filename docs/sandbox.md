@@ -57,7 +57,7 @@ default. Each main, worker, and webhook-processor pod can lazily open up to
 `postgres_pool_size` connections against the same server
 (`postgres_pool_size` variable description), so the aggregate ceiling is:
 
-```
+```text
 postgres_pool_size * (main replicas + worker replicas + webhook replicas + any n8n_worker_pools ceilings)
 ```
 
