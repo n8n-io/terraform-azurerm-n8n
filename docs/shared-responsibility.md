@@ -1,7 +1,8 @@
 # Shared responsibility
 
 This module creates and configures an opinionated slice of Azure
-infrastructure for n8n: AKS, App Gateway/AGIC with a WAF policy, a
+infrastructure for n8n: AKS, App Gateway/AGIC (with a WAF policy on the
+default `WAF_v2` SKU; the optional `Standard_v2` SKU has none), a
 PostgreSQL Flexible Server, Azure Managed Redis, Blob storage, and the n8n
 Helm release. It does not, and is not intended to, run the whole platform
 for you. This page collects the ownership boundaries that are otherwise
