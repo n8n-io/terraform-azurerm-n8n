@@ -7,6 +7,22 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- New `docs/ingress-options.md` documents why the module uses Application
+  Gateway v2 with AGIC instead of Application Gateway for Containers (which
+  does not support a private frontend, checked 2026-09-30) or the
+  application routing add-on with the Gateway API, and the full routing
+  contract (path-prefix ordering, session affinity, `N8N_PROXY_HOPS`) a
+  caller-owned ingress (`create_ingress = false`) must reproduce
+  ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
+- New `n8n_proxy_hops` input (default `1`, matching the module's own
+  single-hop Application Gateway) renders `N8N_PROXY_HOPS`, previously
+  hardcoded to `1`. Callers replacing the module's ingress with a
+  multi-hop topology (for example Application Gateway for Containers
+  behind an additional load balancer) can now set the correct hop count
+  ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
+
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
@@ -24,6 +40,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
 
 ### Fixed
+
+- `examples/customer-managed-cluster`, `examples/customer-managed-everything`,
+  and the private admin gateway in `examples/split-ingress` now set
+  `appgw.ingress.kubernetes.io/cookie-based-affinity = "true"` on their
+  caller-owned Ingress, matching the root module's default. Without it,
+  multi-main deployments using these examples as a reference could see
+  intermittent authentication failures as session state diverged between
+  main pods ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
 
 - `modules/tls-self-signed` now tags its Key Vault certificate with
   `ManagedBy = terraform`, `Project = n8n`, the caller's `common_tags`,

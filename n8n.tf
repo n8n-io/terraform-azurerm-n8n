@@ -400,7 +400,7 @@ resource "helm_release" "n8n" {
           { name = "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", value = "true" },
           { name = "N8N_EDITOR_BASE_URL", value = local.n8n_editor_base_url },
           { name = "N8N_WEBHOOK_URL", value = local.n8n_effective_webhook_url },
-          { name = "N8N_PROXY_HOPS", value = "1" },
+          { name = "N8N_PROXY_HOPS", value = tostring(var.n8n_proxy_hops) },
           { name = "DB_POSTGRESDB_POOL_SIZE", value = tostring(local.postgres_connection.pool_size) },
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
           { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = tostring(var.n8n_license_detach_floating_on_shutdown) },

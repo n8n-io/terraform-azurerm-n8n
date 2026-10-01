@@ -298,6 +298,12 @@ resource "kubernetes_ingress_v1" "n8n" {
       "appgw.ingress.kubernetes.io/ssl-redirect"          = "true"
       "appgw.ingress.kubernetes.io/backend-protocol"      = "http"
       "appgw.ingress.kubernetes.io/appgw-ssl-certificate" = "appgw-ssl-cert"
+      # Matches the root module's default annotation (locals.tf): pins each
+      # multi-main client to one main pod so its session state stays on the
+      # same backend. Without this, Application Gateway load-balances across
+      # mains per request and users see intermittent 401s as auth state
+      # diverges between mains.
+      "appgw.ingress.kubernetes.io/cookie-based-affinity" = "true"
     }
   }
 

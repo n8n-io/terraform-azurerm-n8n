@@ -635,6 +635,13 @@ resource "kubernetes_ingress_v1" "admin_internal" {
 
     annotations = {
       "kubernetes.io/ingress.class" = local.admin_ingress_class
+      # Matches the root module's default annotation (locals.tf): pins each
+      # multi-main client to one main pod so its session state stays on the
+      # same backend. n8n_main_hpa_min_replicas defaults to 2 in this example,
+      # so without this, Application Gateway load-balances across mains per
+      # request and users see intermittent 401s as auth state diverges
+      # between mains.
+      "appgw.ingress.kubernetes.io/cookie-based-affinity" = "true"
     }
   }
 
