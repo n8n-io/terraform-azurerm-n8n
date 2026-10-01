@@ -379,7 +379,7 @@ done
 
 echo "PASS: PostgreSQL connection/ping timing renders on all three application pod families and is omitted by default"
 
-echo "== Verify PostgreSQL TLS CA manifests (DB_POSTGRESDB_SSL_ENABLED / DB_POSTGRESDB_SSL_CA) =="
+echo "== Verify PostgreSQL TLS CA manifests (DB_POSTGRESDB_SSL_ENABLED / DB_POSTGRESDB_SSL_CA_FILE) =="
 
 # Regression check for the bug this fixture exists to catch: the pinned
 # chart renders database.ssl.enabled into a ConfigMap key named
@@ -396,11 +396,34 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
     || { echo "FAIL: ${template} must carry exactly one DB_POSTGRESDB_SSL_ENABLED=true entry when the effective ssl_mode is not disable" >&2; exit 1; }
 done
 
-jq -e '.data.DB_POSTGRESDB_SSL_CA == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"' \
+# n8n reads DB_POSTGRESDB_SSL_CA as a filesystem path (readFileSync), not
+# inline PEM content, so the module must not pass the PEM through the
+# chart's native database.ssl.ca value (which would land it verbatim in the
+# ConfigMap under that same key). It instead mounts a dedicated Secret and
+# points DB_POSTGRESDB_SSL_CA_FILE at the mounted file.
+jq -e '.data | has("DB_POSTGRESDB_SSL_CA") | not' \
   "$tmp/ssl-ca-configmap.json" >/dev/null \
-  || { echo "FAIL: the chart ConfigMap must carry DB_POSTGRESDB_SSL_CA from postgres_ssl_ca_pem via the chart-native database.ssl.ca value" >&2; exit 1; }
+  || { echo "FAIL: the chart ConfigMap must not carry DB_POSTGRESDB_SSL_CA; n8n reads that setting as a file path, not inline PEM content" >&2; exit 1; }
 
-echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders on every application pod family and postgres_ssl_ca_pem reaches the chart's own ConfigMap"
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e '
+    [.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_SSL_CA_FILE")] | length == 1
+    and .[0].value == "/etc/n8n/postgres-ssl-ca/ca.pem"
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must carry exactly one DB_POSTGRESDB_SSL_CA_FILE entry pointing at the mounted CA file" >&2; exit 1; }
+
+  jq -e '
+    [.spec.template.spec.volumes[] | select(.name == "postgres-ssl-ca" and .secret.secretName == "n8n-postgres-ssl-ca")] | length == 1
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must mount the postgres-ssl-ca Secret volume" >&2; exit 1; }
+
+  jq -e '
+    [.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ssl-ca" and .mountPath == "/etc/n8n/postgres-ssl-ca" and .readOnly == true)] | length == 1
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must mount the postgres-ssl-ca volume read-only at /etc/n8n/postgres-ssl-ca" >&2; exit 1; }
+done
+
+echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders on every application pod family and postgres_ssl_ca_pem reaches n8n through a mounted file, not the chart's ConfigMap"
 
 echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval/graceful shutdown timeout) =="
 
