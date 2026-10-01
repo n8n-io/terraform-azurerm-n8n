@@ -656,8 +656,18 @@ path):
    `aks_kms_key_vault_id` to the vault, but leave `aks_kms_key_vault_key_id =
    null`. This grants the identity the role (creating the cluster too, on a
    first-time deployment).
-2. Second apply: set `aks_kms_key_vault_key_id`. AKS enables KMS as an
-   update against the now-authorized identity.
+2. Wait for the role assignment to propagate before the next apply. Azure
+   RBAC grants on Key Vault can take several minutes to become effective,
+   and AKS validates the identity's permissions when KMS is enabled. If the
+   grant has not propagated yet, the second apply fails with
+   `AzureKeyVaultKmsValidateIdentityPermissionCustomerError` even though the
+   assignment exists. Allow about 10 minutes, or confirm the identity can
+   use the key (for example, the assignment shows in
+   `az role assignment list --scope <vault id> --assignee <identity principal id>`
+   and has been in place for several minutes).
+3. Second apply: set `aks_kms_key_vault_key_id`. AKS enables KMS as an
+   update against the now-authorized identity. If it still fails with the
+   permission error above, wait a few more minutes and re-run the apply.
 
 Skipping the first apply, or granting the role out-of-band before either
 apply against a pre-existing identity, also works. Setting both
