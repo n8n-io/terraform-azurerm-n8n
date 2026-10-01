@@ -1,0 +1,106 @@
+name: Bug report
+description: Something in the module doesn't work as expected.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The more of the fields below you fill in, the
+        faster we can triage. Before submitting, please:
+
+        - Check existing issues for duplicates.
+        - **Do not** include sensitive values (license keys, Azure credentials,
+          service-principal secrets, private endpoints) anywhere in this report.
+        - For security findings, close this form and follow [`SECURITY.md`](https://github.com/n8n-io/terraform-azurerm-n8n/security/policy) instead.
+
+  - type: input
+    id: module_version
+    attributes:
+      label: Module version
+      description: The `version = ...` you have pinned (e.g. `0.1.0`), or commit SHA if pulled from a branch.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: terraform_version
+    attributes:
+      label: Terraform version
+      description: Output of `terraform version`.
+      placeholder: "Terraform v1.16.4"
+    validations:
+      required: true
+
+  - type: input
+    id: azure_region
+    attributes:
+      label: Azure region
+      placeholder: "eastus2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: example_used
+    attributes:
+      label: Which example (if any) reproduces this?
+      options:
+        - "examples/small"
+        - "examples/medium"
+        - "examples/large"
+        - "examples/split-ingress"
+        - "examples/worker-pools"
+        - "examples/customer-managed-cluster"
+        - "examples/customer-managed-redis"
+        - "examples/customer-managed-storage"
+        - "examples/customer-managed-everything"
+        - "None, direct module usage from my own root module"
+        - "Not sure / not applicable"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What did the module do that you didn't expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: |
+        How can we reproduce the issue? Ideally a minimal `tfvars` and the
+        sequence of commands you ran (`terraform init`, `terraform apply`,
+        etc.). Redact secrets.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Plan / apply output
+      description: |
+        The relevant chunk of `terraform plan` or `terraform apply` output.
+        Redact secrets and subscription IDs.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: anything_else
+    attributes:
+      label: Anything else?
+      description: Logs, environment quirks, links to related issues, etc.
+    validations:
+      required: false

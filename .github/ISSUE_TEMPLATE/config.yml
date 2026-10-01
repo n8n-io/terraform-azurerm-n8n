@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/n8n-io/terraform-azurerm-n8n/security/policy
+    about: Do not open a public issue for security findings. Follow SECURITY.md instead.
+  - name: General n8n questions
+    url: https://community.n8n.io/
+    about: Questions about n8n itself, not specific to this module.
