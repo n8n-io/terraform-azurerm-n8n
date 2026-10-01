@@ -488,6 +488,29 @@ run "renders_aks_system_pool_critical_addons_only_when_enabled" {
   }
 }
 
+run "critical_addons_only_taint_subtracts_only_keda_from_user_pool_capacity" {
+  command = plan
+
+  variables {
+    aks_system_pool_critical_addons_only = true
+    create_ingress                       = false
+  }
+
+  assert {
+    condition     = local.aks_cluster_control_cpu_millis == 300
+    error_message = "Tainting the system pool must subtract only KEDA's control CPU from user-pool capacity. CoreDNS, metrics-server, the CSI controllers, and AGIC keep their own CriticalAddonsOnly toleration and stay on the system pool, so they must not count against the user pool too."
+  }
+}
+
+run "untainted_system_pool_subtracts_every_control_workload_once" {
+  command = plan
+
+  assert {
+    condition     = local.aks_cluster_control_cpu_millis == 820
+    error_message = "With no taint, every control workload can land on either pool, so the full lump sum must still be subtracted once from the two-pool model."
+  }
+}
+
 run "rejects_zero_aks_node_os_disk_size_gb" {
   command = plan
 

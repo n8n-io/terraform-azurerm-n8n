@@ -168,7 +168,21 @@ locals {
     csi_controllers          = 120
     application_gateway_agic = 100
   }
-  aks_cluster_control_cpu_millis = sum(values(local.aks_cluster_control_cpu_requests_millis))
+
+  # CoreDNS, metrics-server, the CSI controllers, and AGIC are AKS-managed
+  # critical add-ons: AKS deploys each with its own explicit CriticalAddonsOnly
+  # toleration (docs/troubleshooting.md), so they keep running on the system
+  # pool whether or not aks_system_pool_critical_addons_only taints it. KEDA is
+  # this module's own install with no toleration, so it is the only control
+  # workload pushed onto n8nuser alongside n8n and the Redis exporter once the
+  # taint lands. Subtracting the full lump sum from a one-pool model would
+  # double-count system-pool add-ons against user-pool capacity n8n never
+  # contends with, so the tainted branch subtracts only keda.
+  aks_cluster_control_cpu_millis = (
+    var.aks_system_pool_critical_addons_only ?
+    local.aks_cluster_control_cpu_requests_millis.keda :
+    sum(values(local.aks_cluster_control_cpu_requests_millis))
+  )
 
   # The root creates one system pool and one untainted user pool. n8n pods may
   # schedule on either by default, so both count toward capacity. When
@@ -306,7 +320,7 @@ check "autoscaling_maxima_fit_aks_capacity" {
         ", plus worker pools ${local.n8n_pool_peak_cpu_request_millis}m across ",
         "${length(var.n8n_worker_pools)} pool(s) at their ceilings",
       ]) : "",
-      ". Supply models two pools at ",
+      ". Supply models ${var.aks_system_pool_critical_addons_only ? "one pool (n8nuser; the tainted system pool no longer counts)" : "two pools"} at ",
       "aks_node_count_max=${var.aks_node_count_max}, VM size ${var.aks_node_vm_size} (${local.aks_node_vcpus} vCPU per node), ",
       "less ${local.aks_node_kube_reserved_cpu_millis}m AKS reservation and ${local.aks_node_daemon_cpu_millis}m daemon requests per node, ",
       "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima (including any n8n_worker_pools max_replicas) or CPU requests, or raise ",
