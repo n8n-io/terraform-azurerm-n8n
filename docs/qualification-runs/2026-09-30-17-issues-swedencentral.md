@@ -1,8 +1,8 @@
-# Qualification run: 17 open PRs, Sweden Central, 2026-09-30
+# Qualification run: 17 issues across 15 PRs, Sweden Central, 2026-09-30
 
 Filled-in copy of [`manual-azure-qualification.md`](../manual-azure-qualification.md)
-scoped to the live validation of the batch of 17 draft/open PRs qualified in
-this round (issues #16 and #18 to #33). It records what was
+scoped to the live validation of the batch of 17 issues across 15 draft/open
+PRs qualified in this round (issues #16 and #18 to #33). It records what was
 observed across several disposable deployments. It is not a release
 guarantee, and no result below transfers to other regions, SKUs, or n8n
 versions.
@@ -10,8 +10,11 @@ versions.
 ```text
 Environment:     disposable subscription, swedencentral. Several
                  examples/small deploy copies across four deployment phases
-                 (A2, A2 phase 2, B1, B2), each torn down before or shortly
-                 after the next began.
+                 (A: baseline on `main`, then upgraded in place to the
+                 combined integration branch; A2: fresh create with the new
+                 toggles enabled; B1; B2), each torn down before or shortly
+                 after the next began. The in-place-on-upgrade results
+                 (#18, #26) were observed during phase A.
 Module version:  per-PR fix/issue-* branches, merged progressively into a
                  combined live/combined integration branch across phases.
 AKS version:     1.35.7
@@ -117,7 +120,7 @@ coverage.
 
 ## Teardown
 
-Every deployment phase (A2, A2 phase 2, B1, B2) was torn down via
+Every deployment phase (A, A2, B1, B2) was torn down via
 `terraform destroy` before or shortly after the next phase began. Soft-deleted
 Key Vaults left over mid-round were purged once confirmed to carry no purge
 protection. Final resource-group listings across phases showed only
