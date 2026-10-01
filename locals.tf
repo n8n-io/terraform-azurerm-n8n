@@ -303,7 +303,8 @@ locals {
   )
 
   # The chart's values.yaml default for redis.worker.timeout, in seconds.
-  # Verified for charts 1.11.0 (the worker-pools preview base) and 1.13.0.
+  # Verified for charts 1.11.0 (the worker-pools preview base), 1.13.0, and
+  # 1.14.0.
   # Used only by check.graceful_shutdown_fits_grace_period (n8n.tf) when
   # n8n_graceful_shutdown_timeout is null. tests/scripts/check-n8n-chart.sh
   # renders the pinned chart and fails if its default drifts from this value,

@@ -35,10 +35,13 @@ different for this module's configurations. The three upstream changes:
 - **`N8N_AVAILABLE_BINARY_DATA_MODES` dropped from the chart's S3 block**
   (n8n-hosting #185). This module never enables `s3`. In the same change
   the module stops rendering the variable itself and replaces
-  `n8n_available_binary_data_modes` with `azure_blob_retain_read_access`
-  (see the CHANGELOG). n8n 2.x never read the variable, so the env removal
-  changes no behavior, but it is a pod-template change: every n8n pod rolls
-  once on this apply.
+  `n8n_available_binary_data_modes` with `azure_blob_retain_read_access`.
+  n8n 2.x never read the variable, so the env removal changes no behavior,
+  but it is a pod-template change: every n8n pod rolls once on this apply.
+  Setting the old input now fails the plan with a migration message. If
+  your list contained `azure` while a storage mode is `database`, set
+  `azure_blob_retain_read_access = true` in the same change that deletes
+  it; see [Binary data modes](./data-storage.md#binary-data-modes).
 - **Values validation reports every failure in one render** (n8n-hosting
   #209). Only the error text changes when several checks fail at once.
 

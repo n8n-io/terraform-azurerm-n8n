@@ -42,6 +42,8 @@ azure_blob_retain_read_access = true
 
 Leave `azure_blob_retain_read_access = true` until every Azure object has expired or been migrated.
 
+Upgrading from 0.1.0: `n8n_available_binary_data_modes` was removed, and setting it now fails the plan. If your list contained `azure` while `n8n_binary_data_storage_mode` is `database`, set `azure_blob_retain_read_access = true` in the same change that deletes the list. Deleting the list alone removes the Azure connection and the Blob role assignment. n8n does not fail at startup in that case; reads of the retained Azure objects fail later.
+
 The module renders `N8N_DEFAULT_BINARY_DATA_MODE` and, while Azure is in use or retained, the Azure storage connection on main, worker, and webhook pods.
 
 ## Execution data modes
@@ -51,7 +53,13 @@ The module renders `N8N_DEFAULT_BINARY_DATA_MODE` and, while Azure is in use or 
 - `database` keeps execution data in PostgreSQL. This is the default.
 - `azure` writes to the Blob container and requires `azure_blob_container_stores_execution_data = true`.
 
-n8n records the backend used by each execution. A mode change affects new writes only. Older executions remain readable while their database or Azure backend remains available.
+n8n records the backend used by each execution. A mode change affects new writes only. Older executions remain readable while their database or Azure backend remains available. The same flag covers execution data: after moving execution writes from `azure` to `database` (with binary data also on `database`), keep the Azure connection with `azure_blob_retain_read_access = true` until n8n has pruned every execution bundle stored in Azure.
+
+```hcl
+n8n_binary_data_storage_mode    = "database"
+n8n_execution_data_storage_mode = "database"
+azure_blob_retain_read_access   = true
+```
 
 When Azure stores current or historical execution bundles, keep `azure_blob_container_stores_execution_data = true`. This suppresses the binary lifecycle rule because n8n, not Azure lifecycle management, owns execution-data pruning.
 

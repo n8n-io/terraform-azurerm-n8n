@@ -942,6 +942,20 @@ variable "azure_blob_retain_read_access" {
   # no validation: a plain bool needs no additional constraint.
 }
 
+# Tombstone: read only by its own validation, which is the point. Delete this
+# variable, the ignore, and its two tests in the release after next.
+# tflint-ignore: terraform_unused_declarations
+variable "n8n_available_binary_data_modes" {
+  description = "Removed after 0.1.0. Must stay null; kept for one release only so a configuration that still sets it fails with migration guidance instead of a bare \"Unsupported argument\" error. n8n 2.x never reads N8N_AVAILABLE_BINARY_DATA_MODES, which this input rendered. If the list contained azure while a storage mode is database, set azure_blob_retain_read_access = true in the same change, or the Azure connection and Blob role assignment are removed and n8n can no longer read the retained Azure objects."
+  type        = list(string)
+  default     = null
+
+  validation {
+    condition     = var.n8n_available_binary_data_modes == null
+    error_message = "n8n_available_binary_data_modes was removed after 0.1.0: n8n 2.x never reads N8N_AVAILABLE_BINARY_DATA_MODES. Delete the argument. If it contained \"azure\" while n8n_binary_data_storage_mode or n8n_execution_data_storage_mode is \"database\", also set azure_blob_retain_read_access = true, or n8n loses access to the objects it wrote to Azure. See the CHANGELOG and docs/data-storage.md."
+  }
+}
+
 variable "n8n_execution_data_storage_mode" {
   description = "Where n8n writes each new execution bundle. `database` (the default) keeps data in PostgreSQL. `azure` writes to the managed Blob container, requires azure_blob_container_stores_execution_data = true, and requires the separate `feat:executionDataAz` Enterprise entitlement. 0.1.0 does not support a shared-filesystem mode. Mode changes do not backfill data; n8n records each execution's backend and continues reading historical data while that backend and its credentials remain available."
   type        = string
@@ -2333,7 +2347,7 @@ variable "n8n_extra_volume_mounts" {
 }
 
 variable "n8n_extra_env" {
-  description = "Additional non-secret environment variables applied to every main, worker, and webhook-processor application container. Entries render in Helm values and Terraform state. Duplicate names and module or chart-reserved connection, identity, storage, license, runner, and topology names are rejected. Use dedicated module inputs for reserved variables and mounted Secrets for credentials."
+  description = "Additional non-secret environment variables applied to every main, worker, and webhook-processor application container. Entries render in Helm values and Terraform state. Duplicate names and module or chart-reserved connection, identity, storage, license, runner, and topology names are rejected. Deprecated n8n variables that n8n ignores and warns about on every start (N8N_AVAILABLE_BINARY_DATA_MODES) are rejected too, with their own error. Use dedicated module inputs for reserved variables and mounted Secrets for credentials."
   type = list(object({
     name  = string
     value = string
@@ -2368,7 +2382,7 @@ variable "n8n_extra_env" {
 }
 
 variable "n8n_worker_extra_env" {
-  description = "Additional non-secret environment variables applied only to worker containers (chart queueMode.workerExtraEnv). Use for worker-specific tuning that must not affect main or webhook-processor pods; use n8n_extra_env for values that should apply everywhere. This reaches every worker, the chart's own unlabelled deployment and each n8n_worker_pools pool alike, because they render from one shared pod template; a pool's own extra_env is applied after this and wins on a repeated name. Set it here for tuning that should apply pool-wide, and on the pool for tuning that should not. Entries render in Helm values and Terraform state. Duplicate names and module or chart-reserved connection, identity, storage, license, runner, and topology names are rejected, including N8N_WORKER_POOL_NAME: pool membership is owned by n8n_worker_pools, which also builds the queue and the KEDA scaler that go with it."
+  description = "Additional non-secret environment variables applied only to worker containers (chart queueMode.workerExtraEnv). Use for worker-specific tuning that must not affect main or webhook-processor pods; use n8n_extra_env for values that should apply everywhere. This reaches every worker, the chart's own unlabelled deployment and each n8n_worker_pools pool alike, because they render from one shared pod template; a pool's own extra_env is applied after this and wins on a repeated name. Set it here for tuning that should apply pool-wide, and on the pool for tuning that should not. Entries render in Helm values and Terraform state. Duplicate names and module or chart-reserved connection, identity, storage, license, runner, and topology names are rejected, including N8N_WORKER_POOL_NAME: pool membership is owned by n8n_worker_pools, which also builds the queue and the KEDA scaler that go with it. The deprecated names n8n_extra_env rejects (N8N_AVAILABLE_BINARY_DATA_MODES) are rejected here too."
   type = list(object({
     name  = string
     value = string
@@ -2409,7 +2423,7 @@ variable "n8n_worker_extra_env" {
 # per entry, alongside the chart's own unlabelled worker deployment.
 
 variable "n8n_worker_pools" {
-  description = "EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N_WORKER_POOL_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n_chart_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). Also requires n8n_image_tag 2.39.0 or later (validated on that variable). Each pool's KEDA ScaledObject authenticates to Redis through the same TriggerAuthentication the default worker's scaler uses. An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, the chart repository this module hardcodes (there is no repository override), at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n_chart_version. See examples/worker-pools/README.md for the exact command and a private-mirror fallback."
+  description = "EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N_WORKER_POOL_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n_chart_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). Also requires n8n_image_tag 2.39.0 or later (validated on that variable). Each pool's KEDA ScaledObject authenticates to Redis through the same TriggerAuthentication the default worker's scaler uses. An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, the chart repository this module hardcodes (there is no repository override), at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n_chart_version. See examples/worker-pools/README.md for the exact command and a private-mirror fallback. A pool's extra_env is rejected at plan time for the same module-managed and deprecated names as n8n_worker_extra_env, and for N8N_WORKER_POOL_NAME, which the pool's name owns."
   type = list(object({
     name         = string
     min_replicas = optional(number, 1)

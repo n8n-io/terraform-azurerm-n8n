@@ -414,9 +414,10 @@ resource "helm_release" "n8n" {
         local.n8n_node_heap_env,
         # Storage-mode variables live in config.extraEnv because the chart has no
         # Azure-native values block. This shared list renders on main, worker,
-        # and webhook containers, which queue mode requires. The active binary
-        # mode is kept separate from readable historical modes so changing the
-        # write backend does not strand existing objects.
+        # and webhook containers, which queue mode requires. n8n reads each
+        # object from the backend recorded in its ID; the Azure connection below
+        # stays rendered while azure_blob_retain_read_access is true, so moving
+        # writes to database does not strand existing Azure objects.
         [
           { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = var.n8n_binary_data_storage_mode },
           { name = "N8N_EXECUTION_DATA_STORAGE_MODE", value = var.n8n_execution_data_storage_mode },

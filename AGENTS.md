@@ -582,7 +582,10 @@ This section records the 1.11.0 to 1.13.0 bump. The current default is
 `1.14.0` (`feat/chart-1.14.0`: see `docs/upgrading-n8n.md`; the chart change
 there is inert for this module, and `N8N_AVAILABLE_BINARY_DATA_MODES` is now
 rejected through `local.n8n_deprecated_env_names`), matching the AWS sibling
-after `terraform-aws-n8n` #160. At the time, `n8n_chart_version` defaulted to
+after `terraform-aws-n8n` #160. The removed `n8n_available_binary_data_modes`
+stays declared for one release as a tombstone (null-only validation plus a
+`tflint-ignore`); delete it with its two `rejects_removed_*` runs in the
+release after. At the time, `n8n_chart_version` defaulted to
 `1.13.0`, matching the AWS sibling after `terraform-aws-n8n` #145. Run
 `tests/scripts/chart-values-diff.sh
 <candidate>` before any future bump, but also diff `templates/` directly:

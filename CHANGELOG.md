@@ -11,6 +11,52 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Changed
 
+- **Breaking: `n8n_available_binary_data_modes` removed, replaced by
+  `azure_blob_retain_read_access`** (bool, default `false`). The list only
+  rendered `N8N_AVAILABLE_BINARY_DATA_MODES`, which n8n 2.x never reads
+  (`BinaryDataConfig.availableModes` has no `@Env` binding, and n8n logs the
+  variable as safe to remove). n8n registers the Azure backend whenever
+  the Azure container is configured, so what the list really controlled
+  was whether the module kept the Azure connection and Blob role
+  assignment after writes moved to `database`. The new flag controls that
+  directly, for binary and execution data alike. The input stays declared
+  for one release as a tombstone: any non-null value fails the plan with a
+  migration message instead of a bare "Unsupported argument" error.
+  Migration: delete `n8n_available_binary_data_modes`. If it contained
+  `azure` while `n8n_binary_data_storage_mode` or
+  `n8n_execution_data_storage_mode` is `database`, set
+  `azure_blob_retain_read_access = true` in the same change. Deleting the
+  list alone removes the Azure connection and the role assignment, and
+  n8n does not fail at startup; reads of the retained Azure objects fail
+  later. See `docs/data-storage.md`.
+- `azurerm_role_assignment.n8n_blob_data_contributor` is now gated on
+  Azure being in use (an Azure storage mode, or
+  `azure_blob_retain_read_access = true`). A deployment where both modes
+  are `database` no longer grants the workload identity Storage Blob Data
+  Contributor; the next apply destroys that role assignment.
+- **Default `n8n_chart_version` bumped to `1.14.0`** (was `1.13.0`),
+  matching `terraform-aws-n8n` #160. Every n8n pod rolls once, for the
+  removed `N8N_AVAILABLE_BINARY_DATA_MODES` env entry. See
+  `docs/upgrading-n8n.md`.
+  - Chart `appVersion` moves from n8n `2.40.5` to `2.41.4` (n8n-hosting
+    #213). Inert here: this module always pins `n8n_image_tag` (default
+    stays `2.35.0`).
+  - No changes to the replica, KEDA, or task-runner templates;
+    `deployment-main.yaml` is unchanged, so `1.14.0` joins
+    `local.n8n_chart_has_worker_only_runners`.
+  - #185: the chart stops rendering `N8N_AVAILABLE_BINARY_DATA_MODES`. The
+    module no longer sets it either, so n8n's deprecation warning on every
+    start is gone. `n8n_extra_env`, `n8n_worker_extra_env`, and
+    `n8n_worker_pools[*].extra_env` reject it at plan time through the new
+    `local.n8n_deprecated_env_names`, and `tests/scripts/check-n8n-chart.sh`
+    fails if any rendered manifest carries it. Callers who set it through
+    one of those inputs get a plan-time error until they remove the entry.
+  - #184 (missing from the upstream release notes): the chart's ConfigMap
+    now emits `N8N_WEBHOOK_URL` instead of `WEBHOOK_URL`. No effect here:
+    the chart emits it only from `webhook.url` or chart ingress, which this
+    module sets neither of, and the module renders `N8N_WEBHOOK_URL` itself
+    through `config.extraEnv`.
+  - #209: chart values validation now reports every failure in one render.
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
   with `validity_in_months` (whole number, 1 to 120, default 12), matching
   the Key Vault certificate policy's own unit. The old input was converted
@@ -533,43 +579,6 @@ in your own subscription before relying on the one-apply lifecycle.
   preview chart and do not pick up either change until a new preview
   build is cut. New `docs/upgrading-n8n.md` (the counterpart of the AWS
   and GCP siblings' guide) carries the per-version upgrade notes.
-- **Default `n8n_chart_version` bumped to `1.14.0`** (was `1.13.0`).
-  - Chart `appVersion` moves from n8n `2.40.5` to `2.41.4` (n8n-hosting
-    #213); n8n 2.41.0 through 2.41.4 list no breaking changes. Inert here:
-    this module always pins `n8n_image_tag` (default stays `2.35.0`).
-  - No changes to the replica, KEDA, or task-runner templates;
-    `deployment-main.yaml` is unchanged, so `1.14.0` joins
-    `local.n8n_chart_has_worker_only_runners`.
-  - #185: the chart stops rendering `N8N_AVAILABLE_BINARY_DATA_MODES`, which
-    n8n deprecated and warns about on every start. The module no longer sets
-    it either, so the warning is gone. `n8n_extra_env`,
-    `n8n_worker_extra_env`, and `n8n_worker_pools[*].extra_env` reject it at
-    plan time through the new `local.n8n_deprecated_env_names`, and
-    `tests/scripts/check-n8n-chart.sh` fails if it is ever rendered.
-    Callers who currently set it through one of those inputs get a
-    plan-time error until they remove the entry. Every n8n pod rolls once
-    for the env removal.
-  - #184 (missing from the upstream release notes): the chart's ConfigMap
-    now emits `N8N_WEBHOOK_URL` instead of `WEBHOOK_URL`. No effect here:
-    the chart emits it only from `webhook.url` or chart ingress, which this
-    module sets neither of, and the module renders `N8N_WEBHOOK_URL` itself
-    through `config.extraEnv`.
-  - #209: chart values validation now reports every failure in one render.
-- **Breaking: `n8n_available_binary_data_modes` removed, replaced by
-  `azure_blob_retain_read_access`** (bool, default `false`). Azure-only:
-  the list existed only to render `N8N_AVAILABLE_BINARY_DATA_MODES`, which
-  n8n 2.x never reads (`BinaryDataConfig.availableModes` has no `@Env`
-  binding). Its one live effect in the module was keeping the Azure
-  connection and Blob role assignment after binary writes moved to
-  `database`; set `azure_blob_retain_read_access = true` for that. The
-  "must include the active write mode" validation is gone with it. No
-  alias: this module is pre-release. Callers who set
-  `n8n_available_binary_data_modes` must delete it, and add the new flag
-  if it contained `azure` while writes are on `database`.
-  `azurerm_role_assignment.n8n_blob_data_contributor` is now also gated on
-  Azure being in use (an Azure mode or the new flag), so a database-only
-  deployment no longer grants the workload identity Blob Data Contributor;
-  applying on such a deployment destroys that role assignment.
 - CI toolchain currency: `TF_VERSION` `1.16.2` (was `1.15.1`),
   `TFLINT_VERSION` `v0.64.0` (was `v0.53.0`), pinned `CHECKOV_VERSION`
   `3.3.17` (was unpinned via `bridgecrewio/checkov-action@v12`'s own

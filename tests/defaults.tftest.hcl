@@ -3372,6 +3372,59 @@ run "retained_azure_read_access_keeps_blob_connection" {
   }
 }
 
+# Covers leaving Azure for both binary and execution data on a caller-managed
+# container: the retained role must target the caller's container, not a
+# module-managed one that does not exist on this path.
+run "retained_azure_read_access_scopes_role_to_existing_container" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "existingaccount"
+    existing_blob_container_name          = "existing-container"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/existingaccount/blobServices/default/containers/existing-container"
+    existing_blob_endpoint                = "https://existingaccount.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+    n8n_binary_data_storage_mode          = "database"
+    n8n_execution_data_storage_mode       = "database"
+    azure_blob_retain_read_access         = true
+  }
+
+  assert {
+    condition = (
+      length(azurerm_storage_container.n8n) == 0 &&
+      length(azurerm_role_assignment.n8n_blob_data_contributor) == 1 &&
+      azurerm_role_assignment.n8n_blob_data_contributor[0].scope == "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/existingaccount/blobServices/default/containers/existing-container" &&
+      nonsensitive(local.azure_blob_connection).container_name == "existing-container"
+    )
+    error_message = "azure_blob_retain_read_access with create_blob_storage = false must keep the role assignment scoped to existing_blob_container_id and the connection on existing_blob_container_name."
+  }
+}
+
+# Tombstone for the input removed after 0.1.0. Any non-null value, including
+# the old default, must fail with the migration message rather than be
+# silently ignored.
+run "rejects_removed_available_binary_data_modes" {
+  command = plan
+
+  variables {
+    n8n_available_binary_data_modes = ["azure"]
+  }
+
+  expect_failures = [var.n8n_available_binary_data_modes]
+}
+
+run "rejects_removed_available_binary_data_modes_after_leaving_azure" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_available_binary_data_modes = ["database", "azure"]
+  }
+
+  expect_failures = [var.n8n_available_binary_data_modes]
+}
+
 run "database_only_modes_grant_no_blob_role" {
   command = plan
 
@@ -3855,7 +3908,7 @@ run "allows_worker_pause_on_supported_charts" {
 
   assert {
     condition     = local.n8n_worker_keda_pause_supported
-    error_message = "The default chart 1.13.0 must count as pause-capable."
+    error_message = "The default chart 1.14.0 must count as pause-capable."
   }
 }
 
