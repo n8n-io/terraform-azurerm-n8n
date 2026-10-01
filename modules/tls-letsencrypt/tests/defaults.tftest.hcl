@@ -187,6 +187,26 @@ run "rejects_common_tags_over_key_vault_tag_limit" {
   ]
 }
 
+# An explicit null must not break the tag-limit validation or the tag
+# merge: merge() skips null arguments, so the certificate keeps the
+# three module-owned tags.
+run "accepts_null_common_tags" {
+  command = plan
+
+  variables {
+    common_tags = null
+  }
+
+  assert {
+    condition = azurerm_key_vault_certificate.letsencrypt.tags == tomap({
+      ManagedBy = "terraform"
+      Project   = "n8n"
+      Name      = "n8ntest-n8n-tls"
+    })
+    error_message = "common_tags = null must yield only the ManagedBy, Project, and Name tags"
+  }
+}
+
 run "subject_alternative_names_expand_certificate_contract" {
   command = plan
 
