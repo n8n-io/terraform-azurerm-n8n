@@ -9,6 +9,36 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ## [Unreleased]
 
+### Added
+
+- Optional AKS Key Vault Secrets Provider add-on
+  (`aks_key_vault_secrets_provider_enabled`, `aks_key_vault_secrets_provider_secret_rotation_interval`)
+  and an optional role assignment granting the add-on's identity `Key
+  Vault Secrets User` on a caller-named vault
+  (`aks_key_vault_secrets_provider_role_assignment_enabled`,
+  `aks_key_vault_secrets_provider_keyvault_id`). Lets a caller sync Key
+  Vault objects into the Kubernetes Secrets the `*_secret_ref` inputs
+  already read, without adding a static credential to Terraform state.
+  `aks_key_vault_secrets_provider_role_assignment_enabled = true` requires
+  `aks_key_vault_secrets_provider_enabled = true`, or the role assignment
+  fails planning against the add-on's not-yet-rendered identity.
+- Optional AKS KMS etcd encryption with a caller-owned Key Vault key
+  (`aks_kms_key_vault_key_id`, `aks_kms_key_vault_network_access`) and an
+  optional role assignment granting the cluster's own identity `Key
+  Vault Crypto User` on a caller-named vault
+  (`aks_kms_role_assignment_enabled`, `aks_kms_key_vault_id`). KMS requires
+  swapping the cluster identity from `SystemAssigned` to a dedicated
+  `UserAssigned` identity, which also needs `Network Contributor` on the
+  AKS subnet (granted automatically, since a `SystemAssigned` identity
+  would otherwise receive it implicitly). Enabling KMS on a cluster this
+  module creates takes two applies — see
+  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault)
+  for the sequencing note.
+- Both add-ons are documented in
+  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault)
+  and demonstrated in [`examples/medium/`](./examples/medium/)
+  ([#29](https://github.com/n8n-io/terraform-azurerm-n8n/issues/29)).
+
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`

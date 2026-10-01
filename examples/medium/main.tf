@@ -127,6 +127,10 @@ resource "random_string" "key_vault_suffix" {
   special = false
 }
 
+# Purge protection is on because this vault also holds the AKS KMS etcd
+# encryption key (azurerm_key_vault_key.aks_kms below): AKS requires soft
+# delete and purge protection on any vault used for KMS, since losing the
+# key would make every Secret already written to etcd unrecoverable.
 resource "azurerm_key_vault" "tls" {
   name                       = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
   resource_group_name        = azurerm_resource_group.network.name
@@ -134,7 +138,7 @@ resource "azurerm_key_vault" "tls" {
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
   soft_delete_retention_days = 7
-  purge_protection_enabled   = false
+  purge_protection_enabled   = true
   rbac_authorization_enabled = true
   tags                       = local.common_tags
 }
@@ -157,6 +161,16 @@ module "tls_self_signed" {
   key_vault_id         = azurerm_key_vault.tls.id
   friendly_name_prefix = var.friendly_name_prefix
   common_tags          = local.common_tags
+
+  depends_on = [time_sleep.key_vault_rbac]
+}
+
+resource "azurerm_key_vault_key" "aks_kms" {
+  name         = "${var.friendly_name_prefix}-aks-etcd-kms"
+  key_vault_id = azurerm_key_vault.tls.id
+  key_type     = "RSA"
+  key_size     = 2048
+  key_opts     = ["decrypt", "encrypt", "sign", "verify", "wrapKey", "unwrapKey"]
 
   depends_on = [time_sleep.key_vault_rbac]
 }
@@ -227,6 +241,20 @@ module "n8n" {
   app_gateway_tls_cert_secret_id               = module.tls_self_signed.app_gateway_tls_cert_secret_id
   app_gateway_keyvault_id                      = azurerm_key_vault.tls.id
   app_gateway_keyvault_role_assignment_enabled = true
+
+  aks_key_vault_secrets_provider_enabled                 = true
+  aks_key_vault_secrets_provider_keyvault_id             = azurerm_key_vault.tls.id
+  aks_key_vault_secrets_provider_role_assignment_enabled = true
+
+  # KMS etcd encryption: this apply only grants the cluster's identity
+  # access to the vault. aks_kms_key_vault_key_id stays null here because
+  # that identity does not exist until the cluster itself is created in
+  # this same apply — see the two-apply sequencing note in
+  # docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault.
+  # Set aks_kms_key_vault_key_id = azurerm_key_vault_key.aks_kms.id on the
+  # next apply to turn KMS on.
+  aks_kms_role_assignment_enabled = true
+  aks_kms_key_vault_id            = azurerm_key_vault.tls.id
 
   create_public_dns_record = true
   public_dns_zone_id       = azurerm_dns_zone.public.id
