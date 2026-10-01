@@ -1104,7 +1104,7 @@ run "external_postgres_disable_omits_ssl_enabled_env" {
   }
 }
 
-run "postgres_ssl_ca_pem_sets_chart_native_ca_and_ssl_enabled_env" {
+run "postgres_ssl_ca_pem_mounts_a_file_and_sets_ssl_enabled_env" {
   command = plan
 
   variables {
@@ -1128,9 +1128,14 @@ run "postgres_ssl_ca_pem_sets_chart_native_ca_and_ssl_enabled_env" {
     }
   }
 
+  # n8n reads DB_POSTGRESDB_SSL_CA as a filesystem path (readFileSync), not
+  # inline PEM content, so the chart-native database.ssl.ca value must stay
+  # unset: passing the PEM through it would render the certificate text
+  # straight into DB_POSTGRESDB_SSL_CA, which n8n would then try to open as a
+  # file path.
   assert {
-    condition     = yamldecode(helm_release.n8n.values[0]).database.ssl.ca == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
-    error_message = "database.ssl.ca must carry the caller-supplied PEM straight through to the chart, which renders it as DB_POSTGRESDB_SSL_CA."
+    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).database.ssl), "ca")
+    error_message = "database.ssl.ca must stay unset; n8n reads DB_POSTGRESDB_SSL_CA as a file path, not inline PEM content."
   }
 
   assert {
@@ -1139,8 +1144,37 @@ run "postgres_ssl_ca_pem_sets_chart_native_ca_and_ssl_enabled_env" {
   }
 
   assert {
-    condition     = length([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "postgres-ssl-ca"]) == 0
-    error_message = "The module must not create its own postgres-ssl-ca volume now that the CA reaches the chart through database.ssl.ca."
+    condition     = one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_SSL_CA_FILE"]) == "/etc/n8n/postgres-ssl-ca/ca.pem"
+    error_message = "config.extraEnv must set DB_POSTGRESDB_SSL_CA_FILE to the mounted CA file's path."
+  }
+
+  assert {
+    condition     = one([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "postgres-ssl-ca"]).secret.secretName == kubernetes_secret.n8n_postgres_ssl_ca[0].metadata[0].name
+    error_message = "The module must mount a postgres-ssl-ca Secret volume carrying the caller-supplied PEM."
+  }
+
+  assert {
+    condition     = one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "postgres-ssl-ca"]).mountPath == "/etc/n8n/postgres-ssl-ca"
+    error_message = "The module must mount the postgres-ssl-ca volume at /etc/n8n/postgres-ssl-ca."
+  }
+
+  assert {
+    condition     = kubernetes_secret.n8n_postgres_ssl_ca[0].data["ca.pem"] == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+    error_message = "kubernetes_secret.n8n_postgres_ssl_ca must carry the caller-supplied PEM under the ca.pem key."
+  }
+}
+
+run "postgres_ssl_ca_pem_null_creates_no_secret_or_volume" {
+  command = plan
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_postgres_ssl_ca) == 0
+    error_message = "kubernetes_secret.n8n_postgres_ssl_ca must not be created when postgres_ssl_ca_pem is null."
+  }
+
+  assert {
+    condition     = length(local.n8n_postgres_ssl_ca_file_env) == 0
+    error_message = "local.n8n_postgres_ssl_ca_file_env must be empty when postgres_ssl_ca_pem is null."
   }
 }
 

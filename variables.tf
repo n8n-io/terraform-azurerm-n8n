@@ -467,7 +467,7 @@ variable "postgres_managed_ssl_mode" {
 }
 
 variable "postgres_ssl_ca_pem" {
-  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set, the module passes it straight through to the n8n Helm chart's native `database.ssl.ca` value, which the chart renders into its own ConfigMap and injects as `DB_POSTGRESDB_SSL_CA` on main, worker, and webhook-processor pods. Required for `verify-full` against Azure Database for PostgreSQL Flexible Server unless the pod image's default trust store already trusts Microsoft's root CAs (DigiCert Global Root G2 and Microsoft RSA Root CA 2017). Ignored (with a plan-time warning) when the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `disable`, `allow`, or `prefer`. See `docs/postgresql-tls.md`."
+  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set, the module stores it in a dedicated Kubernetes Secret, mounts it read-only on main, worker, and webhook-processor pods, and points `DB_POSTGRESDB_SSL_CA_FILE` at the mounted file (n8n reads this setting as a file path, not inline PEM content). Required for `verify-full` against Azure Database for PostgreSQL Flexible Server unless the pod image's default trust store already trusts Microsoft's root CAs (DigiCert Global Root G2 and Microsoft RSA Root CA 2017). Ignored (with a plan-time warning) when the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `disable`, `allow`, or `prefer`. See `docs/postgresql-tls.md`."
   type        = string
   default     = null
   nullable    = true
@@ -2359,9 +2359,9 @@ variable "n8n_extra_volumes" {
   validation {
     condition = alltrue([
       for volume in var.n8n_extra_volumes :
-      !contains(["data", "task-runner-config", "n8n-azure-files"], volume.name)
+      !contains(["data", "task-runner-config", "n8n-azure-files", "postgres-ssl-ca"], volume.name)
     ])
-    error_message = "n8n_extra_volumes must not use chart or module-reserved names: data, task-runner-config, or n8n-azure-files."
+    error_message = "n8n_extra_volumes must not use chart or module-reserved names: data, task-runner-config, n8n-azure-files, or postgres-ssl-ca."
   }
 
   validation {

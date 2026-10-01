@@ -56,12 +56,15 @@ setting `DB_POSTGRESDB_SSL_ENABLED` directly through `config.extraEnv`
 
 `verify-ca` and `verify-full` both require n8n to trust the certificate
 authority that signed the server's certificate. Set `postgres_ssl_ca_pem` to
-a PEM-encoded CA bundle to pass it straight through to the chart's native
-`database.ssl.ca` value, which the chart renders into its own ConfigMap and
-injects as `DB_POSTGRESDB_SSL_CA` on every main, worker, and
-webhook-processor pod. This applies to both the managed and external paths —
-a caller pointing at an external server behind the same CA hierarchy can use
-it too.
+a PEM-encoded CA bundle; the module stores it in a dedicated Kubernetes
+Secret, mounts it read-only on every main, worker, and webhook-processor pod,
+and sets `DB_POSTGRESDB_SSL_CA_FILE` to the mounted file's path. n8n reads
+this setting as a file path (not inline PEM content), so the chart's native
+`database.ssl.ca` value is deliberately left unset here — passing the PEM
+text through that value directly would cause n8n to try to open a file named
+after the certificate contents. This applies to both the managed and
+external paths — a caller pointing at an external server behind the same CA
+hierarchy can use it too.
 
 ```hcl
 postgres_managed_ssl_mode = "verify-full"
@@ -101,13 +104,22 @@ certificate chain.
 
 ## Upgrading an existing deployment
 
-Changing `postgres_managed_ssl_mode` or `postgres_external_ssl_mode` only
-changes what n8n's application containers send as connection parameters —
-it does not recreate the PostgreSQL server itself, and a Helm-only rollout
-applies the new value on the next pod restart. There is no queue-draining or
-downtime requirement for this change specifically. If you add
-`postgres_ssl_ca_pem` at the same time, the new chart-rendered ConfigMap
-entry also lands as a rolling pod update.
+Changing `postgres_managed_ssl_mode`, `postgres_external_ssl_mode`, or
+`postgres_ssl_ca_pem` only changes what n8n's application containers send as
+connection parameters and, for the CA bundle, which Secret is mounted — none
+of these recreate the PostgreSQL server itself. Adding or changing
+`postgres_ssl_ca_pem` changes the rendered Helm values (a new mounted Secret
+volume and the `DB_POSTGRESDB_SSL_CA_FILE` environment entry), so expect a
+plan diff and a rolling pod update, not a no-op apply. On the default
+multi-main topology, that rollout is a standard rolling update: n8n keeps
+serving requests throughout, since surplus mains stay Ready while each pod
+cycles in turn. On the single-main topology
+(`n8n_main_hpa_min_replicas = 1`), the chart's `Recreate` strategy means the
+single main pod stops before its replacement starts, so the editor, REST
+API, and scheduled triggers are briefly unavailable until the new pod is
+Ready — the same interruption any single-main rollout causes (see
+[`docs/upgrading-n8n.md`](./upgrading-n8n.md)). Plan a maintenance window for
+that case.
 
 The one failure mode to check before switching to `verify-full`: confirm the
 CA bundle you supply (or the pod image's default trust store) actually
