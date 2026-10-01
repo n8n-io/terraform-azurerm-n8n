@@ -520,17 +520,24 @@ your Kubernetes Secret syncs from, so both stay in lockstep by construction
 rather than by manual bookkeeping.
 
 **Upgrading an existing deployment onto this path replaces the server's
-password out of band of Terraform's own change detection.** Flipping
-`postgres_password_write_only` from `false` to `true` moves the server from
-`administrator_password` to `administrator_password_wo`; azurerm applies
-this as a password update, not a resource replacement, but every existing
-session's cached credential still points at the old password until you
-update the Kubernetes Secret and roll the n8n pods. Plan a maintenance
-window: apply with the new write-only value, confirm the Secret you manage
-carries the same password, then restart the `n8n-main`, `n8n-worker`, and
-`n8n-webhook-processor` deployments, and any `n8n_worker_pools` deployments
-(`kubectl rollout restart deployment -l app.kubernetes.io/component=worker-group -n <namespace>`),
-so they pick up the refreshed Secret.
+password out of band of Terraform's own change detection, and rolls pods
+as part of the same apply, before you get a chance to verify anything.**
+Flipping `postgres_password_write_only` from `false` to `true` moves the
+server from `administrator_password` to `administrator_password_wo`; azurerm
+applies this as a password update, not a resource replacement. In the same
+apply, `postgres_password_secret_ref` becomes required, which changes the
+Helm release's `database.postgresdb.passwordSecret` reference from the
+module-managed `n8n-db-secret` to your own Secret's name: that is a Helm
+values change, so `helm_release.n8n` rolls the `n8n-main`, `n8n-worker`,
+`n8n-webhook-processor`, and any `n8n_worker_pools` group deployments
+**automatically during this same `terraform apply`**, not as a manual
+follow-up step. Populate your `postgres_password_secret_ref` Secret with the
+exact value you are about to pass to `postgres_admin_password_wo`, and
+confirm it, **before** running the apply that flips
+`postgres_password_write_only`: pods roll against whatever the Secret
+contains at apply time, so a stale or missing Secret breaks PostgreSQL
+connectivity immediately rather than on some later manual restart. Plan a
+maintenance window for this cutover.
 
 ### Redis access key (no write-only path)
 
