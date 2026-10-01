@@ -584,15 +584,27 @@ echo "PASS: worker pools render one labelled Deployment and one ScaledObject per
 echo "== Verify no deprecated n8n environment variable renders =="
 # n8n deprecated N8N_AVAILABLE_BINARY_DATA_MODES and warns on every start.
 # Scans every rendered manifest from every fixture: env entries on any
-# container, and ConfigMap data keys.
+# container, and ConfigMap data keys. The *-values.json fixtures hold the
+# Helm values YAML string, not JSON, so they are skipped; every other file
+# must parse, because jq -e exits 1 for "not found" and >1 for an error, and
+# treating an unparseable manifest as "not found" would pass silently.
+scanned=0
 for f in "$tmp"/*.json "$tmp"/preview/*.json; do
   [[ -e "$f" ]] || continue
-  if jq -e '[.. | objects | select((.name? == "N8N_AVAILABLE_BINARY_DATA_MODES") or has("N8N_AVAILABLE_BINARY_DATA_MODES"))] | length > 0' "$f" >/dev/null; then
+  [[ "$f" == *-values.json ]] && continue
+  rc=0
+  jq -e '[.. | objects | select((.name? == "N8N_AVAILABLE_BINARY_DATA_MODES") or has("N8N_AVAILABLE_BINARY_DATA_MODES"))] | length > 0' "$f" >/dev/null || rc=$?
+  if (( rc == 0 )); then
     echo "FAIL: N8N_AVAILABLE_BINARY_DATA_MODES is rendered in $(basename "$f"); n8n deprecated it and warns on every start" >&2
     exit 1
+  elif (( rc > 1 )); then
+    echo "FAIL: could not parse rendered manifest $(basename "$f") (jq exit ${rc}), so the deprecated-env scan cannot vouch for it" >&2
+    exit 1
   fi
+  scanned=$((scanned + 1))
 done
-echo "PASS: N8N_AVAILABLE_BINARY_DATA_MODES absent from every rendered container"
+(( scanned > 0 )) || { echo "FAIL: the deprecated-env scan found no rendered manifests to check" >&2; exit 1; }
+echo "PASS: N8N_AVAILABLE_BINARY_DATA_MODES absent from all ${scanned} rendered manifests"
 
 echo "== Self-test: duplicate managed environment-entry detector =="
 # This does not scan module output; it proves the jq expression the checks
