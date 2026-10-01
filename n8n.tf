@@ -233,6 +233,20 @@ resource "helm_release" "n8n" {
       }
     }
 
+    # The chart's own deployment templates already merge checksum/config and
+    # checksum/secret annotations (hashes of its rendered configmap.yaml and
+    # secrets.yaml) into podAnnotations, so a Helm values change always
+    # triggers a rollout. postgres_ssl_ca_pem is mounted through the
+    # out-of-band kubernetes_secret.n8n_postgres_ssl_ca Terraform resource
+    # (see n8n_postgres_ssl_ca_file_env below), not through chart values, so
+    # changing the CA content alone produces no Helm values diff and no
+    # automatic rollout. Adding its own checksum here closes that gap: any
+    # change to the CA PEM changes this annotation, which changes the pod
+    # template, which Helm then rolls out.
+    podAnnotations = var.postgres_ssl_ca_pem == null ? {} : {
+      "checksum/postgres-ssl-ca" = sha256(var.postgres_ssl_ca_pem)
+    }
+
     # spec.replicas ownership differs per Deployment on chart 1.13.0:
     # - main: the chart renders it unconditionally (multiMain.replicas or
     #   replicaCount, selected by multiMain.enabled), so it is set to the HPA
