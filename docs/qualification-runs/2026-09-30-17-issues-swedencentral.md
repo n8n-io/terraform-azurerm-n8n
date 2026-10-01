@@ -2,7 +2,7 @@
 
 Filled-in copy of [`manual-azure-qualification.md`](../manual-azure-qualification.md)
 scoped to the live validation of the batch of 17 draft/open PRs qualified in
-this round (issues #16, #18 to #20, #22, #24 to #29). It records what was
+this round (issues #16 and #18 to #33). It records what was
 observed across several disposable deployments. It is not a release
 guarantee, and no result below transfers to other regions, SKUs, or n8n
 versions.
