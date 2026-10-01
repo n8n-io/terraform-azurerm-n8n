@@ -219,7 +219,7 @@ variable "create_database" {
 }
 
 variable "pg_sku_name" {
-  description = "Azure PostgreSQL Flexible Server SKU (e.g. B_Standard_B1ms for dev, GP_Standard_D2s_v3 for production). Format: `<tier>_Standard_<family>` where tier is B (Burstable), GP (General Purpose), or MO (Memory Optimized). Burstable does NOT support zone-redundant HA — set `pg_enable_high_availability = false` when using B_*. Ignored when `create_database = false`."
+  description = "Azure PostgreSQL Flexible Server SKU (e.g. B_Standard_B1ms for dev, GP_Standard_D2s_v3 for production). Format: `<tier>_Standard_<family>` where tier is B (Burstable), GP (General Purpose), or MO (Memory Optimized). Burstable does NOT support zone-redundant HA — set `pg_enable_high_availability = false` when using B_*. Burstable SKUs also have low default connection limits (e.g. B_Standard_B1ms allows 35 user connections) that Azure fixes at provisioning and does not recalculate on a later SKU change — see `docs/sandbox.md` and `postgres_pool_size`. Ignored when `create_database = false`."
   type        = string
   default     = "GP_Standard_D2s_v3"
 
@@ -418,7 +418,7 @@ variable "postgres_external_ssl_mode" {
 }
 
 variable "postgres_pool_size" {
-  description = "Number of TypeORM connection pool slots per n8n pod (writes `DB_POSTGRESDB_POOL_SIZE`). Applies to both the managed and external database paths. Each main, worker, and webhook-processor pod lazily opens up to this many connections against the same shared process pool used by application traffic and the health-check ping (see `postgres_ping_timeout_ms`) — it is not one permanently open connection per workflow. Budget the aggregate ceiling (pool_size * effective main + worker + webhook replica counts) against the database's or PgBouncer's own maximum-connection limit, not a fixed per-workflow ratio."
+  description = "Number of TypeORM connection pool slots per n8n pod (writes `DB_POSTGRESDB_POOL_SIZE`). Applies to both the managed and external database paths. Each main, worker, and webhook-processor pod lazily opens up to this many connections against the same shared process pool used by application traffic and the health-check ping (see `postgres_ping_timeout_ms`) — it is not one permanently open connection per workflow. Budget the aggregate ceiling (pool_size * effective main + worker + webhook replica counts) against the database's or PgBouncer's own maximum-connection limit, not a fixed per-workflow ratio. `check.postgres_pool_size_fits_known_max_connections` (database.tf) warns at plan time when this arithmetic exceeds the known default `max_connections` for `pg_sku_name` (`create_database = true` only) — see `docs/sandbox.md`."
   type        = number
   default     = 10
 

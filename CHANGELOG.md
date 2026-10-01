@@ -9,6 +9,21 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ## [Unreleased]
 
+### Added
+
+- A plan-time advisory `check.postgres_pool_size_fits_known_max_connections`
+  (`database.tf`) warns when `postgres_pool_size` times the modeled main,
+  worker, webhook-processor, and `n8n_worker_pools` replica ceilings would
+  exceed the known default `max_connections` for the selected `pg_sku_name`.
+  It covers a small table of Burstable, General Purpose, and Memory
+  Optimized SKUs and stays silent for SKUs outside that table or when
+  `create_database = false`. Azure fixes `max_connections` at provisioning
+  from the SKU's memory size and does not recalculate it on a later
+  `pg_sku_name` change; this is now documented in the new
+  [`docs/sandbox.md`](./docs/sandbox.md), alongside a cheaper single-main
+  sandbox profile built from existing inputs
+  ([#30](https://github.com/n8n-io/terraform-azurerm-n8n/issues/30)).
+
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`

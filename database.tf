@@ -261,3 +261,67 @@ check "postgres_tuning_requires_module_managed_database" {
     ])
   }
 }
+
+# ── Diagnostics: PostgreSQL connection budget vs. known SKU limits ────────
+# Azure derives max_connections once, at provisioning, from the selected
+# SKU's memory size, and does not recalculate it on a later pg_sku_name
+# change (see docs/sandbox.md and the Microsoft Learn limits page linked
+# below) — a caller who upsizes expecting more headroom keeps the old
+# ceiling until the server is re-created. This check catches the other
+# direction the postgres_pool_size description already asks callers to
+# budget by hand: pool_size times the modeled pod ceiling (effective main,
+# worker, webhook-processor, and any n8n_worker_pools, mirroring the
+# AGENTS.md worker-pools section's connection-budget note) against the
+# known table below. An unrecognized pg_sku_name stays silent rather than
+# warn from a guessed limit, following the aks_node_vcpus_derived /
+# n8n_capacity_model_readable pattern in scaling.tf. Values are "maximum
+# user connections" (total max_connections minus Azure's 15 reserved
+# connections for replication/monitoring).
+# https://learn.microsoft.com/azure/postgresql/flexible-server/concepts-limits
+locals {
+  pg_max_user_connections_by_sku = {
+    B_Standard_B1ms     = 35
+    B_Standard_B2s      = 414
+    B_Standard_B2ms     = 844
+    B_Standard_B4ms     = 1703
+    GP_Standard_D2s_v3  = 844
+    GP_Standard_D4s_v3  = 1703
+    GP_Standard_D8s_v3  = 3422
+    GP_Standard_D16s_v3 = 4985
+    MO_Standard_E2s_v3  = 1703
+    MO_Standard_E4s_v3  = 3422
+    MO_Standard_E8s_v3  = 4985
+  }
+  pg_max_user_connections_known = lookup(local.pg_max_user_connections_by_sku, var.pg_sku_name, null)
+
+  # sum()'s [0] seed keeps the no-pools default at 0 rather than erroring on
+  # an empty list.
+  n8n_pool_max_replicas_sum = sum(concat([0], [for p in var.n8n_worker_pools : p.max_replicas]))
+
+  n8n_pg_peak_connections = var.postgres_pool_size * (
+    local.n8n_main_hpa_effective_max_replicas +
+    var.n8n_worker_keda_max_replicas +
+    var.n8n_webhook_hpa_max_replicas +
+    local.n8n_pool_max_replicas_sum
+  )
+}
+
+check "postgres_pool_size_fits_known_max_connections" {
+  assert {
+    condition = (var.create_database && local.pg_max_user_connections_known != null) ? (
+      local.n8n_pg_peak_connections <= local.pg_max_user_connections_known
+    ) : true
+    error_message = join("", [
+      "postgres_pool_size (${var.postgres_pool_size}) times the modeled pod ceiling (main ",
+      "${local.n8n_main_hpa_effective_max_replicas} + worker ${var.n8n_worker_keda_max_replicas} + webhook ",
+      tostring(var.n8n_webhook_hpa_max_replicas),
+      local.n8n_pool_max_replicas_sum > 0 ? " + worker pools ${local.n8n_pool_max_replicas_sum}" : "",
+      ") requests up to ${local.n8n_pg_peak_connections} connections, more than the ",
+      "${coalesce(local.pg_max_user_connections_known, 0)} Azure allocates to user connections by default for pg_sku_name = ",
+      "\"${var.pg_sku_name}\". Azure fixes max_connections at provisioning from the SKU's memory size and does ",
+      "not recalculate it on a later SKU change (see docs/sandbox.md), so this budget matters most on Burstable ",
+      "tiers. Lower postgres_pool_size or the autoscaler maxima, or move to a larger pg_sku_name. This ",
+      "diagnostic is advisory and does not fail the plan.",
+    ])
+  }
+}
