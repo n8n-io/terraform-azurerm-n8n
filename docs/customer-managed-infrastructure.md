@@ -289,9 +289,15 @@ the name and keys one of the `*_secret_ref` inputs expects. For
 `SecretProviderClass` needs vault objects for all four. **Never point
 autorotation at the `N8N_ENCRYPTION_KEY` vault object.** n8n cannot rotate
 its encryption key in place: changing it makes every credential already
-stored in n8n's database permanently unrecoverable (see "Back up the n8n
-encryption key" below), so a rotated vault secret silently bricks the
-deployment on the next sync.
+stored in n8n's database permanently unrecoverable. When
+`n8n_encryption_key_secret_ref` is set (as in this scenario), the
+`n8n_encryption_key` output is `null` and the "Back up the n8n encryption
+key" upgrade step's `terraform output -raw n8n_encryption_key` command
+does not apply; back up the key from wherever the caller-managed Secret's
+contents originated instead, see [Post-deployment
+setup](./post-deployment.md#capture-the-n8n-encryption-key). A rotated
+vault secret, like a lost backup, silently bricks the deployment on the
+next sync.
 Keep that vault object a static value. `N8N_HOST`, `N8N_PORT`, and
 `N8N_PROTOCOL` have no such restriction and can be plain Key Vault secrets
 holding static values or genuinely rotated ones.
