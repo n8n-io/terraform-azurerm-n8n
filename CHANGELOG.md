@@ -9,6 +9,15 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ## [Unreleased]
 
+### Added
+
+- `docs/shared-responsibility.md`: a single table summarizing what the
+  module does versus what the caller owns across cluster security add-ons,
+  network egress and DNS, secrets and Terraform state custody, backup and
+  restore, upgrades, and monitoring/alerting, linked from the README docs
+  index and "Out of scope" section
+  ([#32](https://github.com/n8n-io/terraform-azurerm-n8n/issues/32)).
+
 ### Changed
 
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
