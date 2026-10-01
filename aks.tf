@@ -227,7 +227,9 @@ resource "azurerm_user_assigned_identity" "n8n_workload" {
 # Private DNS Zone Contributor on the caller's zone, that
 # azurerm_kubernetes_cluster.n8n's identity block switches to instead of
 # SystemAssigned. count = 0 (no identity, no role assignment, no cost) unless
-# aks_private_dns_zone_id names a caller-owned zone resource ID.
+# aks_private_dns_zone_id names a caller-owned zone resource ID, or
+# aks_private_dns_zone_custom_identity is explicitly set (locals.tf) because
+# the zone ID is itself unknown at plan time in the caller's apply.
 resource "azurerm_user_assigned_identity" "aks_cluster" {
   count = var.create_aks && local.aks_uses_custom_private_dns_zone ? 1 : 0
 
