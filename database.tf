@@ -212,9 +212,13 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
     # is true, so this is a no-op (condition trivially true) until a caller
     # opts in on an apply after the server already exists.
     precondition {
+      # A conditional, not `||`: Terraform before 1.12 evaluates both sides of
+      # `||`, so `current[0]` would fail with an invalid index while the guard
+      # is off and the data source has count = 0.
       condition = (
-        length(data.azurerm_postgresql_flexible_server.current) == 0 ||
-        var.pg_storage_mb >= data.azurerm_postgresql_flexible_server.current[0].storage_mb
+        length(data.azurerm_postgresql_flexible_server.current) == 0
+        ? true
+        : var.pg_storage_mb >= data.azurerm_postgresql_flexible_server.current[0].storage_mb
       )
       error_message = join("", [
         "pg_storage_drift_guard_enabled = true and the live PostgreSQL Flexible Server's storage_mb (",
