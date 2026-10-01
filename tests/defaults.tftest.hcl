@@ -536,6 +536,22 @@ run "rejects_malformed_aks_key_vault_secrets_provider_secret_rotation_interval" 
   ]
 }
 
+run "accepts_compound_and_fractional_aks_key_vault_secrets_provider_secret_rotation_interval" {
+  command = plan
+
+  variables {
+    aks_key_vault_secrets_provider_secret_rotation_interval = "1h30m"
+  }
+}
+
+run "accepts_fractional_aks_key_vault_secrets_provider_secret_rotation_interval" {
+  command = plan
+
+  variables {
+    aks_key_vault_secrets_provider_secret_rotation_interval = "1.5h"
+  }
+}
+
 run "rejects_malformed_aks_key_vault_secrets_provider_keyvault_id" {
   command = plan
 

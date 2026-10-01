@@ -256,9 +256,12 @@ database/queue credentials.
 ### Delivering secrets from Azure Key Vault
 
 This module never reads Key Vault values into Terraform, and it never
-creates a Key Vault. Two opt-in AKS add-ons let a caller sync Key Vault
+creates a Key Vault. Two opt-in AKS add-ons integrate with a caller-owned Key
+Vault. The Key Vault Secrets Provider add-on lets a caller sync Key Vault
 objects into the same Kubernetes Secrets the `*_secret_ref` inputs above
-already read, without adding any static credential to Terraform state.
+already read, without adding any static credential to Terraform state. The
+KMS add-on is unrelated to secret delivery: it encrypts etcd at rest with a
+caller-owned Key Vault key.
 
 **Key Vault Secrets Provider add-on (`aks_key_vault_secrets_provider_enabled`).**
 When `true` and `create_aks = true`, this module enables the AKS-managed
