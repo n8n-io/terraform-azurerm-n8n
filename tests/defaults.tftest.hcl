@@ -836,6 +836,60 @@ run "aks_byo_private_dns_zone_switches_identity_and_grants_role" {
   }
 }
 
+run "aks_private_dns_zone_custom_identity_override_true_forces_custom_identity" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled          = true
+    aks_private_dns_zone_id              = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.eastus.azmk8s.io"
+    aks_private_dns_zone_custom_identity = true
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "UserAssigned"
+    error_message = "aks_private_dns_zone_custom_identity = true must switch the cluster identity to UserAssigned when explicitly set, driving the decision from the plan-known override rather than a comparison on aks_private_dns_zone_id's value."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 1
+    error_message = "aks_private_dns_zone_custom_identity = true must create the aks_cluster UAMI."
+  }
+}
+
+run "rejects_aks_private_dns_zone_custom_identity_true_without_a_zone_id" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled          = true
+    aks_private_dns_zone_id              = "System"
+    aks_private_dns_zone_custom_identity = true
+  }
+
+  expect_failures = [
+    var.aks_private_dns_zone_custom_identity,
+  ]
+}
+
+run "aks_private_dns_zone_custom_identity_override_false_keeps_system_assigned" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled          = true
+    aks_private_dns_zone_id              = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.eastus.azmk8s.io"
+    aks_private_dns_zone_custom_identity = false
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "SystemAssigned"
+    error_message = "aks_private_dns_zone_custom_identity = false must keep SystemAssigned even when aks_private_dns_zone_id names a caller-owned zone."
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.aks_cluster) == 0
+    error_message = "aks_private_dns_zone_custom_identity = false must not create the aks_cluster UAMI."
+  }
+}
+
 run "rejects_malformed_aks_private_dns_zone_id" {
   command = plan
 
@@ -889,12 +943,33 @@ run "aks_entra_rbac_renders_role_based_access_control" {
   }
 }
 
-run "rejects_empty_aks_entra_rbac_admin_group_object_ids" {
+run "accepts_empty_aks_entra_rbac_admin_group_object_ids_with_azure_rbac_enabled" {
   command = plan
 
   variables {
     aks_entra_rbac = {
       admin_group_object_ids = []
+    }
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control) == 1
+    error_message = "An empty admin_group_object_ids list must be accepted when azure_rbac_enabled defaults to true; authorization can then come entirely from caller-managed azurerm_role_assignment resources."
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].azure_active_directory_role_based_access_control[0].admin_group_object_ids) == 0
+    error_message = "admin_group_object_ids must render as an empty list."
+  }
+}
+
+run "rejects_empty_aks_entra_rbac_admin_group_object_ids_without_azure_rbac" {
+  command = plan
+
+  variables {
+    aks_entra_rbac = {
+      admin_group_object_ids = []
+      azure_rbac_enabled     = false
     }
   }
 

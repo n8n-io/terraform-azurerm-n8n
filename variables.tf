@@ -249,8 +249,19 @@ variable "aks_private_dns_zone_id" {
   }
 }
 
+variable "aks_private_dns_zone_custom_identity" {
+  description = "Plan-known override for whether aks.tf grants the cluster the module-managed `aks_cluster` UserAssigned identity (instead of SystemAssigned) and its Private DNS Zone Contributor role assignment. Default null infers the answer from var.aks_private_dns_zone_id's literal value (a caller-owned zone ID selects the custom identity; `null`/\"System\"/\"None\" do not), which only works when that value is known at plan time. Set this explicitly to true when passing a zone ID that is itself unknown at plan time (for example `azurerm_private_dns_zone.foo.id` created in the same apply as this module): comparing an unknown zone ID against \"System\"/\"None\" would otherwise make the identity resources' count unknown at plan time, which Terraform rejects. Set explicitly to false to force the SystemAssigned path regardless of the zone ID's value."
+  type        = bool
+  default     = null
+
+  validation {
+    condition     = var.aks_private_dns_zone_custom_identity != true || (var.aks_private_dns_zone_id != null && var.aks_private_dns_zone_id != "System" && var.aks_private_dns_zone_id != "None")
+    error_message = "aks_private_dns_zone_custom_identity = true requires aks_private_dns_zone_id to name a zone (not null, \"System\", or \"None\"): the module-managed identity's role assignment must be scoped to an actual private DNS zone resource ID."
+  }
+}
+
 variable "aks_entra_rbac" {
-  description = "Enables AKS-managed Entra ID (Azure AD) integration and Azure RBAC for Kubernetes authorization when set. `admin_group_object_ids` lists the Entra group object IDs granted cluster-admin via Azure RBAC. `azure_rbac_enabled` (default true) routes authorization through Azure RBAC role assignments instead of in-cluster Kubernetes RBAC bindings; set false to keep Entra ID authentication with Kubernetes-native RBAC. `tenant_id` overrides the subscription's home tenant for multi-tenant setups (default null uses the provider's tenant). Null (the default) leaves the cluster on local Kubernetes accounts only, matching current behavior. Required (non-null) whenever aks_local_account_disabled is true. Callers authenticate with `kubelogin` after enabling this — see docs/customer-managed-infrastructure.md and the README provider-wiring section."
+  description = "Enables AKS-managed Entra ID (Azure AD) integration and Azure RBAC for Kubernetes authorization when set. `admin_group_object_ids` lists the Entra group object IDs granted cluster-admin via Azure RBAC. `azure_rbac_enabled` (default true) routes authorization through Azure RBAC role assignments instead of in-cluster Kubernetes RBAC bindings; set false to keep Entra ID authentication with Kubernetes-native RBAC. `admin_group_object_ids` may be an empty list when `azure_rbac_enabled = true`, since authorization can then come entirely from caller-managed `azurerm_role_assignment` resources scoped to the cluster; a non-RBAC (`azure_rbac_enabled = false`) cluster has no such alternative and must list at least one group. `tenant_id` overrides the subscription's home tenant for multi-tenant setups (default null uses the provider's tenant). Null (the default) leaves the cluster on local Kubernetes accounts only, matching current behavior. Required (non-null) whenever aks_local_account_disabled is true. Callers authenticate with `kubelogin` after enabling this: see docs/customer-managed-infrastructure.md and the README provider-wiring section."
   type = object({
     admin_group_object_ids = list(string)
     azure_rbac_enabled     = optional(bool, true)
@@ -259,8 +270,10 @@ variable "aks_entra_rbac" {
   default = null
 
   validation {
-    condition     = var.aks_entra_rbac == null ? true : length(var.aks_entra_rbac.admin_group_object_ids) > 0
-    error_message = "aks_entra_rbac.admin_group_object_ids must list at least one Entra group object ID when aks_entra_rbac is set."
+    condition = var.aks_entra_rbac == null ? true : (
+      var.aks_entra_rbac.azure_rbac_enabled || length(var.aks_entra_rbac.admin_group_object_ids) > 0
+    )
+    error_message = "aks_entra_rbac.admin_group_object_ids must list at least one Entra group object ID when aks_entra_rbac is set and azure_rbac_enabled is false; the Kubernetes-native RBAC cluster-admin binding has no other way to grant cluster-admin access. With azure_rbac_enabled = true, an empty list is allowed because authorization can instead come entirely from azurerm_role_assignment resources scoped to the AKS cluster (Azure Kubernetes Service RBAC roles)."
   }
 }
 

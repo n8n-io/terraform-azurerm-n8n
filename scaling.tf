@@ -352,6 +352,7 @@ check "aks_tuning_requires_module_managed_aks" {
       var.aks_sku_tier == "Free" &&
       var.aks_private_cluster_enabled == false &&
       var.aks_private_dns_zone_id == null &&
+      var.aks_private_dns_zone_custom_identity == null &&
       var.aks_entra_rbac == null &&
       var.aks_local_account_disabled == false &&
       var.aks_outbound_type == "loadBalancer" &&
@@ -361,11 +362,11 @@ check "aks_tuning_requires_module_managed_aks" {
       "An aks_kubernetes_version, aks_node_vm_size, aks_node_count_min, aks_node_count_max, ",
       "aks_availability_zones, aks_api_authorized_ip_ranges, aks_node_upgrade_max_surge, ",
       "aks_api_warmup_seconds, aks_node_os_disk_size_gb, aks_system_pool_critical_addons_only, aks_sku_tier, ",
-      "aks_private_cluster_enabled, aks_private_dns_zone_id, aks_entra_rbac, aks_local_account_disabled, ",
-      "aks_outbound_type, or aks_network_policy override is set while create_aks = false. The module creates no ",
-      "AKS cluster or node pool in that mode, so none of these apply: sizing, version, zones, API access, upgrade ",
-      "behavior, disk size, the system-pool taint, the SKU tier, and network/identity hardening are properties of ",
-      "the existing cluster you supplied.",
+      "aks_private_cluster_enabled, aks_private_dns_zone_id, aks_private_dns_zone_custom_identity, aks_entra_rbac, ",
+      "aks_local_account_disabled, aks_outbound_type, or aks_network_policy override is set while create_aks = false. ",
+      "The module creates no AKS cluster or node pool in that mode, so none of these apply: sizing, version, zones, ",
+      "API access, upgrade behavior, disk size, the system-pool taint, the SKU tier, and network/identity hardening ",
+      "are properties of the existing cluster you supplied.",
     ])
   }
 }

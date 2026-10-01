@@ -32,6 +32,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   registry mirror domain and Docker Hub's blob-layer CDN redirect domain
   need to be allow-listed in addition to Microsoft's documented list
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
+- `aks_private_dns_zone_custom_identity` (bool, default null): a plan-known
+  override for whether the cluster gets the module-managed `aks_cluster`
+  UserAssigned identity and its Private DNS Zone Contributor role
+  assignment. Needed when `aks_private_dns_zone_id` is supplied as a
+  value that is itself unknown at plan time (for example
+  `azurerm_private_dns_zone.foo.id` created in the same apply as this
+  module): comparing an unknown zone ID against the `"System"`/`"None"`
+  sentinels made the identity resources' count unknown at plan time,
+  which Terraform rejects. Setting the override to a literal `true` or
+  `false` selects the identity path independently of the zone ID's value
+  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
 - `aks_system_pool_critical_addons_only`: opt-in bool (default false) that
   applies AzureRM's `only_critical_addons_enabled` to the system
   `default_node_pool`, tainting it `CriticalAddonsOnly=true:NoSchedule`.
@@ -281,6 +292,15 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   In a legacy access-policy vault, the principal running `terraform
   apply` now also needs the `Update` certificate permission for that
   tag update.
+- `aks_entra_rbac.admin_group_object_ids` now accepts an empty list when
+  `azure_rbac_enabled = true` (the default). The validation previously
+  rejected an empty list unconditionally, which blocked callers who grant
+  all cluster access through caller-managed `azurerm_role_assignment`
+  resources scoped to the AKS cluster instead of listing admin groups.
+  An empty list is still rejected when `azure_rbac_enabled = false`,
+  since the Kubernetes-native RBAC cluster-admin binding has no other way
+  to grant cluster-admin access
+  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
 - `modules/tls-letsencrypt` applies the same tags to its imported Key
   Vault certificate: `ManagedBy = terraform`, `Project = n8n`, the
   caller's `common_tags`, and `Name = <friendly_name_prefix>-n8n-tls`.
