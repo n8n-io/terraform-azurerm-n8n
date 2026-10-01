@@ -1162,10 +1162,34 @@ run "postgres_ssl_ca_pem_mounts_a_file_and_sets_ssl_enabled_env" {
     condition     = kubernetes_secret.n8n_postgres_ssl_ca[0].data["ca.pem"] == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
     error_message = "kubernetes_secret.n8n_postgres_ssl_ca must carry the caller-supplied PEM under the ca.pem key."
   }
+
+  assert {
+    condition     = try(yamldecode(helm_release.n8n.values[0]).podAnnotations["checksum/postgres-ssl-ca"], null) == sha256(var.postgres_ssl_ca_pem)
+    error_message = "podAnnotations must carry a checksum/postgres-ssl-ca annotation hashing the PEM content, so changing the Secret's value (which the chart's own checksum/config and checksum/secret annotations never see) still triggers a pod rollout."
+  }
 }
 
 run "postgres_ssl_ca_pem_null_creates_no_secret_or_volume" {
   command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
 
   assert {
     condition     = length(kubernetes_secret.n8n_postgres_ssl_ca) == 0
@@ -1173,8 +1197,13 @@ run "postgres_ssl_ca_pem_null_creates_no_secret_or_volume" {
   }
 
   assert {
-    condition     = length(local.n8n_postgres_ssl_ca_file_env) == 0
-    error_message = "local.n8n_postgres_ssl_ca_file_env must be empty when postgres_ssl_ca_pem is null."
+    condition     = length(local.n8n_postgres_ssl_ca_file_env) == 0 && length([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "postgres-ssl-ca"]) == 0 && length([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "postgres-ssl-ca"]) == 0
+    error_message = "No postgres-ssl-ca environment entry, volume, or mount should be rendered when postgres_ssl_ca_pem is null."
+  }
+
+  assert {
+    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).podAnnotations), "checksum/postgres-ssl-ca")
+    error_message = "No checksum/postgres-ssl-ca podAnnotation should be rendered when postgres_ssl_ca_pem is null."
   }
 }
 

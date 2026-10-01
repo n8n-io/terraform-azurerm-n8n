@@ -89,9 +89,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 - `postgres_managed_ssl_mode` lets the module-managed PostgreSQL Flexible
   Server path use `verify-ca` or `verify-full` instead of the previously
-  hardcoded `require`, which validates the server certificate against a
-  trusted CA in addition to encrypting the connection. Default stays
-  `require`.
+  hardcoded `require`, which encrypts the connection but does not validate
+  the server certificate. `verify-ca` and `verify-full` validate it against
+  a trusted CA. Default stays `require`.
 - The module now sets `DB_POSTGRESDB_SSL_ENABLED` directly through
   `config.extraEnv` whenever the effective `ssl_mode` is not `disable`: the
   pinned chart (`1.13.0`) renders `database.ssl.enabled` into a ConfigMap key
@@ -110,7 +110,10 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   server's issuing CA. The module stores the PEM in a dedicated Kubernetes
   Secret, mounts it read-only on main, worker, and webhook-processor pods,
   and sets `DB_POSTGRESDB_SSL_CA_FILE` to the mounted path (n8n reads this
-  setting as a file path, not inline PEM content). Setting this input also
+  setting as a file path, not inline PEM content). A `checksum/postgres-ssl-ca`
+  pod annotation hashes the PEM content, so later changing the CA value (not
+  just setting it for the first time) also triggers a rollout: the Secret
+  value alone produces no Helm values diff. Setting this input also
   produces a plan diff: a new Secret, a new mounted volume, and a new
   environment entry. See
   [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) for mode selection,
