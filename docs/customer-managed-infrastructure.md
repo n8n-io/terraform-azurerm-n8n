@@ -300,7 +300,10 @@ vault secret, like a lost backup, silently bricks the deployment on the
 next sync.
 Keep that vault object a static value. `N8N_HOST`, `N8N_PORT`, and
 `N8N_PROTOCOL` have no such restriction and can be plain Key Vault secrets
-holding static values or genuinely rotated ones.
+holding static values or genuinely rotated ones. For rotation, restart
+every n8n workload that consumes this Secret; the chart provides these
+keys as environment variables, which running pods do not refresh when CSI
+autorotation updates the Secret's content.
 See [Microsoft's Secrets Store CSI Driver
 documentation](https://learn.microsoft.com/azure/aks/csi-secrets-store-driver)
 for the `SecretProviderClass` schema. External Secrets Operator is an
@@ -340,7 +343,16 @@ finishes before the cluster's `key_management_service` block is added,
 whether the cluster is being created for the first time or already exists
 and is only now gaining the role assignment. Enabling KMS therefore always
 takes **two applies** whenever this module manages the role assignment and
-the grant does not already exist:
+the grant does not already exist. This also grants the role through an
+`azurerm_role_assignment`, an Azure RBAC grant that only takes effect on a
+vault using the Azure RBAC permission model, exactly like the `Key Vault
+Secrets User` grant above: on an access-policy vault, the first apply
+below silently creates a no-op role assignment, and the second apply still
+fails AKS's KMS identity-permission validation, the exact failed-state
+scenario this section steers callers away from. Grant `Key Vault Crypto
+User` through an access policy instead on an access-policy vault (see
+`examples/medium`, whose vault uses RBAC and so never exercises this
+path):
 
 1. First apply: set `aks_kms_role_assignment_enabled = true` and
    `aks_kms_key_vault_id` to the vault, but leave `aks_kms_key_vault_key_id =
