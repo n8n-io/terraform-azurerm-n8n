@@ -3140,8 +3140,8 @@ variable "aks_key_vault_secrets_provider_secret_rotation_interval" {
   default     = "2m"
 
   validation {
-    condition     = can(regex("^[0-9]+(ns|us|µs|ms|s|m|h)$", var.aks_key_vault_secrets_provider_secret_rotation_interval))
-    error_message = "aks_key_vault_secrets_provider_secret_rotation_interval must be a Go duration string such as \"2m\", \"30s\", or \"1h\"."
+    condition     = can(regex("^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$", var.aks_key_vault_secrets_provider_secret_rotation_interval))
+    error_message = "aks_key_vault_secrets_provider_secret_rotation_interval must be a Go duration string such as \"2m\", \"30s\", \"1h\", \"1h30m\", or \"1.5h\"."
   }
 }
 
