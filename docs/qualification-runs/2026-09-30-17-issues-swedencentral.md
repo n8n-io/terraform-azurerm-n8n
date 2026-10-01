@@ -1,11 +1,13 @@
 # Qualification run: 17 issues across 15 PRs, Sweden Central, 2026-09-30
 
 Filled-in copy of [`manual-azure-qualification.md`](../manual-azure-qualification.md)
-scoped to the live validation of the batch of 17 issues across 15 draft/open
-PRs qualified in this round (issues #16 and #18 to #33). It records what was
-observed across several disposable deployments. It is not a release
-guarantee, and no result below transfers to other regions, SKUs, or n8n
-versions.
+scoped to the live validation of a batch of 17 issues across 15 draft/open
+PRs in this round (issues #16 and #18 to #33). 16 of the 17 issues were
+qualified; #24 (PR #51) was excluded by the maintainer and stays in draft,
+pending an offline licence certificate and procedure to be supplied
+separately (see the results table below). It records what was observed
+across several disposable deployments. It is not a release guarantee, and
+no result below transfers to other regions, SKUs, or n8n versions.
 
 ```text
 Environment:     disposable subscription, swedencentral. Several
