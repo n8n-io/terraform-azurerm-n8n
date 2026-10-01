@@ -3203,7 +3203,7 @@ variable "aks_kms_key_vault_key_id" {
   default     = null
 
   validation {
-    condition     = var.aks_kms_key_vault_key_id == null || can(regex("^https://[a-z0-9-]+\\.vault\\.azure\\.net/keys/[^/]+(/[a-f0-9]+)?$", var.aks_kms_key_vault_key_id))
+    condition     = var.aks_kms_key_vault_key_id == null || can(regex("^https://[a-z0-9-]+\\.vault\\.azure\\.net/keys/[A-Za-z0-9-]+(/[a-f0-9]+)?$", var.aks_kms_key_vault_key_id))
     error_message = "aks_kms_key_vault_key_id must be null or a Key Vault key identifier (e.g. https://<vault>.vault.azure.net/keys/<key>/<version> — version segment optional)."
   }
 }
