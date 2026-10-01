@@ -727,7 +727,9 @@ concern, and one deliberate nested call to the directly composable
 | `CONTRIBUTORS`                    | Contributors to this module, in order of first contribution, with maintainer/contributor role. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |
 | `.copywrite.hcl`                  | Enforces the `# Copyright n8n GmbH 2025` / `# SPDX-License-Identifier: MIT` header on every `.tf`. |
-| `.github/workflows/`              | CI: fmt, validate, test, tflint, checkov, terraform-docs.   |
+| `.github/workflows/`              | CI: fmt, validate, test, tflint, checkov, terraform-docs (`terraform-tests.yml`); weekly report-only pin drift synced to a tracking issue (`version-drift.yml`). |
+| `CONTRIBUTING.md`, `SECURITY.md`, `ROADMAP.md` | Contributor workflow, vulnerability disclosure process, and non-binding roadmap. |
+| `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` | Issue forms (bug, feature, contact links) and the PR checklist with its stability-impact classification. |
 | `.github/CODEOWNERS`              | Default reviewers for PRs.                                  |
 | `Taskfile.yml`                    | Optional convenience wrapper (`task ci`) around the local dev loop below; CI does not depend on it. |
 | `scripts/`                        | Repo-convention checks: `check-example-parity.sh` (CI-gated) and `check-variable-banners.sh` (local-only, `task banners`). |
@@ -960,6 +962,7 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
 All of the following are present and should stay present:
 
 - `README.md`, `LICENSE`, `versions.tf`, `variables.tf`, `outputs.tf`
+- `SECURITY.md` and `CONTRIBUTING.md`
 - `examples/` with at least one runnable example
 - `tests/` with at least one `.tftest.hcl` suite
 - `.github/workflows/` with the CI pipeline above

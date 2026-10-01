@@ -30,13 +30,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The script's chart-currency lookup uses `helm show chart`. Pin the same
+      # Helm binary terraform-tests.yml uses instead of depending on whatever
+      # the runner image happens to ship.
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: "v3.16.4"
+
       # `shell: bash` adds `-o pipefail`, which the default shell lacks. The
       # script itself exits 0 by design, so this only matters if it crashes;
       # without pipefail `tee` would hide that and the step below would sync a
       # truncated report to the tracking issue as if it were complete.
+      # The script prints plain text, not Markdown, so fence it; otherwise the
+      # issue body and step summary collapse each section into one paragraph.
+      # The header line records when and where the report was produced, since
+      # an issue edit sends no notification and the body is replaced weekly.
       - name: run tests/scripts/check-version-drift.sh
         shell: bash
-        run: tests/scripts/check-version-drift.sh | tee -a report.md "$GITHUB_STEP_SUMMARY"
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "Generated $(date -u +%Y-%m-%dT%H:%MZ) by [workflow run](${RUN_URL})."
+            echo
+            echo '```text'
+            tests/scripts/check-version-drift.sh
+            echo '```'
+          } | tee -a report.md "$GITHUB_STEP_SUMMARY"
 
       # The script never fails the build (see its own header): every pin it
       # flags is release-sized work per docs/versioning.md, not something CI

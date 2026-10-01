@@ -18,13 +18,9 @@ channel instead.
 
 ## Reporting a vulnerability
 
-Use GitHub's private vulnerability reporting:
-
-1. https://github.com/n8n-io/terraform-azurerm-n8n/security/advisories/new
-2. Fill in the report. We see it; the public does not.
-
-If you cannot use GitHub Advisories, email `security@n8n.io` with
-`terraform-azurerm-n8n` in the subject so the report routes correctly.
+Email `security@n8n.io` with `terraform-azurerm-n8n` in the subject so
+the report routes correctly. Include the module version, the affected
+input or resource, and steps to reproduce. Redact secrets.
 
 Please **do not** open public GitHub issues for security findings.
 

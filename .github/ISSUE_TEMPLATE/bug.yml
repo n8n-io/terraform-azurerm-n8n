@@ -12,7 +12,7 @@ body:
         - Check existing issues for duplicates.
         - **Do not** include sensitive values (license keys, Azure credentials,
           service-principal secrets, private endpoints) anywhere in this report.
-        - For security findings, close this form and follow [`SECURITY.md`](../../SECURITY.md) instead.
+        - For security findings, close this form and follow [`SECURITY.md`](https://github.com/n8n-io/terraform-azurerm-n8n/security/policy) instead.
 
   - type: input
     id: module_version
@@ -28,7 +28,7 @@ body:
     attributes:
       label: Terraform version
       description: Output of `terraform version`.
-      placeholder: "Terraform v1.15.4"
+      placeholder: "Terraform v1.16.4"
     validations:
       required: true
 

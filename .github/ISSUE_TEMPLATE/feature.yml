@@ -9,9 +9,9 @@ body:
         Thanks for the proposal. Before submitting, please:
 
         - Check existing issues to see if this has already been requested.
-        - Check [`ROADMAP.md`](../../ROADMAP.md); your idea may already be
+        - Check [`ROADMAP.md`](https://github.com/n8n-io/terraform-azurerm-n8n/blob/main/ROADMAP.md); your idea may already be
           on the candidate list.
-        - Skim [`README.md, Out of scope`](../../README.md#out-of-scope);
+        - Skim [`README.md, Out of scope`](https://github.com/n8n-io/terraform-azurerm-n8n/blob/main/README.md#out-of-scope);
           some categories are intentionally not in scope at this stage.
 
   - type: textarea
@@ -50,7 +50,7 @@ body:
     attributes:
       label: Would this be a backwards-compatible change?
       description: |
-        See [`README.md, Stability & versioning`](../../README.md#stability--versioning).
+        See [`README.md, Stability & versioning`](https://github.com/n8n-io/terraform-azurerm-n8n/blob/main/README.md#stability--versioning).
         Additive changes (new optional input, new output, new resource
         that doesn't disturb existing state) can ship in a patch. Anything
         that changes a default that moves infra, renames an input, or
