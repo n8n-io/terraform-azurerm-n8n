@@ -29,21 +29,31 @@
 # migration completes, this file only declares the combined requirement —
 # see `openspec/changes/align-azure-with-aws-capabilities/tasks.md`.
 #
-# `required_version >= 1.9` is required by every cross-variable `validation`
+# `required_version >= 1.9` was required by every cross-variable `validation`
 # block this module and its predecessors use (stabilized in Terraform
-# 1.9.0). No `provider {}` blocks — provider configuration (subscription,
+# 1.9.0). Raised to `>= 1.11` by the `postgres_password_write_only` opt-in
+# (issue #26): an `ephemeral = true` variable (`postgres_admin_password_wo`)
+# needs Terraform 1.10's ephemeral-value support, and feeding it into
+# `azurerm_postgresql_flexible_server.n8n`'s `administrator_password_wo`
+# argument needs 1.11's write-only-argument support for managed resources.
+# Both are parsed unconditionally from this module's HCL regardless of
+# whether any caller sets `postgres_password_write_only`, so the floor is
+# module-wide. No `provider {}` blocks — provider configuration (subscription,
 # auth, kube/helm wiring against the AKS cluster this module creates) is
 # the caller's job. See `examples/small/providers.tf` (added in section 13)
 # for the canonical wiring, mirroring `terraform-aws-n8n`'s
 # `examples/small/providers.tf`.
 
 terraform {
-  required_version = ">= 1.9"
+  required_version = ">= 1.11"
 
   required_providers {
     azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      source = "hashicorp/azurerm"
+      # >= 4.21 for azurerm_postgresql_flexible_server.administrator_password_wo
+      # / administrator_password_wo_version (postgres_password_write_only,
+      # issue #26). Kept within the same 4.x major as before.
+      version = ">= 4.21.0, < 5.0.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"

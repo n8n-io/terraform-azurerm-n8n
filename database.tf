@@ -41,10 +41,14 @@
 #     instead of branching on `var.create_database` themselves.
 
 # ── Admin password (managed path only) ──
-# Generated once at apply time. Surfaced to the workload via
-# `local.postgres_connection.password` below; never logged.
+# Generated once at apply time and surfaced to the workload via
+# `local.postgres_connection.password` below; never logged. Skipped when
+# `var.postgres_password_write_only` is true — that path feeds
+# `var.postgres_admin_password_wo` straight into the server's write-only
+# `administrator_password_wo` argument instead, so there is no plain-text
+# value for this resource to generate or store.
 resource "random_password" "postgres_admin" {
-  count = var.create_database ? 1 : 0
+  count = (var.create_database && !var.postgres_password_write_only) ? 1 : 0
 
   length           = 32
   special          = true
@@ -100,8 +104,10 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   private_dns_zone_id           = azurerm_private_dns_zone.postgres[0].id
   public_network_access_enabled = false
 
-  administrator_login    = var.pg_admin_username
-  administrator_password = random_password.postgres_admin[0].result
+  administrator_login               = var.pg_admin_username
+  administrator_password            = var.postgres_password_write_only ? null : random_password.postgres_admin[0].result
+  administrator_password_wo         = var.postgres_password_write_only ? var.postgres_admin_password_wo : null
+  administrator_password_wo_version = var.postgres_password_write_only ? var.postgres_admin_password_wo_version : null
 
   # Zone selection. Both default to null, which leaves Azure to pick a zone
   # at create time (see the lifecycle.ignore_changes note below for why a
@@ -204,7 +210,7 @@ locals {
     port      = var.create_database ? 5432 : var.postgres_external_port
     database  = var.create_database ? azurerm_postgresql_flexible_server_database.n8n[0].name : var.postgres_external_database
     username  = var.create_database ? var.pg_admin_username : var.postgres_external_username
-    password  = var.create_database ? random_password.postgres_admin[0].result : var.postgres_external_password
+    password  = var.create_database ? (var.postgres_password_write_only ? null : random_password.postgres_admin[0].result) : var.postgres_external_password
     ssl_mode  = var.create_database ? "require" : var.postgres_external_ssl_mode
     pool_size = var.postgres_pool_size
   }

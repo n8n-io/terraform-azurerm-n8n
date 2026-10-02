@@ -91,7 +91,7 @@ output "postgres_server_id" {
 }
 
 output "postgres_admin_password" {
-  description = "Password n8n authenticates to PostgreSQL with — either the generated `random_password.postgres_admin` (`create_database = true`) or `postgres_external_password` (`create_database = false`). Explicitly null when `postgres_password_secret_ref` selects a caller-managed Kubernetes Secret instead, because Terraform never reads that Secret's value. Marked sensitive."
+  description = "Password n8n authenticates to PostgreSQL with — either the generated `random_password.postgres_admin` (`create_database = true`) or `postgres_external_password` (`create_database = false`). Explicitly null when `postgres_password_secret_ref` selects a caller-managed Kubernetes Secret instead, because Terraform never reads that Secret's value; also null when `postgres_password_write_only = true`, because the password never leaves the write-only `administrator_password_wo` argument for Terraform to expose. Marked sensitive."
   value       = local.postgres_connection.password
   sensitive   = true
 }
