@@ -133,6 +133,32 @@ Treat an OS-disk size change as its own maintenance operation, separate from any
 
 A valid `aks_node_os_disk_size_gb` value is not a promise that every Azure VM/disk combination accepts that size — confirm against Azure's current documentation for the configured `aks_node_vm_size` before applying.
 
+## Enabling `aks_system_pool_critical_addons_only` moves module-installed workloads to the user pool
+
+**Validation scope.** One live run (swedencentral, `Standard_D2s_v5`, AKS v1.35.7, Terraform 1.13.3) switched this input from false to true on an existing cluster with `create_ingress = true`. It confirmed the taint on the system-pool nodes only, n8n and KEDA pods on `n8nuser`, CoreDNS and the AKS-managed AGIC add-on running on the tainted system pool, and an HTTPS 200 through the Application Gateway. That run did not load-test user-pool autoscaler headroom or vCPU quota during the rotation, so size both before you apply.
+
+**Symptom**
+
+After setting `aks_system_pool_critical_addons_only = true` on an existing cluster, `terraform apply` succeeds, but the system pool's nodes are recreated and every n8n, KEDA, and Redis-exporter pod restarts on the `n8nuser` pool.
+
+**Root cause**
+
+`aks_system_pool_critical_addons_only` is false by default, so n8n, KEDA, and the Redis exporter can schedule on the system pool alongside CoreDNS, konnectivity, and metrics-server. Setting it to true applies AzureRM's `only_critical_addons_enabled` attribute, which taints the system pool `CriticalAddonsOnly=true:NoSchedule`. Because AzureRM cannot add a taint to a live node in place, it cycles the system pool through its `temporary_name_for_rotation` (`systemtemp`): nodes are recreated, not updated in place. This rotation is **not** a cordon-and-drain operation, the same caveat that applies to `aks_node_os_disk_size_gb` above.
+
+None of the workloads this module installs (n8n, KEDA, the Redis exporter) set a `nodeSelector` or `toleration`, so once the taint lands, the scheduler moves all of them onto the `n8nuser` pool. The AKS-managed `ingress_application_gateway` (AGIC) addon is unaffected: AKS deploys it with its own explicit `CriticalAddonsOnly` toleration (`op=Exists`), unlike a caller-deployed, self-hosted upstream `application-gateway-kubernetes-ingress` Helm chart, which would need one added manually. Live testing (AGIC add-on, AKS v1.35.7) confirms the AGIC pod schedules on a tainted system node and serves traffic normally; this module has no check for that combination because module-managed ingress always uses the AKS-managed add-on, not the self-hosted chart.
+
+This control has no effect at all when `create_aks = false`; `check.aks_tuning_requires_module_managed_aks` warns (non-failing) if the input is left non-default in that mode, because the existing cluster's system-pool taint is owned by whoever created it.
+
+**Resolution**
+
+1. Size first, in its own apply. `aks_node_count_max` must leave enough headroom on `n8nuser` alone for the whole workload that used to spread across both pools; the capacity check models only that pool once the input is true. `aks_node_count_min`, `aks_node_count_max`, and `aks_node_vm_size` apply to both pools, so a change there also resizes (and, for the VM size, rotates) the system pool. Do not combine a sizing change with the toggle: `n8nuser` depends on the cluster, so its changes apply only after the system-pool rotation has already moved workloads. A higher maximum also does not add Ready nodes until the autoscaler scales out; raise `aks_node_count_min` if you need the capacity in place before the rotation.
+2. Confirm subnet IP headroom and vCPU quota (see the quota entry above) for the temporary `systemtemp` pool the rotation creates and for the user-pool scale-out that follows, on top of both pools at their current size.
+3. For each apply, save the plan (`terraform plan -out=...`), review and approve it, and apply that saved plan during a maintenance window. For the toggle, confirm the only AKS change is `only_critical_addons_enabled` on the default node pool. Expect the system-pool nodes to cycle and every module-installed workload on them to restart on the user pool.
+4. Verify pod health and re-run the smoke test (`tests/scripts/smoke-test.sh`) after the rotation completes.
+5. Confirm `kubectl get nodes -o json` shows the `CriticalAddonsOnly` taint on the system-pool nodes, and that n8n, KEDA, and the Redis exporter pods now run on `n8nuser`.
+
+Setting the input back to false is a second rotation of the system pool with the same disruption, not an instant rollback. If an apply fails partway through the rotation, inspect the actual node pools (`az aks nodepool list`) and build a fresh, reviewed plan from that state rather than toggling the input back blindly.
+
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
 **Symptom**

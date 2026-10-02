@@ -168,11 +168,29 @@ locals {
     csi_controllers          = 120
     application_gateway_agic = 100
   }
-  aks_cluster_control_cpu_millis = sum(values(local.aks_cluster_control_cpu_requests_millis))
 
-  # The root creates one system pool and one untainted user pool, both with the
-  # same maximum. n8n pods may schedule on either, so both contribute capacity.
-  aks_modeled_node_count = var.aks_node_count_max * 2
+  # CoreDNS, metrics-server, the CSI controllers, and AGIC are AKS-managed
+  # add-ons that AKS deploys with their own CriticalAddonsOnly toleration
+  # (docs/troubleshooting.md). A toleration allows a pod onto the tainted
+  # system pool but does not pin it there, so the tainted branch assumes, as
+  # an approximation, that these add-ons stay on the system pool and do not
+  # consume n8nuser capacity. KEDA is this module's own install with no
+  # toleration, so it is the only control workload certain to land on n8nuser
+  # alongside n8n and the Redis exporter once the taint lands. The tainted
+  # branch therefore subtracts only keda from the one-pool model.
+  aks_cluster_control_cpu_millis = (
+    var.aks_system_pool_critical_addons_only ?
+    local.aks_cluster_control_cpu_requests_millis.keda :
+    sum(values(local.aks_cluster_control_cpu_requests_millis))
+  )
+
+  # The root creates one system pool and one untainted user pool. n8n pods may
+  # schedule on either by default, so both count toward capacity. When
+  # aks_system_pool_critical_addons_only taints the system pool
+  # CriticalAddonsOnly=true:NoSchedule, n8n, KEDA, and the Redis exporter (none
+  # of which set a toleration) can only land on the user pool, so only its
+  # maximum counts.
+  aks_modeled_node_count = var.aks_system_pool_critical_addons_only ? var.aks_node_count_max : var.aks_node_count_max * 2
 
   aks_node_schedulable_cpu_millis = max(
     local.aks_node_vcpus * 1000 - local.aks_node_kube_reserved_cpu_millis - local.aks_node_daemon_cpu_millis,
@@ -302,7 +320,7 @@ check "autoscaling_maxima_fit_aks_capacity" {
         ", plus worker pools ${local.n8n_pool_peak_cpu_request_millis}m across ",
         "${length(var.n8n_worker_pools)} pool(s) at their ceilings",
       ]) : "",
-      ". Supply models two pools at ",
+      ". Supply models ${var.aks_system_pool_critical_addons_only ? "one pool (n8nuser; the tainted system pool no longer counts)" : "two pools"} at ",
       "aks_node_count_max=${var.aks_node_count_max}, VM size ${var.aks_node_vm_size} (${local.aks_node_vcpus} vCPU per node), ",
       "less ${local.aks_node_kube_reserved_cpu_millis}m AKS reservation and ${local.aks_node_daemon_cpu_millis}m daemon requests per node, ",
       "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima (including any n8n_worker_pools max_replicas) or CPU requests, or raise ",
@@ -329,14 +347,16 @@ check "aks_tuning_requires_module_managed_aks" {
       length(var.aks_api_authorized_ip_ranges) == 0 &&
       var.aks_node_upgrade_max_surge == "10%" &&
       var.aks_api_warmup_seconds == 90 &&
-      var.aks_node_os_disk_size_gb == null
+      var.aks_node_os_disk_size_gb == null &&
+      var.aks_system_pool_critical_addons_only == false
     )
     error_message = join("", [
       "An aks_kubernetes_version, aks_node_vm_size, aks_node_count_min, aks_node_count_max, ",
       "aks_availability_zones, aks_api_authorized_ip_ranges, aks_node_upgrade_max_surge, ",
-      "aks_api_warmup_seconds, or aks_node_os_disk_size_gb override is set while create_aks = false. The ",
-      "module creates no AKS cluster or node pool in that mode, so none of these apply — sizing, version, ",
-      "zones, API access, upgrade behavior, and disk size are properties of the existing cluster you supplied.",
+      "aks_api_warmup_seconds, aks_node_os_disk_size_gb, or aks_system_pool_critical_addons_only override is ",
+      "set while create_aks = false. The module creates no AKS cluster or node pool in that mode, so none of ",
+      "these apply: sizing, version, zones, API access, upgrade behavior, disk size, and the system-pool ",
+      "taint are properties of the existing cluster you supplied.",
     ])
   }
 }

@@ -331,6 +331,11 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].only_critical_addons_enabled == false
+    error_message = "default_node_pool.only_critical_addons_enabled must default to false so n8n, KEDA, and the Redis exporter keep scheduling on the system pool unless the caller opts in."
+  }
+
+  assert {
     condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].upgrade_settings[0].max_surge == var.aks_node_upgrade_max_surge
     error_message = "default_node_pool.upgrade_settings.max_surge must equal var.aks_node_upgrade_max_surge (default \"10%\")."
   }
@@ -462,6 +467,96 @@ run "renders_valid_aks_node_os_disk_size_gb" {
   # os_disk_type is left unset in both node-pool resources by this port (no
   # disk-type control was added), so config never assigns it regardless of
   # var.aks_node_os_disk_size_gb.
+}
+
+run "renders_aks_system_pool_critical_addons_only_when_enabled" {
+  command = plan
+
+  # Default create_ingress = true: the AKS-managed AGIC add-on tolerates
+  # CriticalAddonsOnly, so the taint must leave module-managed ingress intact.
+  variables {
+    aks_system_pool_critical_addons_only = true
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway) == 1
+    error_message = "Tainting the system pool must not remove the AKS-managed AGIC add-on when create_ingress = true."
+  }
+
+  assert {
+    condition     = length(azurerm_application_gateway.n8n) == 1
+    error_message = "Tainting the system pool must not remove the module-managed Application Gateway."
+  }
+
+  assert {
+    condition     = local.aks_modeled_node_count == var.aks_node_count_max
+    error_message = "With the system pool tainted, only the n8nuser pool's maximum may count toward n8n capacity."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].only_critical_addons_enabled == true
+    error_message = "default_node_pool.only_critical_addons_enabled must equal the supplied aks_system_pool_critical_addons_only."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].node_taints == null
+    error_message = "n8n_user must remain untainted so n8n, KEDA, and the Redis exporter (which set no toleration) still schedule there when the system pool is tainted."
+  }
+}
+
+run "critical_addons_only_taint_subtracts_only_keda_from_user_pool_capacity" {
+  command = plan
+
+  variables {
+    aks_system_pool_critical_addons_only = true
+  }
+
+  assert {
+    condition     = local.aks_cluster_control_cpu_millis == 300
+    error_message = "Tainting the system pool must subtract only KEDA's control CPU from user-pool capacity. CoreDNS, metrics-server, the CSI controllers, and AGIC carry their own CriticalAddonsOnly toleration, so the model approximates them as staying on the system pool and does not count them against the user pool."
+  }
+}
+
+run "untainted_system_pool_subtracts_every_control_workload_once" {
+  command = plan
+
+  assert {
+    condition     = local.aks_cluster_control_cpu_millis == 820
+    error_message = "With no taint, every control workload can land on either pool, so the full lump sum must still be subtracted once from the two-pool model."
+  }
+
+  assert {
+    condition     = local.aks_modeled_node_count == var.aks_node_count_max * 2
+    error_message = "With no taint, both node pools' maxima must count toward n8n capacity."
+  }
+}
+
+# Boundary pair at aks_node_count_max = 4 with the default Standard_D4s_v4
+# sizing: default autoscaler maxima request 15400m. Two untainted pools leave
+# 8 x 3600m - 820m = 27980m schedulable, so the plan fits; one user pool
+# leaves 4 x 3600m - 300m = 14100m, so the tainted plan must warn.
+run "capacity_fits_two_untainted_pools_at_boundary" {
+  command = plan
+
+  variables {
+    aks_node_count_max = 4
+  }
+
+  assert {
+    condition     = local.n8n_peak_cpu_request_millis <= local.n8n_schedulable_cpu_millis
+    error_message = "Default autoscaler maxima must fit two untainted pools at aks_node_count_max = 4; otherwise the tainted boundary run below proves nothing."
+  }
+}
+
+run "capacity_warns_when_tainted_system_pool_leaves_one_pool_too_small" {
+  command = plan
+
+  variables {
+    aks_node_count_max                   = 4
+    aks_system_pool_critical_addons_only = true
+  }
+
+  expect_failures = [check.autoscaling_maxima_fit_aks_capacity]
 }
 
 run "rejects_zero_aks_node_os_disk_size_gb" {
@@ -5251,6 +5346,21 @@ run "warns_when_aks_node_os_disk_size_gb_is_inert_on_existing_cluster" {
     existing_aks_resource_group_name             = "shared-aks-rg"
     existing_aks_cluster_prerequisites_confirmed = true
     aks_node_os_disk_size_gb                     = 256
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "warns_when_aks_system_pool_critical_addons_only_is_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_system_pool_critical_addons_only         = true
   }
 
   expect_failures = [check.aks_tuning_requires_module_managed_aks]
