@@ -199,6 +199,14 @@ terraform destroy
 
 Repeat for `privatelink.redis.cache.windows.net` if Redis hits the same error.
 
+**Caller-supplied zones:** the workaround above only applies to a zone the
+module itself created. It does not apply to a service whose corresponding
+`postgres_private_dns_zone_id`, `redis_private_dns_zone_id`, or
+`blob_private_dns_zone_id` is set: the module never creates or destroys a
+caller-supplied zone or its VNet link, so `terraform destroy` leaves that
+service's zone and link untouched. Setting one of these three variables has
+no effect on the other two services' module-managed zones.
+
 ### Key Vault destroy fails with `purge protection`
 
 **Symptom:** `azurerm_key_vault.n8n` fails to delete, or destroy succeeds but a re-apply hits `vault name is already taken`.

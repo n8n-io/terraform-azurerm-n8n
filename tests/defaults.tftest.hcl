@@ -529,6 +529,14 @@ run "rejects_aks_api_warmup_seconds_below_floor" {
 run "managed_postgres_resources_in_plan" {
   command = plan
 
+  override_resource {
+    target          = azurerm_private_dns_zone.postgres[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.postgres.database.azure.com"
+    }
+  }
+
   assert {
     condition     = azurerm_postgresql_flexible_server.n8n[0].name == local.postgres_server_name
     error_message = "Managed PostgreSQL Flexible Server name must equal local.postgres_server_name."
@@ -585,6 +593,11 @@ run "managed_postgres_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_postgresql_flexible_server.n8n[0].private_dns_zone_id == azurerm_private_dns_zone.postgres[0].id
+    error_message = "The Flexible Server must attach to the module-managed postgres private DNS zone when postgres_private_dns_zone_id is not set."
+  }
+
+  assert {
     condition     = local.postgres_connection.port == 5432
     error_message = "local.postgres_connection.port must be 5432 when create_database = true."
   }
@@ -593,6 +606,69 @@ run "managed_postgres_resources_in_plan" {
     condition     = local.postgres_connection.database == "n8n"
     error_message = "local.postgres_connection.database must be 'n8n' when create_database = true."
   }
+}
+
+run "caller_supplied_postgres_private_dns_zone_id_skips_managed_zone" {
+  command = plan
+
+  variables {
+    postgres_private_dns_zone_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.postgres.database.azure.com"
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone.postgres) == 0
+    error_message = "No PostgreSQL private DNS zone must be created when postgres_private_dns_zone_id is set."
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone_virtual_network_link.postgres) == 0
+    error_message = "No PostgreSQL private DNS zone VNet link must be created when postgres_private_dns_zone_id is set."
+  }
+
+  assert {
+    condition     = azurerm_postgresql_flexible_server.n8n[0].private_dns_zone_id == var.postgres_private_dns_zone_id
+    error_message = "The Flexible Server must attach to the caller-supplied postgres_private_dns_zone_id."
+  }
+}
+
+run "rejects_wrong_zone_name_for_postgres_private_dns_zone_id" {
+  command = plan
+
+  variables {
+    postgres_private_dns_zone_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.postgres.wrong.name"
+  }
+
+  expect_failures = [
+    var.postgres_private_dns_zone_id,
+  ]
+}
+
+run "rejects_malformed_postgres_private_dns_zone_id" {
+  command = plan
+
+  variables {
+    postgres_private_dns_zone_id = "not-a-resource-id"
+  }
+
+  expect_failures = [
+    var.postgres_private_dns_zone_id,
+  ]
+}
+
+run "rejects_postgres_private_dns_zone_id_when_create_database_false" {
+  command = plan
+
+  variables {
+    create_database              = false
+    postgres_private_dns_zone_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.postgres.database.azure.com"
+    postgres_external_host       = "external-pg.example.com"
+    postgres_external_username   = "n8n_app"
+    postgres_external_password   = "super-secret-external-password"
+  }
+
+  expect_failures = [
+    var.postgres_private_dns_zone_id,
+  ]
 }
 
 run "managed_postgres_high_availability_and_maintenance_window_render" {
@@ -814,6 +890,14 @@ run "rejects_postgres_pool_size_below_floor" {
 run "managed_redis_resources_in_plan" {
   command = plan
 
+  override_resource {
+    target          = azurerm_private_dns_zone.redis[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.redis.azure.net"
+    }
+  }
+
   assert {
     condition     = azurerm_managed_redis.n8n[0].name == local.redis_name
     error_message = "Managed Azure Managed Redis instance name must equal local.redis_name."
@@ -865,6 +949,11 @@ run "managed_redis_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_private_endpoint.redis[0].private_dns_zone_group[0].private_dns_zone_ids[0] == azurerm_private_dns_zone.redis[0].id
+    error_message = "The Redis private endpoint must attach to the module-managed redis private DNS zone when redis_private_dns_zone_id is not set."
+  }
+
+  assert {
     condition     = local.redis_connection.tls_enabled == true
     error_message = "local.redis_connection.tls_enabled must be true when create_redis = true."
   }
@@ -873,6 +962,68 @@ run "managed_redis_resources_in_plan" {
     condition     = local.redis_connection.username == null
     error_message = "local.redis_connection.username must be null when create_redis = true (access-key auth has no username)."
   }
+}
+
+run "caller_supplied_redis_private_dns_zone_id_skips_managed_zone" {
+  command = plan
+
+  variables {
+    redis_private_dns_zone_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.redis.azure.net"
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone.redis) == 0
+    error_message = "No Redis private DNS zone must be created when redis_private_dns_zone_id is set."
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone_virtual_network_link.redis) == 0
+    error_message = "No Redis private DNS zone VNet link must be created when redis_private_dns_zone_id is set."
+  }
+
+  assert {
+    condition     = azurerm_private_endpoint.redis[0].private_dns_zone_group[0].private_dns_zone_ids[0] == var.redis_private_dns_zone_id
+    error_message = "The Redis private endpoint must attach to the caller-supplied redis_private_dns_zone_id."
+  }
+}
+
+run "rejects_wrong_zone_name_for_redis_private_dns_zone_id" {
+  command = plan
+
+  variables {
+    redis_private_dns_zone_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.redis.cache.windows.net"
+  }
+
+  expect_failures = [
+    var.redis_private_dns_zone_id,
+  ]
+}
+
+run "rejects_malformed_redis_private_dns_zone_id" {
+  command = plan
+
+  variables {
+    redis_private_dns_zone_id = "not-a-resource-id"
+  }
+
+  expect_failures = [
+    var.redis_private_dns_zone_id,
+  ]
+}
+
+run "rejects_redis_private_dns_zone_id_when_create_redis_false" {
+  command = plan
+
+  variables {
+    create_redis              = false
+    redis_private_dns_zone_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.redis.azure.net"
+    redis_external_host       = "external-redis.example.com"
+    redis_external_password   = "super-secret-external-password"
+  }
+
+  expect_failures = [
+    var.redis_private_dns_zone_id,
+  ]
 }
 
 run "managed_redis_high_availability_renders" {
@@ -997,6 +1148,14 @@ run "private_blob_storage_resources_in_plan" {
     }
   }
 
+  override_resource {
+    target          = azurerm_private_dns_zone.blob[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+    }
+  }
+
   assert {
     condition     = azurerm_storage_account.n8n[0].name == local.storage_account_name
     error_message = "Storage account name must equal local.storage_account_name."
@@ -1053,6 +1212,11 @@ run "private_blob_storage_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_private_endpoint.blob[0].private_dns_zone_group[0].private_dns_zone_ids[0] == azurerm_private_dns_zone.blob[0].id
+    error_message = "The Blob private endpoint must attach to the module-managed blob private DNS zone when blob_private_dns_zone_id is not set."
+  }
+
+  assert {
     condition     = azurerm_role_assignment.n8n_blob_data_contributor[0].role_definition_name == "Storage Blob Data Contributor"
     error_message = "The n8n workload identity must receive Storage Blob Data Contributor for list, read, write, properties, copy, and delete operations."
   }
@@ -1072,6 +1236,71 @@ run "private_blob_storage_resources_in_plan" {
     error_message = "Managed identity and DefaultAzureCredential auto-detection must be the default Blob authentication path."
   }
 
+}
+
+run "caller_supplied_blob_private_dns_zone_id_skips_managed_zone" {
+  command = plan
+
+  variables {
+    blob_private_dns_zone_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone.blob) == 0
+    error_message = "No Blob private DNS zone must be created when blob_private_dns_zone_id is set."
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone_virtual_network_link.blob) == 0
+    error_message = "No Blob private DNS zone VNet link must be created when blob_private_dns_zone_id is set."
+  }
+
+  assert {
+    condition     = azurerm_private_endpoint.blob[0].private_dns_zone_group[0].private_dns_zone_ids[0] == var.blob_private_dns_zone_id
+    error_message = "The Blob private endpoint must attach to the caller-supplied blob_private_dns_zone_id."
+  }
+}
+
+run "rejects_wrong_zone_name_for_blob_private_dns_zone_id" {
+  command = plan
+
+  variables {
+    blob_private_dns_zone_id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.blob.wrong.name"
+  }
+
+  expect_failures = [
+    var.blob_private_dns_zone_id,
+  ]
+}
+
+run "rejects_malformed_blob_private_dns_zone_id" {
+  command = plan
+
+  variables {
+    blob_private_dns_zone_id = "not-a-resource-id"
+  }
+
+  expect_failures = [
+    var.blob_private_dns_zone_id,
+  ]
+}
+
+run "rejects_blob_private_dns_zone_id_when_create_blob_storage_false" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    blob_private_dns_zone_id              = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+    existing_blob_storage_account_name    = "existingstorage"
+    existing_blob_container_name          = "n8n-data"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/existingstorage/blobServices/default/containers/n8n-data"
+    existing_blob_endpoint                = "https://existingstorage.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+  }
+
+  expect_failures = [
+    var.blob_private_dns_zone_id,
+  ]
 }
 
 run "binary_only_blob_retention_creates_scoped_policy" {
