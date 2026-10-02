@@ -133,9 +133,9 @@ Treat an OS-disk size change as its own maintenance operation, separate from any
 
 A valid `aks_node_os_disk_size_gb` value is not a promise that every Azure VM/disk combination accepts that size — confirm against Azure's current documentation for the configured `aks_node_vm_size` before applying.
 
-## Enabling `aks_system_pool_critical_addons_only` moves every workload to the user pool
+## Enabling `aks_system_pool_critical_addons_only` moves module-installed workloads to the user pool
 
-**Anticipated behavior — pending live validation.** Unlike the entries above, this one is not (yet) an apply observed against a live cluster. It describes the mechanism AzureRM's documented `only_critical_addons_enabled` taint and `temporary_name_for_rotation` semantics predict; the pool-rotation and workload-migration steps below are queued in a combined live-validation run. Treat the mechanics as expected, not confirmed, until that run backs them.
+**Validation scope.** One live run (swedencentral, `Standard_D2s_v5`, AKS v1.35.7, Terraform 1.13.3) switched this input from false to true on an existing cluster with `create_ingress = true`. It confirmed the taint on the system-pool nodes only, n8n and KEDA pods on `n8nuser`, CoreDNS and the AKS-managed AGIC add-on running on the tainted system pool, and an HTTPS 200 through the Application Gateway. That run did not load-test user-pool autoscaler headroom or vCPU quota during the rotation, so size both before you apply.
 
 **Symptom**
 
@@ -151,11 +151,13 @@ This control has no effect at all when `create_aks = false`; `check.aks_tuning_r
 
 **Resolution**
 
-1. Confirm `create_ingress = false` first — module-managed AGIC does not survive this taint. Route ingress through a caller-owned Application Gateway/AGIC pair instead (for example the in-cluster standalone `ingress-azure` pattern in `examples/split-ingress`, which tolerates the taint by running on the user pool).
-2. Confirm `aks_node_count_max` on the user pool leaves enough headroom to absorb the entire workload that used to spread across both pools; the autoscaler will scale the user pool out, but only up to that ceiling.
-3. Apply during a maintenance window. Expect the system-pool nodes to cycle and every schedulable workload on them to restart on the user pool.
+1. Size first, in its own apply. `aks_node_count_max` must leave enough headroom on `n8nuser` alone for the whole workload that used to spread across both pools; the capacity check models only that pool once the input is true. `aks_node_count_min`, `aks_node_count_max`, and `aks_node_vm_size` apply to both pools, so a change there also resizes (and, for the VM size, rotates) the system pool. Do not combine a sizing change with the toggle: `n8nuser` depends on the cluster, so its changes apply only after the system-pool rotation has already moved workloads. A higher maximum also does not add Ready nodes until the autoscaler scales out; raise `aks_node_count_min` if you need the capacity in place before the rotation.
+2. Confirm subnet IP headroom and vCPU quota (see the quota entry above) for the temporary `systemtemp` pool the rotation creates and for the user-pool scale-out that follows, on top of both pools at their current size.
+3. For each apply, save the plan (`terraform plan -out=...`), review and approve it, and apply that saved plan during a maintenance window. For the toggle, confirm the only AKS change is `only_critical_addons_enabled` on the default node pool. Expect the system-pool nodes to cycle and every module-installed workload on them to restart on the user pool.
 4. Verify pod health and re-run the smoke test (`tests/scripts/smoke-test.sh`) after the rotation completes.
 5. Confirm `kubectl get nodes -o json` shows the `CriticalAddonsOnly` taint on the system-pool nodes, and that n8n, KEDA, and the Redis exporter pods now run on `n8nuser`.
+
+Setting the input back to false is a second rotation of the system pool with the same disruption, not an instant rollback. If an apply fails partway through the rotation, inspect the actual node pools (`az aks nodepool list`) and build a fresh, reviewed plan from that state rather than toggling the input back blindly.
 
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 

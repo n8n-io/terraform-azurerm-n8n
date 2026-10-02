@@ -170,14 +170,14 @@ locals {
   }
 
   # CoreDNS, metrics-server, the CSI controllers, and AGIC are AKS-managed
-  # critical add-ons: AKS deploys each with its own explicit CriticalAddonsOnly
-  # toleration (docs/troubleshooting.md), so they keep running on the system
-  # pool whether or not aks_system_pool_critical_addons_only taints it. KEDA is
-  # this module's own install with no toleration, so it is the only control
-  # workload pushed onto n8nuser alongside n8n and the Redis exporter once the
-  # taint lands. Subtracting the full lump sum from a one-pool model would
-  # double-count system-pool add-ons against user-pool capacity n8n never
-  # contends with, so the tainted branch subtracts only keda.
+  # add-ons that AKS deploys with their own CriticalAddonsOnly toleration
+  # (docs/troubleshooting.md). A toleration allows a pod onto the tainted
+  # system pool but does not pin it there, so the tainted branch assumes, as
+  # an approximation, that these add-ons stay on the system pool and do not
+  # consume n8nuser capacity. KEDA is this module's own install with no
+  # toleration, so it is the only control workload certain to land on n8nuser
+  # alongside n8n and the Redis exporter once the taint lands. The tainted
+  # branch therefore subtracts only keda from the one-pool model.
   aks_cluster_control_cpu_millis = (
     var.aks_system_pool_critical_addons_only ?
     local.aks_cluster_control_cpu_requests_millis.keda :

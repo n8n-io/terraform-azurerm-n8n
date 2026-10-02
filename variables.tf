@@ -126,7 +126,7 @@ variable "aks_node_count_min" {
 }
 
 variable "aks_node_count_max" {
-  description = "Maximum nodes in each of the system and user AKS node pools. The cluster autoscaler will not scale either pool above this value. The advisory capacity model uses both pools because neither is tainted against n8n pods, then subtracts AKS reservations and system workload requests. Terraform ignores each pool's live node count after creation so plans do not revert autoscaler-owned scale-out."
+  description = "Maximum nodes in each of the system and user AKS node pools. The cluster autoscaler will not scale either pool above this value. The advisory capacity model counts both pools, or only the user pool when `aks_system_pool_critical_addons_only = true` taints the system pool against n8n pods, then subtracts AKS reservations and system workload requests. Terraform ignores each pool's live node count after creation so plans do not revert autoscaler-owned scale-out."
   type        = number
   default     = 6
   nullable    = false
@@ -193,10 +193,12 @@ variable "aks_node_os_disk_size_gb" {
 }
 
 variable "aks_system_pool_critical_addons_only" {
-  description = "When true, sets `only_critical_addons_enabled = true` on the system default_node_pool, applying the CriticalAddonsOnly=true:NoSchedule taint. Default false preserves today's behavior where n8n, KEDA, and the Redis exporter can schedule on the system pool alongside CoreDNS, konnectivity, and metrics-server. Flipping this on an existing cluster rotates the system pool through its temporary_name_for_rotation (systemtemp); nodes are recreated, not updated in place. Nothing this module installs (n8n, KEDA, the Redis exporter) sets a nodeSelector or toleration, so turning this on moves all of it onto the n8nuser pool; confirm that pool's min/max sizing can absorb the whole workload before enabling in production. The AKS-managed AGIC ingress addon does not tolerate this taint and only schedules on system-mode nodes, so do not enable this alongside create_ingress = true — check.aks_critical_addons_only_conflicts_with_managed_ingress warns (non-failing) if both are true. Has no effect when create_aks = false; the existing cluster's system-pool taint is unmanaged by this module."
+  description = "When true, sets `only_critical_addons_enabled = true` on the system default_node_pool, applying the CriticalAddonsOnly=true:NoSchedule taint. Default false preserves today's behavior where n8n, KEDA, and the Redis exporter can schedule on the system pool alongside CoreDNS, konnectivity, and metrics-server. Nothing this module installs (n8n, KEDA, the Redis exporter) sets a nodeSelector or toleration, so turning this on moves all of it onto the n8nuser pool, and the advisory capacity check then counts only that pool. AKS-managed add-ons (CoreDNS, metrics-server, the CSI controllers, and the AGIC add-on used when create_ingress = true) carry their own CriticalAddonsOnly toleration, so module-managed ingress stays supported. Changing this on an existing cluster rotates the system pool through its temporary_name_for_rotation (systemtemp); nodes are recreated, not updated in place. Before changing it, size aks_node_count_min/aks_node_count_max (which apply to both pools) so n8nuser alone can hold the workload, in a separate apply, and confirm subnet IP and vCPU quota headroom for the temporary pool and the user-pool scale-out. Has no effect when create_aks = false; the existing cluster's system-pool taint is unmanaged by this module."
   type        = bool
   default     = false
   nullable    = false
+
+  # no validation: a plain bool needs no additional constraint.
 }
 
 # Consumed by database.tf (section 3).

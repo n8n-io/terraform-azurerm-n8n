@@ -176,7 +176,8 @@ expose sovereign vault or authority settings.
 ScaledObject, while root `scaling.tf` owns the webhook HPA because the chart
 suppresses that object whenever KEDA is enabled. Helm replica counts must
 remain tied to the three autoscaler floors. The CPU capacity check models
-both untainted AKS pools, subtracts documented AKS and fixed system workload
+both AKS pools, or only `n8nuser` when `aks_system_pool_critical_addons_only`
+taints the system pool (then subtracting only KEDA's control CPU), subtracts documented AKS and fixed system workload
 allowances, warns only for reviewed Dsv4, Dsv5, and Dsv7 SKUs, and stays silent for
 unknown valid SKUs. Keep the SKU map and reservation comments current when
 AKS or example sizing changes. The warning is advisory and does not replace

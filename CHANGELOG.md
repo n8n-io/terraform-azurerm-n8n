@@ -15,14 +15,16 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   applies AzureRM's `only_critical_addons_enabled` to the system
   `default_node_pool`, tainting it `CriticalAddonsOnly=true:NoSchedule`.
   Neither n8n, KEDA, nor the Redis exporter set a nodeSelector or
-  toleration, so enabling this moves all of them onto the `n8nuser` pool.
+  toleration, so enabling this moves all of them onto the `n8nuser` pool,
+  and the advisory capacity check then counts only that pool.
   Enabling it on an existing cluster cycles the system pool through
   `temporary_name_for_rotation` (`systemtemp`); this is not a
-  cordon-and-drain operation. The AKS-managed AGIC ingress addon does not
-  tolerate this taint and only schedules on system-mode nodes, so
-  `check.aks_critical_addons_only_conflicts_with_managed_ingress` warns
-  (non-failing) when this is enabled alongside `create_ingress = true`; see
-  [`docs/troubleshooting.md`](./docs/troubleshooting.md#enabling-aks_system_pool_critical_addons_only-moves-every-workload-to-the-user-pool)
+  cordon-and-drain operation. The AKS-managed AGIC add-on carries its own
+  `CriticalAddonsOnly` toleration, so `create_ingress = true` remains
+  supported. `time_sleep.aks_api_warmup` now also waits for the `n8nuser`
+  pool, so Kubernetes and Helm resources are not created before the pool
+  they schedule onto exists; see
+  [`docs/troubleshooting.md`](./docs/troubleshooting.md#enabling-aks_system_pool_critical_addons_only-moves-module-installed-workloads-to-the-user-pool)
   ([#20](https://github.com/n8n-io/terraform-azurerm-n8n/issues/20)).
 
 ### Changed
