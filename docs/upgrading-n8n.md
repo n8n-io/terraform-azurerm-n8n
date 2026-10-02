@@ -12,7 +12,7 @@ guide; the per-version sections below cover only what reaches this module.
 
 | Variable | Controls | Default |
 | --- | --- | --- |
-| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.13.0"`, pinned |
+| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.14.0"`, pinned |
 | `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `"2.35.0"`, pinned. Unlike the AWS and GCP siblings this module never leaves the tag to the chart, so a chart bump on its own never changes the running n8n version. |
 | `n8n_task_runner_image_tag` | Task runner image tag; keep aligned with the underlying n8n version when using a custom application tag. | `null`, meaning `n8n_image_tag` |
 
@@ -20,6 +20,33 @@ Bumping the image tag alone gets you a new n8n version without changing the
 chart's templates or value schema. Bumping the chart version can also change
 what values the chart accepts and what the chart renders, so treat it as the
 larger-blast-radius change of the two.
+
+## Moving from chart 1.13.0 to 1.14.0
+
+`helm_release.n8n` plans the `version` change plus the removal of the
+module's own `N8N_AVAILABLE_BINARY_DATA_MODES` env entry (below), so every
+n8n pod rolls once. The chart's own template changes render nothing
+different for this module's configurations. The three upstream changes:
+
+- **`WEBHOOK_URL` renamed to `N8N_WEBHOOK_URL`** in the chart ConfigMap and
+  pod env (n8n-hosting #184). The chart emits it only from `webhook.url` or
+  an enabled chart ingress; this module sets neither and already renders
+  `N8N_WEBHOOK_URL` itself through `config.extraEnv`.
+- **`N8N_AVAILABLE_BINARY_DATA_MODES` dropped from the chart's S3 block**
+  (n8n-hosting #185). This module never enables `s3`. In the same change
+  the module stops rendering the variable itself and replaces
+  `n8n_available_binary_data_modes` with `azure_blob_retain_read_access`.
+  n8n 2.x never read the variable, so the env removal changes no behavior,
+  but it is a pod-template change: every n8n pod rolls once on this apply.
+  Setting the old input now fails the plan with a migration message. If
+  your list contained `azure` and both storage modes are `database`, set
+  `azure_blob_retain_read_access = true` in the same change that deletes
+  it; see [Binary data modes](./data-storage.md#binary-data-modes).
+- **Values validation reports every failure in one render** (n8n-hosting
+  #209). Only the error text changes when several checks fail at once.
+
+The chart's `appVersion` moved to `2.41.4`; inert here because
+`n8n_image_tag` always sets the image.
 
 ## Moving from chart 1.11.0 to 1.13.0
 
@@ -96,7 +123,7 @@ main, so the sidecar was idle there. Main pods roll once to drop the
 container. `n8n_task_runner_*` resources now describe worker pods only, and
 the advisory capacity check (`check.autoscaling_maxima_fit_aks_capacity`)
 stops adding the sidecar request to the main ceiling for the verified
-charts `1.12.0` and `1.13.0` (`local.n8n_chart_has_worker_only_runners`);
+charts `1.12.0`, `1.13.0`, and `1.14.0` (`local.n8n_chart_has_worker_only_runners`);
 any other `n8n_chart_version` keeps the conservative allowance. Verify
 JavaScript and Python Code nodes through workers after the upgrade,
 including manual executions from the editor.

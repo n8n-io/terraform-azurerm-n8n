@@ -896,6 +896,10 @@ if echo "$worker_containers" | grep -qiE "runner"; then
       warn "No broker-connection line in worker runner logs (last 100 lines)"
       info "Verify: kubectl logs $worker_pod -n $NAMESPACE -c $runner_container"
     fi
+  elif [[ "$WORKER_DRAINED" == "true" ]]; then
+    skip "Worker runner broker connection: workers are paused at 0 replicas (n8n_worker_keda_paused_replica_count = 0)"
+  else
+    warn "No Running n8n-worker pod to read runner sidecar logs from"
   fi
 else
   warn "Task runner sidecar not present on n8n-worker — task runners are likely disabled in the chart values"

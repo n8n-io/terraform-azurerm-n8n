@@ -105,6 +105,27 @@ locals {
   n8n_editor_base_url       = "https://${var.n8n_domain}"
   n8n_effective_webhook_url = coalesce(var.n8n_webhook_url, local.n8n_editor_base_url)
 
+  # n8n reads N8N_WEBHOOK_URL from 2.30.0 on and logs WEBHOOK_URL as
+  # deprecated from that release. An older image reads only WEBHOOK_URL and
+  # otherwise builds webhook URLs from N8N_PROTOCOL://N8N_HOST:N8N_PORT, which
+  # here is the internal http://<n8n_domain>:5678/. So the legacy name is sent
+  # only to images older than 2.30.0. n8n_image_tag's own validation
+  # guarantees a leading major.minor.patch version, so the regex always
+  # matches. Same cut-over as terraform-aws-n8n's
+  # n8n_needs_legacy_webhook_url_env, without its null-tag and custom-image
+  # fallbacks: this module never leaves the tag to the chart.
+  n8n_image_version_parts = regex("^([0-9]+)\\.([0-9]+)\\.", var.n8n_image_tag)
+  n8n_needs_legacy_webhook_url_env = (
+    tonumber(local.n8n_image_version_parts[0]) < 2 || (
+      tonumber(local.n8n_image_version_parts[0]) == 2 &&
+      tonumber(local.n8n_image_version_parts[1]) < 30
+    )
+  )
+  n8n_webhook_url_env = concat(
+    [{ name = "N8N_WEBHOOK_URL", value = local.n8n_effective_webhook_url }],
+    local.n8n_needs_legacy_webhook_url_env ? [{ name = "WEBHOOK_URL", value = local.n8n_effective_webhook_url }] : [],
+  )
+
   appgw_frontend_ip_configuration_name = "appgw-frontend-ip"
   appgw_ingress_default_annotations = merge(
     {
@@ -303,7 +324,8 @@ locals {
   )
 
   # The chart's values.yaml default for redis.worker.timeout, in seconds.
-  # Verified for charts 1.11.0 (the worker-pools preview base) and 1.13.0.
+  # Verified for charts 1.11.0 (the worker-pools preview base), 1.13.0, and
+  # 1.14.0.
   # Used only by check.graceful_shutdown_fits_grace_period (n8n.tf) when
   # n8n_graceful_shutdown_timeout is null. tests/scripts/check-n8n-chart.sh
   # renders the pinned chart and fails if its default drifts from this value,
@@ -316,7 +338,6 @@ locals {
   # name so the arbitrary environment escape hatch cannot replace them.
   n8n_managed_env_names = [
     "EXECUTIONS_MODE",
-    "N8N_AVAILABLE_BINARY_DATA_MODES",
     "N8N_COMMUNITY_PACKAGES_PREVENT_LOADING",
     "N8N_COMMUNITY_PACKAGES_REGISTRY",
     "N8N_CONCURRENCY_PRODUCTION_LIMIT",
@@ -361,7 +382,17 @@ locals {
     "N8N_WORKER_POOLS_ENABLED",
     "N8N_WORKER_POOL_NAME",
     # Keep the deprecated name reserved so callers cannot configure both forms.
+    # The module itself still sends it to images older than n8n 2.30.0
+    # (local.n8n_needs_legacy_webhook_url_env).
     "WEBHOOK_URL",
+  ]
+
+  # Env vars n8n has deprecated and logs a warning for on every start, even
+  # though it otherwise ignores them. The module never sets these, and the
+  # n8n_extra_env/n8n_worker_extra_env/pool extra_env inputs reject them so a
+  # caller cannot bring the warning back either.
+  n8n_deprecated_env_names = [
+    "N8N_AVAILABLE_BINARY_DATA_MODES",
   ]
 
   n8n_managed_env_prefixes = [
@@ -429,11 +460,15 @@ locals {
   })
 
   # Storage mode selection stays separate from connection configuration. Azure
-  # credentials remain rendered while Azure is an active or historical binary
-  # backend, or the active execution backend.
+  # credentials remain rendered while Azure is an active binary or execution
+  # backend, or while azure_blob_retain_read_access keeps historical Azure
+  # objects readable. N8N_AVAILABLE_BINARY_DATA_MODES is not rendered: n8n 2.x
+  # never reads it (no @Env on BinaryDataConfig.availableModes); see
+  # local.n8n_deprecated_env_names.
   n8n_azure_storage_enabled = (
-    contains(var.n8n_available_binary_data_modes, "azure") ||
-    var.n8n_execution_data_storage_mode == "azure"
+    var.n8n_binary_data_storage_mode == "azure" ||
+    var.n8n_execution_data_storage_mode == "azure" ||
+    var.azure_blob_retain_read_access
   )
 
   # One canonical Azure Blob connection object for all-pod environment wiring.

@@ -323,8 +323,10 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
     || { echo "FAIL: ${template} unexpectedly renders the deprecated WEBHOOK_URL alias" >&2; exit 1; }
 done
 
-jq -e '(.data | has("WEBHOOK_URL")) | not' "$tmp/multi-main-configmap.json" >/dev/null \
-  || { echo "FAIL: the chart ConfigMap unexpectedly carries a WEBHOOK_URL key (webhook.url or ingress must remain unset)" >&2; exit 1; }
+# Chart 1.14.0 (#184) renamed this ConfigMap key from WEBHOOK_URL to
+# N8N_WEBHOOK_URL; either one here would duplicate the module's own env entry.
+jq -e '(.data | has("WEBHOOK_URL") or has("N8N_WEBHOOK_URL")) | not' "$tmp/multi-main-configmap.json" >/dev/null \
+  || { echo "FAIL: the chart ConfigMap unexpectedly carries a WEBHOOK_URL or N8N_WEBHOOK_URL key (webhook.url or ingress must remain unset)" >&2; exit 1; }
 
 echo "PASS: execution save-policy values and current URL naming are correct on every applicable container"
 
@@ -578,6 +580,31 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
 done
 
 echo "PASS: worker pools render one labelled Deployment and one ScaledObject per pool on the preview chart, with the pool's queue, the module threshold, enableTLS, and the shared TriggerAuthentication matching the default worker's scaler; omitted by default"
+
+echo "== Verify no deprecated n8n environment variable renders =="
+# n8n deprecated N8N_AVAILABLE_BINARY_DATA_MODES and warns on every start.
+# Scans every rendered manifest from every fixture: env entries on any
+# container, and ConfigMap data keys. The *-values.json fixtures hold the
+# Helm values YAML string, not JSON, so they are skipped; every other file
+# must parse, because jq -e exits 1 for "not found" and >1 for an error, and
+# treating an unparseable manifest as "not found" would pass silently.
+scanned=0
+for f in "$tmp"/*.json "$tmp"/preview/*.json; do
+  [[ -e "$f" ]] || continue
+  [[ "$f" == *-values.json ]] && continue
+  rc=0
+  jq -e '[.. | objects | select((.name? == "N8N_AVAILABLE_BINARY_DATA_MODES") or has("N8N_AVAILABLE_BINARY_DATA_MODES"))] | length > 0' "$f" >/dev/null || rc=$?
+  if (( rc == 0 )); then
+    echo "FAIL: N8N_AVAILABLE_BINARY_DATA_MODES is rendered in $(basename "$f"); n8n deprecated it and warns on every start" >&2
+    exit 1
+  elif (( rc > 1 )); then
+    echo "FAIL: could not parse rendered manifest $(basename "$f") (jq exit ${rc}), so the deprecated-env scan cannot vouch for it" >&2
+    exit 1
+  fi
+  scanned=$((scanned + 1))
+done
+(( scanned > 0 )) || { echo "FAIL: the deprecated-env scan found no rendered manifests to check" >&2; exit 1; }
+echo "PASS: N8N_AVAILABLE_BINARY_DATA_MODES absent from all ${scanned} rendered manifests"
 
 echo "== Self-test: duplicate managed environment-entry detector =="
 # This does not scan module output; it proves the jq expression the checks

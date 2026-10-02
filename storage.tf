@@ -109,14 +109,16 @@ resource "azurerm_private_endpoint" "blob" {
 # workload identity cannot read sibling containers a caller may add to the same
 # account. Applies on both the module-managed container (create_blob_storage =
 # true) and a customer-managed container when automatic authentication is
-# selected (design.md decision 3). Omitted for the connection-string and
+# selected (design.md decision 3), and only while local.n8n_azure_storage_enabled
+# (an Azure storage mode, or azure_blob_retain_read_access): a database-only
+# deployment gets no Blob permissions. Omitted for the connection-string and
 # account-key compatibility credential modes because n8n does not use
 # workload identity for Blob access in those modes. A customer-managed
 # container requires the applying identity to hold role-assignment
 # permission at local.effective_blob_container_id's scope, which may sit in
 # a different resource group or subscription than var.resource_group_name.
 resource "azurerm_role_assignment" "n8n_blob_data_contributor" {
-  count = local.azure_blob_connection.auth_auto_detect ? 1 : 0
+  count = local.n8n_azure_storage_enabled && local.azure_blob_connection.auth_auto_detect ? 1 : 0
 
   scope                = local.effective_blob_container_id
   role_definition_name = "Storage Blob Data Contributor"

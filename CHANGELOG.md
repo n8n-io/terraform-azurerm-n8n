@@ -11,6 +11,57 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Changed
 
+- **Breaking: `n8n_available_binary_data_modes` removed, replaced by
+  `azure_blob_retain_read_access`** (bool, default `false`). The list only
+  rendered `N8N_AVAILABLE_BINARY_DATA_MODES`, which n8n 2.x never reads
+  (`BinaryDataConfig.availableModes` has no `@Env` binding, and n8n logs the
+  variable as safe to remove). n8n registers the Azure backend whenever
+  the Azure container is configured, so what the list really controlled
+  was whether the module kept the Azure connection and Blob role
+  assignment after writes moved to `database`. The new flag controls that
+  directly, for binary and execution data alike. The input stays declared
+  for one release as a tombstone: any non-null value fails the plan with a
+  migration message instead of a bare "Unsupported argument" error.
+  Migration: delete `n8n_available_binary_data_modes`. If it contained
+  `azure` and both `n8n_binary_data_storage_mode` and
+  `n8n_execution_data_storage_mode` are `database`, set
+  `azure_blob_retain_read_access = true` in the same change. Deleting the
+  list alone removes the Azure connection (and, with the default
+  workload-identity authentication, the role assignment), and n8n does
+  not fail at startup; reads of the retained Azure objects fail later.
+  An Azure write mode already keeps the connection, so no flag is needed
+  then. See `docs/data-storage.md`.
+- `azurerm_role_assignment.n8n_blob_data_contributor` is now gated on
+  Azure being in use (an Azure storage mode, or
+  `azure_blob_retain_read_access = true`). A deployment where both modes
+  are `database` and `azure_blob_retain_read_access` is `false` no longer
+  grants the workload identity Storage Blob Data Contributor; the next
+  apply destroys that role assignment.
+  `helm_release.n8n` now also depends on that role assignment, so a newly
+  granted role exists before n8n pods roll.
+- **Default `n8n_chart_version` bumped to `1.14.0`** (was `1.13.0`),
+  matching `terraform-aws-n8n` #160. Every n8n pod rolls once, for the
+  removed `N8N_AVAILABLE_BINARY_DATA_MODES` env entry. See
+  `docs/upgrading-n8n.md`.
+  - Chart `appVersion` moves from n8n `2.40.5` to `2.41.4` (n8n-hosting
+    #213). Inert here: this module always pins `n8n_image_tag` (default
+    stays `2.35.0`).
+  - No changes to the replica, KEDA, or task-runner templates;
+    `deployment-main.yaml` is unchanged, so `1.14.0` joins
+    `local.n8n_chart_has_worker_only_runners`.
+  - #185: the chart stops rendering `N8N_AVAILABLE_BINARY_DATA_MODES`. The
+    module no longer sets it either, so n8n's deprecation warning on every
+    start is gone. `n8n_extra_env`, `n8n_worker_extra_env`, and
+    `n8n_worker_pools[*].extra_env` reject it at plan time through the new
+    `local.n8n_deprecated_env_names`, and `tests/scripts/check-n8n-chart.sh`
+    fails if any rendered manifest carries it. Callers who set it through
+    one of those inputs get a plan-time error until they remove the entry.
+  - #184 (missing from the upstream release notes): the chart's ConfigMap
+    now emits `N8N_WEBHOOK_URL` instead of `WEBHOOK_URL`. No effect here:
+    the chart emits it only from `webhook.url` or chart ingress, which this
+    module sets neither of, and the module renders `N8N_WEBHOOK_URL` itself
+    through `config.extraEnv`.
+  - #209: chart values validation now reports every failure in one render.
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
   with `validity_in_months` (whole number, 1 to 120, default 12), matching
   the Key Vault certificate policy's own unit. The old input was converted
@@ -27,6 +78,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Fixed
 
+- Webhook URLs on n8n images older than `2.30.0`. Those images do not read
+  `N8N_WEBHOOK_URL`, which was the only webhook variable the module
+  rendered, so they advertised `http://<n8n_domain>:5678/` instead of the
+  public HTTPS URL. The module now also renders the legacy `WEBHOOK_URL`,
+  with the same value, when `n8n_image_tag` is older than `2.30.0`.
+  `2.30.0` and later images get only `N8N_WEBHOOK_URL`, so the default
+  `2.35.0` deployment renders no new variable. Same cut-over as
+  `terraform-aws-n8n` #160.
 - `modules/tls-self-signed` now tags its Key Vault certificate with
   `ManagedBy = terraform`, `Project = n8n`, the caller's `common_tags`,
   and `Name = <friendly_name_prefix>-n8n-tls`, matching the root module.

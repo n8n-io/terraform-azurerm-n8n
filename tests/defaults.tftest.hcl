@@ -1341,8 +1341,8 @@ run "controllers_and_base_n8n_release_in_plan" {
   }
 
   assert {
-    condition     = helm_release.n8n.version == "1.13.0" && var.n8n_image_tag == "2.35.0"
-    error_message = "The base release must pin chart 1.13.0 and n8n 2.35.0."
+    condition     = helm_release.n8n.version == "1.14.0" && var.n8n_image_tag == "2.35.0"
+    error_message = "The base release must pin chart 1.14.0 and n8n 2.35.0."
   }
 
   assert {
@@ -3147,7 +3147,7 @@ run "azure_binary_defaults_and_disabled_observability_render" {
   assert {
     condition = (
       var.n8n_binary_data_storage_mode == "azure" &&
-      toset(var.n8n_available_binary_data_modes) == toset(["azure"]) &&
+      !var.azure_blob_retain_read_access &&
       var.n8n_execution_data_storage_mode == "database" &&
       local.n8n_azure_storage_enabled
     )
@@ -3158,7 +3158,6 @@ run "azure_binary_defaults_and_disabled_observability_render" {
     condition = alltrue([
       for name, value in {
         N8N_DEFAULT_BINARY_DATA_MODE                = "azure"
-        N8N_AVAILABLE_BINARY_DATA_MODES             = "azure"
         N8N_EXECUTION_DATA_STORAGE_MODE             = "database"
         N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME     = "n8ntestn8nfiles"
         N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME   = "n8n-data"
@@ -3166,6 +3165,14 @@ run "azure_binary_defaults_and_disabled_observability_render" {
       } : one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == name]) == value
     ])
     error_message = "Azure binary defaults and DefaultAzureCredential settings must render through the all-pod environment contract."
+  }
+
+  assert {
+    condition = length([
+      for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
+      if env.name == "N8N_AVAILABLE_BINARY_DATA_MODES"
+    ]) == 0
+    error_message = "N8N_AVAILABLE_BINARY_DATA_MODES must not render; n8n 2.x ignores it and logs it as deprecated."
   }
 
   assert {
@@ -3196,7 +3203,6 @@ run "azure_execution_mode_is_independent_from_binary_mode" {
     create_redis                               = false
     redis_external_host                        = "redis.external.example.com"
     n8n_binary_data_storage_mode               = "database"
-    n8n_available_binary_data_modes            = ["database"]
     n8n_execution_data_storage_mode            = "azure"
     azure_blob_container_stores_execution_data = true
   }
@@ -3316,26 +3322,6 @@ run "rejects_inline_memory_binary_data_storage_mode" {
   expect_failures = [var.n8n_binary_data_storage_mode]
 }
 
-run "rejects_filesystem_available_binary_data_modes" {
-  command = plan
-
-  variables {
-    n8n_available_binary_data_modes = ["azure", "filesystem"]
-  }
-
-  expect_failures = [var.n8n_available_binary_data_modes]
-}
-
-run "rejects_inline_memory_available_binary_data_modes" {
-  command = plan
-
-  variables {
-    n8n_available_binary_data_modes = ["azure", "default"]
-  }
-
-  expect_failures = [var.n8n_available_binary_data_modes]
-}
-
 run "rejects_filesystem_execution_data_storage_mode" {
   command = plan
 
@@ -3361,7 +3347,6 @@ run "database_only_modes_allow_pre_azure_n8n_version" {
 
   variables {
     n8n_binary_data_storage_mode    = "database"
-    n8n_available_binary_data_modes = ["database"]
     n8n_execution_data_storage_mode = "database"
     n8n_image_tag                   = "2.28.9"
   }
@@ -3370,6 +3355,259 @@ run "database_only_modes_allow_pre_azure_n8n_version" {
     condition     = var.n8n_image_tag == "2.28.9" && !local.n8n_azure_storage_enabled
     error_message = "The n8n 2.29 floor must apply to Azure modes rather than an unrelated database-only deployment."
   }
+}
+
+run "retained_azure_read_access_keeps_blob_connection" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+    azure_blob_retain_read_access   = true
+  }
+
+  assert {
+    condition     = local.n8n_azure_storage_enabled && length(azurerm_role_assignment.n8n_blob_data_contributor) == 1
+    error_message = "azure_blob_retain_read_access must keep the Azure connection and Blob role assignment after writes move to database."
+  }
+}
+
+# Covers leaving Azure for both binary and execution data on a caller-managed
+# container: the retained role must target the caller's container, not a
+# module-managed one that does not exist on this path.
+run "retained_azure_read_access_scopes_role_to_existing_container" {
+  command = plan
+
+  variables {
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "existingaccount"
+    existing_blob_container_name          = "existing-container"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/existingaccount/blobServices/default/containers/existing-container"
+    existing_blob_endpoint                = "https://existingaccount.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+    n8n_binary_data_storage_mode          = "database"
+    n8n_execution_data_storage_mode       = "database"
+    azure_blob_retain_read_access         = true
+  }
+
+  assert {
+    condition = (
+      length(azurerm_storage_container.n8n) == 0 &&
+      length(azurerm_role_assignment.n8n_blob_data_contributor) == 1 &&
+      azurerm_role_assignment.n8n_blob_data_contributor[0].scope == "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/existingaccount/blobServices/default/containers/existing-container" &&
+      nonsensitive(local.azure_blob_connection).container_name == "existing-container"
+    )
+    error_message = "azure_blob_retain_read_access with create_blob_storage = false must keep the role assignment scoped to existing_blob_container_id and the connection on existing_blob_container_name."
+  }
+}
+
+# The three runs below decode the rendered Helm values, so they use external
+# PostgreSQL/Redis and an identity override to keep helm_release.n8n.values
+# known at plan time (see AGENTS.md).
+run "retained_azure_read_access_renders_existing_container_connection" {
+  command = plan
+
+  variables {
+    create_database                       = false
+    postgres_external_host                = "external-pg.example.com"
+    postgres_external_username            = "n8n"
+    postgres_external_password            = "external-password-value"
+    create_redis                          = false
+    redis_external_host                   = "redis.external.example.com"
+    create_blob_storage                   = false
+    existing_blob_storage_account_name    = "existingaccount"
+    existing_blob_container_name          = "existing-container"
+    existing_blob_container_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Storage/storageAccounts/existingaccount/blobServices/default/containers/existing-container"
+    existing_blob_endpoint                = "https://existingaccount.blob.core.windows.net/"
+    existing_blob_prerequisites_confirmed = true
+    n8n_binary_data_storage_mode          = "database"
+    n8n_execution_data_storage_mode       = "database"
+    azure_blob_retain_read_access         = true
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for name, value in {
+        N8N_DEFAULT_BINARY_DATA_MODE                = "database"
+        N8N_EXECUTION_DATA_STORAGE_MODE             = "database"
+        N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME   = "existing-container"
+        N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME     = "existingaccount"
+        N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT = "true"
+      } : contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = name, value = value })
+    ])
+    error_message = "Retained Azure read access on a caller-managed container must render that container's connection with workload-identity auto-detection while both write modes are database."
+  }
+}
+
+run "retained_azure_read_access_renders_account_key_connection" {
+  command = plan
+
+  variables {
+    create_database                 = false
+    postgres_external_host          = "external-pg.example.com"
+    postgres_external_username      = "n8n"
+    postgres_external_password      = "external-password-value"
+    create_redis                    = false
+    redis_external_host             = "redis.external.example.com"
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+    azure_blob_retain_read_access   = true
+    azure_blob_account_key          = "synthetic-storage-account-key"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      length(azurerm_role_assignment.n8n_blob_data_contributor) == 0 &&
+      contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME", value = "n8n-data" }) &&
+      contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_KEY", value = "synthetic-storage-account-key" }) &&
+      length([
+        for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
+        if env.name == "N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT"
+      ]) == 0
+    )
+    error_message = "Retained Azure read access with account-key authentication must render the container and account key, no auto-detection, and no workload-identity role assignment."
+  }
+}
+
+run "database_only_modes_render_no_azure_connection" {
+  command = plan
+
+  variables {
+    create_database                 = false
+    postgres_external_host          = "external-pg.example.com"
+    postgres_external_username      = "n8n"
+    postgres_external_password      = "external-password-value"
+    create_redis                    = false
+    redis_external_host             = "redis.external.example.com"
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = length([
+      for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
+      if startswith(env.name, "N8N_EXTERNAL_STORAGE_AZURE_")
+    ]) == 0
+    error_message = "Without an Azure mode or azure_blob_retain_read_access, no Azure storage connection variable may render."
+  }
+}
+
+# Tombstone for the input removed after 0.1.0. Any non-null value, including
+# the old default, must fail with the migration message rather than be
+# silently ignored.
+run "rejects_removed_available_binary_data_modes" {
+  command = plan
+
+  variables {
+    n8n_available_binary_data_modes = ["azure"]
+  }
+
+  expect_failures = [var.n8n_available_binary_data_modes]
+}
+
+run "rejects_removed_available_binary_data_modes_after_leaving_azure" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_available_binary_data_modes = ["database", "azure"]
+  }
+
+  expect_failures = [var.n8n_available_binary_data_modes]
+}
+
+run "database_only_modes_grant_no_blob_role" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+  }
+
+  assert {
+    condition     = !local.n8n_azure_storage_enabled && length(azurerm_role_assignment.n8n_blob_data_contributor) == 0
+    error_message = "A database-only deployment without azure_blob_retain_read_access must not grant the workload identity Blob Data Contributor."
+  }
+}
+
+# n8n reads N8N_WEBHOOK_URL from 2.30.0 on; an older image reads only the
+# legacy WEBHOOK_URL and would otherwise advertise http://<host>:5678.
+run "renders_legacy_webhook_url_for_pre_2_30_images" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+    n8n_image_tag                   = "2.29.9-custom"
+    n8n_task_runner_image_tag       = "2.29.9"
+    n8n_webhook_url                 = "https://hooks.example.com"
+  }
+
+  assert {
+    condition = local.n8n_needs_legacy_webhook_url_env && local.n8n_webhook_url_env == [
+      { name = "N8N_WEBHOOK_URL", value = "https://hooks.example.com" },
+      { name = "WEBHOOK_URL", value = "https://hooks.example.com" },
+    ]
+    error_message = "An n8n image older than 2.30.0 must receive WEBHOOK_URL with the same value as N8N_WEBHOOK_URL."
+  }
+}
+
+run "omits_legacy_webhook_url_from_2_30_0" {
+  command = plan
+
+  variables {
+    n8n_image_tag = "2.30.0"
+  }
+
+  assert {
+    condition = !local.n8n_needs_legacy_webhook_url_env && local.n8n_webhook_url_env == [
+      { name = "N8N_WEBHOOK_URL", value = "https://n8n.example.com" },
+    ]
+    error_message = "n8n 2.30.0 and later read N8N_WEBHOOK_URL, so the deprecated WEBHOOK_URL must not render."
+  }
+}
+
+run "retained_azure_read_access_enforces_n8n_2_29_floor" {
+  command = plan
+
+  variables {
+    n8n_binary_data_storage_mode    = "database"
+    n8n_execution_data_storage_mode = "database"
+    azure_blob_retain_read_access   = true
+    n8n_image_tag                   = "2.28.9"
+  }
+
+  expect_failures = [var.n8n_image_tag]
 }
 
 run "observability_controls_render_on_all_pods" {
@@ -3541,7 +3779,6 @@ run "rejects_storage_and_observability_environment_overrides" {
   variables {
     n8n_extra_env = [
       { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
-      { name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = "filesystem" },
       { name = "N8N_EXECUTION_DATA_STORAGE_MODE", value = "filesystem" },
       { name = "N8N_METRICS", value = "true" },
       { name = "N8N_OTEL_ENABLED", value = "true" },
@@ -3829,7 +4066,7 @@ run "allows_worker_pause_on_supported_charts" {
 
   assert {
     condition     = local.n8n_worker_keda_pause_supported
-    error_message = "The default chart 1.13.0 must count as pause-capable."
+    error_message = "The default chart 1.14.0 must count as pause-capable."
   }
 }
 
@@ -7505,6 +7742,44 @@ run "worker_pools_reject_extra_env_overriding_the_pool_name" {
   expect_failures = [var.n8n_worker_pools]
 }
 
+# N8N_AVAILABLE_BINARY_DATA_MODES is in local.n8n_deprecated_env_names, not
+# local.n8n_managed_env_names; each run sets only that name, so a failure
+# proves the dedicated deprecated-name validation fires.
+run "extra_env_rejects_deprecated_binary_data_modes" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [{ name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = "filesystem,s3" }]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "worker_extra_env_rejects_deprecated_binary_data_modes" {
+  command = plan
+
+  variables {
+    n8n_worker_extra_env = [{ name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = "filesystem,s3" }]
+  }
+
+  expect_failures = [var.n8n_worker_extra_env]
+}
+
+run "worker_pools_reject_deprecated_binary_data_modes" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0-preview.workerpools.1"
+    n8n_image_tag     = "2.39.0"
+    n8n_worker_pools = [{
+      name      = "gpu"
+      extra_env = [{ name = "N8N_AVAILABLE_BINARY_DATA_MODES", value = "filesystem,s3" }]
+    }]
+  }
+
+  expect_failures = [var.n8n_worker_pools]
+}
+
 run "worker_pools_reject_extra_env_overriding_a_module_managed_variable" {
   command = plan
 
@@ -7599,8 +7874,8 @@ run "capacity_model_drops_main_runner_on_the_default_chart" {
   command = plan
 
   assert {
-    condition     = var.n8n_chart_version == "1.13.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
-    error_message = "Upstream chart 1.13.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
+    condition     = var.n8n_chart_version == "1.14.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
+    error_message = "Upstream chart 1.14.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
   }
 }
 

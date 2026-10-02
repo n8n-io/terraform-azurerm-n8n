@@ -100,8 +100,10 @@ lifecycle policy) behind `create_blob_storage`, matching the AKS `[0]`-index
 shape from section 2. `azurerm_role_assignment.n8n_blob_data_contributor` is
 scoped to `local.effective_blob_container_id` (module-managed container or
 `existing_blob_container_id`) and gated on `local.azure_blob_connection.auth_auto_detect`
-rather than on `create_blob_storage` — it exists whenever automatic
-authentication is selected, on either branch, and is omitted only for the
+and `local.n8n_azure_storage_enabled` rather than on `create_blob_storage`:
+it exists whenever automatic authentication is selected and Azure is an
+active storage mode or `azure_blob_retain_read_access` is true, on either
+branch, and is omitted for database-only deployments and for the
 connection-string/account-key compatibility modes. `local.azure_blob_connection.endpoint`
 keeps `var.azure_blob_endpoint` as an override that short-circuits
 `local.effective_blob_endpoint` on both branches — collapsing it into
@@ -574,10 +576,21 @@ count against the Flexible Server's `max_connections` exactly like raising
 `n8n_worker_keda_max_replicas` does; budget the pool ceilings into the same
 arithmetic, not on top of it unaccounted for.
 
-## Chart 1.13.0 bump (`feat/chart-1.13.0`)
+## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
-`n8n_chart_version` defaults to `1.13.0`, matching the AWS sibling after
-`terraform-aws-n8n` #145. Run `tests/scripts/chart-values-diff.sh
+This section records the 1.11.0 to 1.13.0 bump. The current default is
+`1.14.0` (`feat/chart-1.14.0`: see `docs/upgrading-n8n.md`; the chart change
+there is inert for this module, and `N8N_AVAILABLE_BINARY_DATA_MODES` is now
+rejected through `local.n8n_deprecated_env_names`), matching the AWS sibling
+after `terraform-aws-n8n` #160. The removed `n8n_available_binary_data_modes`
+stays declared for one release as a tombstone (null-only validation plus a
+`tflint-ignore`); delete it with its two `rejects_removed_*` runs in the
+release after. Like the AWS sibling, `WEBHOOK_URL` is sent only to
+`n8n_image_tag` versions below 2.30.0 (`local.n8n_needs_legacy_webhook_url_env`),
+the first release that reads `N8N_WEBHOOK_URL`; since this module always
+pins a concrete tag, it needs none of AWS's null-tag fallbacks. At the time, `n8n_chart_version` defaulted to
+`1.13.0`, matching the AWS sibling after `terraform-aws-n8n` #145. Run
+`tests/scripts/chart-values-diff.sh
 <candidate>` before any future bump, but also diff `templates/` directly:
 the values diff for 1.11.0 to 1.13.0 showed only the pause keys and the
 `image.tag` default, while the template diff carried the two changes that
@@ -598,8 +611,8 @@ gate. Second, `n8n.mainTaskRunnersEnabled` (n8n-hosting #179) renders the
 task-runner sidecar, its env, and the launcher ConfigMap mount on main only
 in standalone mode; this module always runs queue mode, so only workers
 carry the sidecar, `scaling.tf`'s capacity model drops the sidecar request
-from the main ceiling only for the verified upstream charts `1.12.0` and
-`1.13.0` (`local.n8n_chart_has_worker_only_runners`, the same version-gated
+from the main ceiling only for the verified upstream charts `1.12.0`,
+`1.13.0`, and `1.14.0` (`local.n8n_chart_has_worker_only_runners`, the same version-gated
 shape as `terraform-aws-n8n` minus its repository check, since this module
 hardcodes the OCI repository; the `1.11.0`-based worker-pools preview
 chart therefore still counts the main sidecar), and the launcher-config
