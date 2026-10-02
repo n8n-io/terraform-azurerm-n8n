@@ -418,6 +418,127 @@ run "rejects_malformed_aks_node_vm_size" {
   ]
 }
 
+run "renders_valid_aks_system_node_overrides" {
+  command = plan
+
+  variables {
+    aks_system_node_vm_size   = "Standard_D2s_v5"
+    aks_system_node_count_min = 1
+    aks_system_node_count_max = 3
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].vm_size == "Standard_D2s_v5"
+    error_message = "default_node_pool.vm_size must use aks_system_node_vm_size when it overrides the shared aks_node_vm_size."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].min_count == 1
+    error_message = "default_node_pool.min_count must use aks_system_node_count_min when it overrides the shared aks_node_count_min."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].max_count == 3
+    error_message = "default_node_pool.max_count must use aks_system_node_count_max when it overrides the shared aks_node_count_max."
+  }
+
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster_node_pool.n8n_user[0].vm_size == var.aks_node_vm_size &&
+      azurerm_kubernetes_cluster_node_pool.n8n_user[0].min_count == var.aks_node_count_min &&
+      azurerm_kubernetes_cluster_node_pool.n8n_user[0].max_count == var.aks_node_count_max
+    )
+    error_message = "The user (n8nuser) pool must stay sized from the shared aks_node_* variables regardless of any aks_system_node_* override."
+  }
+}
+
+run "aks_system_node_overrides_default_to_shared_values" {
+  command = plan
+
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].vm_size == var.aks_node_vm_size &&
+      azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].min_count == var.aks_node_count_min &&
+      azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].max_count == var.aks_node_count_max
+    )
+    error_message = "With every aks_system_node_* override left null (the default), the system pool must render identically to the pre-existing shared-sizing behavior."
+  }
+}
+
+run "rejects_malformed_aks_system_node_vm_size" {
+  command = plan
+
+  variables {
+    aks_system_node_vm_size = "not-a-sku"
+  }
+
+  expect_failures = [
+    var.aks_system_node_vm_size,
+  ]
+}
+
+run "rejects_zero_aks_system_node_count_min" {
+  command = plan
+
+  variables {
+    aks_system_node_count_min = 0
+  }
+
+  expect_failures = [
+    var.aks_system_node_count_min,
+  ]
+}
+
+run "rejects_aks_system_node_count_max_below_effective_min" {
+  command = plan
+
+  variables {
+    aks_system_node_count_min = 5
+    aks_system_node_count_max = 4
+  }
+
+  expect_failures = [
+    var.aks_system_node_count_max,
+  ]
+}
+
+run "rejects_aks_system_node_count_max_below_shared_min" {
+  command = plan
+
+  variables {
+    aks_node_count_min        = 5
+    aks_system_node_count_max = 4
+  }
+
+  expect_failures = [
+    var.aks_system_node_count_max,
+  ]
+}
+
+run "rejects_fractional_aks_system_node_count_min" {
+  command = plan
+
+  variables {
+    aks_system_node_count_min = 1.5
+  }
+
+  expect_failures = [
+    var.aks_system_node_count_min,
+  ]
+}
+
+run "rejects_fractional_aks_system_node_count_max" {
+  command = plan
+
+  variables {
+    aks_system_node_count_max = 1.5
+  }
+
+  expect_failures = [
+    var.aks_system_node_count_max,
+  ]
+}
+
 run "rejects_malformed_aks_availability_zones" {
   command = plan
 
@@ -4144,7 +4265,7 @@ run "known_sku_warns_when_autoscaler_maxima_exceed_capacity" {
   assert {
     condition = (
       local.aks_node_vcpus == 4 &&
-      local.aks_modeled_node_count == 12 &&
+      local.aks_modeled_system_node_count + local.aks_modeled_user_node_count == 12 &&
       local.n8n_peak_cpu_request_millis > local.n8n_schedulable_cpu_millis
     )
     error_message = "The default Standard_D4s_v4 map and both AKS pool ceilings must drive an objective over-capacity warning."
@@ -4165,7 +4286,7 @@ run "known_larger_sku_capacity_fit_stays_clean" {
   assert {
     condition = (
       local.aks_node_vcpus == 8 &&
-      local.aks_modeled_node_count == 4 &&
+      local.aks_modeled_system_node_count + local.aks_modeled_user_node_count == 4 &&
       local.n8n_peak_cpu_request_millis <= local.n8n_schedulable_cpu_millis
     )
     error_message = "A known 8-vCPU SKU with internally consistent maxima must fit without a capacity warning."
@@ -4187,6 +4308,46 @@ run "unknown_vm_sku_silences_advisory_capacity_check" {
       kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook[0].spec[0].max_replicas == 8
     )
     error_message = "A syntactically valid VM SKU outside the reviewed map must suppress only the advisory check and leave the plan intact."
+  }
+}
+
+run "mixed_pool_sizes_sum_separate_capacity_contributions" {
+  command = plan
+
+  variables {
+    aks_node_vm_size          = "Standard_D2s_v4"
+    aks_node_count_max        = 4
+    aks_system_node_vm_size   = "Standard_D8s_v4"
+    aks_system_node_count_max = 2
+  }
+
+  assert {
+    condition = (
+      local.aks_node_vcpus == 2 &&
+      local.aks_system_node_vcpus == 8 &&
+      local.aks_modeled_user_node_count == 4 &&
+      local.aks_modeled_system_node_count == 2 &&
+      local.n8n_capacity_model_readable
+    )
+    error_message = "A system pool overridden to a different, known VM size must contribute its own vCPU count and ceiling to the capacity model instead of assuming the user pool's size."
+  }
+}
+
+run "unknown_system_vm_sku_silences_advisory_capacity_check_even_with_known_user_sku" {
+  command = plan
+
+  variables {
+    aks_node_vm_size        = "Standard_D8s_v4"
+    aks_system_node_vm_size = "Standard_CustomMonster_v1"
+  }
+
+  assert {
+    condition = (
+      local.aks_node_vcpus_derived != null &&
+      local.aks_system_node_vcpus_derived == null &&
+      !local.n8n_capacity_model_readable
+    )
+    error_message = "The capacity model must stay silent when either pool's effective VM size is outside the reviewed SKU map, even when the other pool's size is known."
   }
 }
 
@@ -5251,6 +5412,23 @@ run "warns_when_aks_node_os_disk_size_gb_is_inert_on_existing_cluster" {
     existing_aks_resource_group_name             = "shared-aks-rg"
     existing_aks_cluster_prerequisites_confirmed = true
     aks_node_os_disk_size_gb                     = 256
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "warns_when_aks_system_node_overrides_are_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_system_node_vm_size                      = "Standard_D8s_v4"
+    aks_system_node_count_min                    = 1
+    aks_system_node_count_max                    = 3
   }
 
   expect_failures = [check.aks_tuning_requires_module_managed_aks]

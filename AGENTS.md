@@ -1080,16 +1080,22 @@ terraform init                                          # populated terraform.tf
 ```
 
 Every value can be overridden (`--region`, `--vm-size`, `--node-count-max`,
-`--zones`, `--pg-version`, `--pg-sku`, `--redis-sku`); `--region` alone
-skips the plan. The vCPU quota check reads `az vm list-usage` for both the
-VM family (e.g. `standardDSv5Family`) and the aggregate `cores` cap against
-worst-case demand: the planned `max_count` of every node pool of that VM
-size, summed from the plan (`2 x aks_node_count_max` with the module's
-system and user pools, each scaling `aks_node_count_min..aks_node_count_max`
-independently, aks.tf); with `--node-count-max N` or `--region` it assumes
-`2 x N`. The shortfall is a hard failure only when every non-deposed
-`azurerm_kubernetes_cluster` and `azurerm_kubernetes_cluster_node_pool`
-entry in the plan's `resource_changes` is exactly `["create"]`
+`--system-vm-size`, `--system-node-count-max`, `--zones`, `--pg-version`,
+`--pg-sku`, `--redis-sku`); `--region` alone skips the plan.
+`aks_node_vm_size`/`aks_node_count_max` size the user (`n8nuser`) pool; the
+system (default) pool uses the same values unless `aks_system_node_vm_size`/
+`aks_system_node_count_max` overrides them (aks.tf, locals.tf). The vCPU
+quota check reads `az vm list-skus` once per distinct VM size in play (one
+call when both pools share a size, two when `aks_system_node_vm_size`
+diverges), summing each size's vCPU count times its worst-case demand (the
+resolved `aks_node_count_max`/`aks_system_node_count_max`, honoring any
+`--node-count-max`/`--system-node-count-max` override, plus any other node
+pool of that size from the plan via `plan_extra_pool_maxes`) into a
+per-family total plus the aggregate `cores` total, then checks every family
+that appears against a single region-wide `az vm list-usage` call. The
+shortfall is a hard failure only when every non-deposed `azurerm_kubernetes_cluster` and
+`azurerm_kubernetes_cluster_node_pool` entry in the plan's `resource_changes`
+is exactly `["create"]`
 (`plan_quota_mode`); anything else (`no-op`, `update`, replace, a new pool
 on an existing cluster, a second existing cluster) is a warning, because
 `currentValue` may already count those nodes. Without a plan it
