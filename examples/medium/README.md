@@ -10,10 +10,12 @@ A sustained-production reference tier with more warm AKS and n8n capacity than `
 | n8n main | 3 to 16 replicas, 1500m CPU and 3 Gi memory requests |
 | n8n webhook | 4 to 24 replicas, 500m CPU and 1 Gi memory requests |
 | n8n workers | 4 to 30 replicas, concurrency 20, 750m CPU and 2 Gi memory requests |
-| PostgreSQL | `GP_Standard_D4s_v3`, 128 GB, 14-day backups |
+| PostgreSQL | `GP_Standard_D4s_v3`, 128 GB, 14-day backups, storage autogrow enabled |
 | Redis | `Balanced_B5`, single replica |
 | Storage | Private Azure Blob with ZRS |
 | Ingress | WAF_v2 autoscaling from 2 to 10 instances |
+
+Storage autogrow only grows `pg_storage_mb`, it never shrinks it. This example hardcodes `pg_storage_mb` via `local.tier.pg_storage_mb` in `main.tf` rather than exposing it as a `terraform.tfvars` variable. After Azure grows the live server past 128 GB, raise `local.tier.pg_storage_mb` in `main.tf` to at least the new live size before the next apply, or Terraform plans to **destroy and recreate the entire server** (data loss) instead of failing cleanly, since Azure cannot shrink storage in place. The module's `pg_storage_drift_guard_enabled` input turns that into a clean precondition failure instead, but this example does not expose it as a `terraform.tfvars` setting; add `pg_storage_drift_guard_enabled = true` to the `module "n8n"` block in this example's `main.tf` on a later apply, once the server already exists.
 
 At all workload ceilings, the configured CPU requests remain below the module's modeled supply from two 10-node D8s_v5 pools. This is not a throughput guarantee. Benchmark representative workflows and inspect memory, database connections, queue latency, and external API latency.
 

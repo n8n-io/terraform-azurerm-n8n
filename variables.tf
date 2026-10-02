@@ -240,6 +240,24 @@ variable "pg_storage_mb" {
   }
 }
 
+variable "pg_storage_auto_grow_enabled" {
+  description = "Enable storage autogrow on the PostgreSQL Flexible Server so it automatically doubles disk space as usage approaches the limit, instead of the server going read-only when full. Autogrow only grows storage, it never shrinks it. After autogrow fires, raise pg_storage_mb to at least the new live size before the next apply: Terraform's plan reads the grown live value back and diffs it against the still-lower pg_storage_mb, and Azure Database for PostgreSQL Flexible Server cannot shrink storage_mb in place, so a stale pg_storage_mb plans to DESTROY AND RECREATE the entire server (data loss), not a clean apply failure. Set pg_storage_drift_guard_enabled = true to turn that into a precondition failure instead. Default false to keep current behavior. Ignored when `create_database = false`."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
+}
+
+variable "pg_storage_drift_guard_enabled" {
+  description = "When true, the module reads the module-managed PostgreSQL Flexible Server's actual live storage_mb via a data source before every plan and refuses to apply (a precondition failure, not a plan diff) if pg_storage_mb is less than that live value. Without this, Azure Database for PostgreSQL Flexible Server cannot shrink storage_mb in place: after pg_storage_auto_grow_enabled has grown the live server past what pg_storage_mb still declares, azurerm plans to destroy and recreate the entire server (data loss) instead of failing cleanly. Ignored when `create_database = false`. The data source is read whenever this is true, independent of the current value of pg_storage_auto_grow_enabled: Azure never shrinks storage, so a server that already auto-grew keeps its larger live storage_mb even after autogrow is later turned back off, and the guard must still catch that stale pg_storage_mb. Leave this false on the apply that first creates the server: the data source has nothing to read yet, and enabling it from the start would fail that create. Enable it on the next apply once the server exists, and leave it enabled for ongoing drift protection. Caveat: the data source looks up the server by the CURRENT friendly_name_prefix and resource_group_name, not by any stored prior identity, so it cannot tell the guard is protecting a server that is about to move. Set this to false for any apply that also changes friendly_name_prefix or resource_group_name, since the lookup would otherwise target the new coordinates, find nothing there yet, and fail with a 404 instead of the intended precondition failure. Re-enable it on a later apply once the server has settled at its new name or resource group."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
+}
+
 variable "pg_version" {
   description = "PostgreSQL major version (e.g. 14, 15, 16). 16 is the current GA on Azure Flexible Server. Major-version upgrades are not in-place — see Azure docs for the upgrade workflow. Ignored when `create_database = false`."
   type        = string

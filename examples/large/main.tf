@@ -9,28 +9,29 @@ locals {
   }, var.common_tags)
 
   tier = {
-    aks_node_vm_size             = "Standard_D16s_v5"
-    aks_node_count_min           = 5
-    aks_node_count_max           = 20
-    postgres_sku_name            = "GP_Standard_D8s_v3"
-    postgres_storage_mb          = 524288
-    postgres_zone_redundant      = true
-    pgbouncer_replicas           = 2
-    redis_sku_name               = "MemoryOptimized_M20"
-    redis_high_availability      = true
-    storage_replication_type     = "ZRS"
-    private_blob_enabled         = true
-    binary_data_storage_mode     = "azure"
-    execution_data_storage_mode  = "azure"
-    main_min_replicas            = var.n8n_main_hpa_min_replicas
-    main_max_replicas            = 60
-    webhook_min_replicas         = 20
-    webhook_max_replicas         = 80
-    worker_min_replicas          = 20
-    worker_max_replicas          = 160
-    worker_concurrency           = 40
-    appgw_autoscale_min_capacity = 2
-    appgw_autoscale_max_capacity = 30
+    aks_node_vm_size                   = "Standard_D16s_v5"
+    aks_node_count_min                 = 5
+    aks_node_count_max                 = 20
+    postgres_sku_name                  = "GP_Standard_D8s_v3"
+    postgres_storage_mb                = 524288
+    postgres_storage_auto_grow_enabled = true
+    postgres_zone_redundant            = true
+    pgbouncer_replicas                 = 2
+    redis_sku_name                     = "MemoryOptimized_M20"
+    redis_high_availability            = true
+    storage_replication_type           = "ZRS"
+    private_blob_enabled               = true
+    binary_data_storage_mode           = "azure"
+    execution_data_storage_mode        = "azure"
+    main_min_replicas                  = var.n8n_main_hpa_min_replicas
+    main_max_replicas                  = 60
+    webhook_min_replicas               = 20
+    webhook_max_replicas               = 80
+    worker_min_replicas                = 20
+    worker_max_replicas                = 160
+    worker_concurrency                 = 40
+    appgw_autoscale_min_capacity       = 2
+    appgw_autoscale_max_capacity       = 30
   }
 }
 
