@@ -127,8 +127,12 @@ resource "azurerm_managed_redis" "existing" {
   public_network_access = "Disabled"
 
   default_database {
-    clustering_policy                  = "NoCluster"
-    client_protocol                    = "Encrypted"
+    clustering_policy = "NoCluster"
+    client_protocol   = "Encrypted"
+    # NoEviction: this stand-in models good practice for a caller-owned
+    # Redis feeding n8n's Bull queue, same rationale as redis.tf's
+    # module-managed default. See docs/redis.md "Eviction policy".
+    eviction_policy                    = "NoEviction"
     access_keys_authentication_enabled = true
   }
 

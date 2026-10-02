@@ -18,14 +18,20 @@ Azure can still reject a listed SKU with a capacity-allocation error even when t
 
 The module always requests `clustering_policy = "NoCluster"` on `default_database`, because n8n's Bull client and KEDA's Redis scaler both assume a single logical keyspace, not Enterprise/OSS-cluster key-slot routing. Per [Microsoft's cluster-policy documentation](https://learn.microsoft.com/en-us/azure/redis/architecture#cluster-policies), `NoCluster` "only applies to caches sized 25 GB and smaller" — this is why `redis_sku_name`'s validation allowlists only SKUs documented at 25 GB or smaller, and excludes the `FlashOptimized_*` family (which starts at 250 GB) outright. The module never offers a SKU where `NoCluster` is unavailable in the first place.
 
-## Changing high availability or the clustering policy
+## Eviction policy
 
-`redis_high_availability_enabled` and the (always-`NoCluster`) clustering policy are both **ForceNew** attributes on `azurerm_managed_redis` — Azure requires destroying and recreating the instance to change either one. On a live deployment this means:
+`redis_eviction_policy` defaults to `NoEviction`. The azurerm provider's own default for `azurerm_managed_redis` is `VolatileLRU`, which evicts keys that carry a TTL once Redis runs out of memory. n8n's Bull queue keys can carry a TTL, so `VolatileLRU` (or any other eviction policy) can silently drop in-flight jobs under memory pressure instead of failing loudly. With `NoEviction`, a full Redis instance rejects new writes with an out-of-memory error on enqueue instead of evicting a queue key — set an alert on used memory (`redis-cli -h <redis_hostname> -p <redis_port> --tls INFO memory` or the Azure Monitor `usedmemorypercentage` metric) so that OOM condition is caught before it starts rejecting writes.
+
+**Upgrading an existing deployment:** if you deployed this module before `redis_eviction_policy` was added, your instance already has the provider's `VolatileLRU` default. Adding this input with its `NoEviction` default forces Azure to recreate the instance on the next apply (see below). Either pin `redis_eviction_policy = "VolatileLRU"` to keep your existing instance in place, or drain the queue and let Terraform recreate it with `NoEviction`.
+
+## Changing high availability, clustering policy, or eviction policy
+
+`redis_high_availability_enabled`, the (always-`NoCluster`) clustering policy, and `redis_eviction_policy` are all **ForceNew** attributes on `azurerm_managed_redis` — Azure requires destroying and recreating the instance to change any of them. On a live deployment this means:
 
 - In-flight Bull jobs are dropped.
 - Multi-main leader election breaks until the new instance is reachable and n8n/KEDA reconnect.
 
-Before flipping `redis_high_availability_enabled` on a deployment carrying real traffic:
+Before flipping `redis_high_availability_enabled` or `redis_eviction_policy` on a deployment carrying real traffic:
 
 1. Scale workers to zero (`kubectl -n n8n scale deployment/n8n-worker --replicas=0`) and let in-flight executions finish.
 2. Confirm the queue is drained (`redis-cli -h <redis_hostname> -p <redis_port> --tls LLEN bull:*:wait` from a debug pod, or watch the n8n UI's active-execution count reach zero).

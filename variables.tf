@@ -515,6 +515,21 @@ variable "redis_high_availability_enabled" {
   default     = false
 }
 
+variable "redis_eviction_policy" {
+  description = "Redis eviction policy for the module-managed Azure Managed Redis instance's default_database. Defaults to NoEviction: n8n's Bull queue keys can carry a TTL, so any eviction policy other than NoEviction (including the azurerm provider's own VolatileLRU default) can silently drop in-flight queue jobs under memory pressure instead of rejecting the write with an OOM error. Changing this forces replacement of the instance (Azure sets eviction policy at creation time only) — drain the n8n queue before flipping this on a live deployment; see docs/redis.md -> \"Changing high availability, clustering policy, or eviction policy\". Ignored when `create_redis = false`."
+  type        = string
+  default     = "NoEviction"
+
+  validation {
+    condition = contains([
+      "AllKeysLFU", "AllKeysLRU", "AllKeysRandom",
+      "VolatileLFU", "VolatileLRU", "VolatileRandom", "VolatileTTL",
+      "NoEviction",
+    ], var.redis_eviction_policy)
+    error_message = "redis_eviction_policy must be one of the Azure Managed Redis eviction policies: AllKeysLFU, AllKeysLRU, AllKeysRandom, VolatileLFU, VolatileLRU, VolatileRandom, VolatileTTL, NoEviction."
+  }
+}
+
 variable "redis_external_host" {
   description = "External Redis host. Required when `create_redis = false`. Ignored otherwise. Use this to point n8n and KEDA at an existing Redis deployment, a managed Redis in a different subscription, or any Redis-compatible endpoint."
   type        = string
