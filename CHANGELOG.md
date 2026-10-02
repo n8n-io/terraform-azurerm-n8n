@@ -9,6 +9,18 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ## [Unreleased]
 
+### Added
+
+- `docs/build-time-decisions.md`, a single table of settings that are
+  fixed at the first `terraform apply` (AKS availability zones and
+  network profile, PostgreSQL networking mode and zone-redundant HA
+  placement, PostgreSQL geo-redundant backup, Redis high availability and
+  clustering policy, Blob storage replication type, and the n8n
+  encryption key), what happens if you change each one later, and what
+  to do instead. Linked from `README.md` and every example's
+  "Production considerations" section
+  ([#31](https://github.com/n8n-io/terraform-azurerm-n8n/issues/31)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by
