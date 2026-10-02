@@ -9,6 +9,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ## [Unreleased]
 
+### Added
+
+- New `aks_sku_tier` input (`"Free"`, `"Standard"`, or `"Premium"`, default
+  `"Free"`) sets the AKS cluster's SKU tier. The Free tier has no
+  financially backed SLA for the API server; the `medium` and `large`
+  examples now set `aks_sku_tier = "Standard"`
+  ([#19](https://github.com/n8n-io/terraform-azurerm-n8n/issues/19)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by
