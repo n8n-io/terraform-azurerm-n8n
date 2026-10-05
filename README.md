@@ -392,6 +392,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 - [`docs/data-storage.md`](./docs/data-storage.md) — binary-data and execution-data mode combinations, entitlements, and migration guidance.
 - [`docs/observability.md`](./docs/observability.md) — Prometheus, OpenTelemetry, and log-streaming configuration.
 - [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md) — infrastructure prerequisites for n8n's Azure Key Vault external-secrets integration.
+- [`docs/shared-responsibility.md`](./docs/shared-responsibility.md): one-table summary of what the module does versus what the caller owns: cluster security add-ons, network egress and DNS, secrets and Terraform state, TLS certificates, backup and restore, upgrades, and monitoring.
 - [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md) — ownership convention, reference/attestation contracts, direct `modules/controllers` composition, and the pre-release upgrade boundary for the caller-managed AKS, Blob, namespace, Secret, KEDA, and webhook-HPA layers.
 - [`examples/split-ingress/README.md`](./examples/split-ingress/README.md) — operating a split public-webhook/internal-admin topology, including how `n8n_webhook_url` advertises webhooks on the public host while the editor identity stays on the private one.
 - [`docs/manual-azure-qualification.md`](./docs/manual-azure-qualification.md): manual checklist for live Azure lifecycle behavior that offline tests cannot prove. Incomplete checks do not block a merge, but their behaviors remain unverified. A verified one-apply release guarantee requires the live lifecycle evidence specified in `AGENTS.md`. Filled-in copies from completed runs live in [`docs/qualification-runs/`](./docs/qualification-runs/); the 2026-09-16 run covers the `port-aws-040-enhancements` branch.
@@ -453,6 +454,7 @@ This module does not:
 - Certify sovereign-cloud (Azure Government, Azure China) deployments — the pinned n8n Azure Key Vault client constructs the public `vault.azure.net` endpoint unconditionally; see the same doc for the current limitation.
 - Back up or restore PostgreSQL, Redis, or Blob data on an ongoing basis beyond PostgreSQL's own configured backup retention — build your own backup/DR runbook around the managed services' native capabilities.
 - Approximate AWS-only capabilities without a secure Azure-native equivalent, including keyless n8n Azure Key Vault external secrets, IAM permission boundaries, AWS KMS controls, RDS snapshot restoration, and EBS CSI ownership — see [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#excluded-aws-only-capabilities).
+- Enable cluster security add-ons (Microsoft Defender for Containers, Azure Policy, KMS etcd encryption, Microsoft Entra ID integration), an egress firewall, or monitoring/alerting beyond what the caller configures. See [`docs/shared-responsibility.md`](./docs/shared-responsibility.md) for the main ownership boundaries.
 
 ## Reference
 
