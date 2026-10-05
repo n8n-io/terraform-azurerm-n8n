@@ -12,6 +12,7 @@ locals {
     aks_node_vm_size             = "Standard_D16s_v5"
     aks_node_count_min           = 5
     aks_node_count_max           = 20
+    aks_sku_tier                 = "Standard"
     postgres_sku_name            = "GP_Standard_D8s_v3"
     postgres_storage_mb          = 524288
     postgres_zone_redundant      = true
@@ -186,6 +187,7 @@ module "n8n" {
   aks_node_vm_size             = local.tier.aks_node_vm_size
   aks_node_count_min           = local.tier.aks_node_count_min
   aks_node_count_max           = local.tier.aks_node_count_max
+  aks_sku_tier                 = local.tier.aks_sku_tier
   aks_api_authorized_ip_ranges = var.aks_api_authorized_ip_ranges
 
   create_database            = false

@@ -102,6 +102,17 @@ variable "aks_kubernetes_version" {
   }
 }
 
+variable "aks_sku_tier" {
+  description = "SKU tier for the AKS cluster: \"Free\", \"Standard\", or \"Premium\". The Free tier has no financially backed SLA for the API server; production deployments generally want \"Standard\". \"Premium\" is a prerequisite for AKS Long Term Support, but this module does not set the cluster's support_plan, so selecting \"Premium\" alone does not enroll the cluster in Long Term Support. Changing the tier on an existing cluster is an in-place update, but the AKS API server can be unavailable for up to about a minute while it runs, so change it in its own apply (see docs/troubleshooting.md). Has no effect when create_aks = false; an existing caller-managed cluster's tier is left as-is."
+  type        = string
+  default     = "Free"
+
+  validation {
+    condition     = contains(["Free", "Standard", "Premium"], var.aks_sku_tier)
+    error_message = "aks_sku_tier must be one of: Free, Standard, Premium."
+  }
+}
+
 variable "aks_node_vm_size" {
   description = "Azure VM SKU for both AKS node pools (for example Standard_D4s_v7 or Standard_D8s_v5). The capacity diagnostic models reviewed Dsv4, Dsv5, and Dsv7 SKUs and stays silent for valid SKUs outside that map. Standard_D4s_v7 provides 4 vCPU and 16 GB per node."
   type        = string

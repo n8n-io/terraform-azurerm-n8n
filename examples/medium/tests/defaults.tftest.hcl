@@ -46,6 +46,7 @@ run "medium_tier_plan" {
       aks_node_vm_size             = "Standard_D8s_v5"
       aks_node_count_min           = 3
       aks_node_count_max           = 10
+      aks_sku_tier                 = "Standard"
       pg_sku_name                  = "GP_Standard_D4s_v3"
       pg_storage_mb                = 131072
       pg_backup_retention_days     = 14

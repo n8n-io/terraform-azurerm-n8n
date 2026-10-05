@@ -7,6 +7,7 @@ The sizing examples use the same single root module and differ only where worklo
 | Intended use | Evaluation and low traffic | Sustained production traffic | High-volume, connection-heavy production |
 | AKS VM | `Standard_D2s_v5` | `Standard_D8s_v5` | `Standard_D16s_v5` |
 | Nodes per pool | 2 to 6 | 3 to 10 | 5 to 20 |
+| AKS SKU tier | Free (no API server SLA) | Standard (financially backed API server SLA) | Standard (financially backed API server SLA) |
 | Main replicas | 2 to 6 | 3 to 16 | 6 to 60 |
 | Webhook replicas | 2 to 8 | 4 to 24 | 20 to 80 |
 | Worker replicas | 1 to 10 | 4 to 30 | 20 to 160 |
@@ -14,7 +15,7 @@ The sizing examples use the same single root module and differ only where worklo
 | Redis | Balanced B0 | Balanced B5 | Memory Optimized M20, HA |
 | Blob durability | LRS | ZRS | ZRS |
 | Database pooler | None | None | PgBouncer, 2 replicas |
-| Main cost factors | Baseline AKS, WAF, PostgreSQL, and Redis charges | Higher warm node floor, larger data services, ZRS, gateway autoscaling | Large warm floor, PostgreSQL HA and geo-backups, Redis HA, replicated storage, gateway autoscaling |
+| Main cost factors | Baseline AKS, WAF, PostgreSQL, and Redis charges | Higher warm node floor, AKS Standard tier, larger data services, ZRS, gateway autoscaling | Large warm floor, AKS Standard tier, PostgreSQL HA and geo-backups, Redis HA, replicated storage, gateway autoscaling |
 
 These tiers are reference configurations, not throughput or cost guarantees. Workflow shape, payload size, Code nodes, external API latency, retention, and execution-data mode can change demand by orders of magnitude. Run load tests with representative workflows and review the root module's advisory capacity diagnostic.
 

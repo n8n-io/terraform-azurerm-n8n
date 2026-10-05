@@ -76,6 +76,7 @@ run "large_tier_plan" {
       aks_node_vm_size             = "Standard_D16s_v5"
       aks_node_count_min           = 5
       aks_node_count_max           = 20
+      aks_sku_tier                 = "Standard"
       postgres_sku_name            = "GP_Standard_D8s_v3"
       postgres_storage_mb          = 524288
       postgres_zone_redundant      = true

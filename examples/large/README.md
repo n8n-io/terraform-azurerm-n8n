@@ -6,7 +6,7 @@ A high-volume Azure reference topology with larger network ranges, zone-redundan
 
 | Concern | Configuration |
 |---|---|
-| AKS | Two pools, `Standard_D16s_v5`, 5 to 20 nodes per pool, `/18` AKS subnet |
+| AKS | Two pools, `Standard_D16s_v5`, 5 to 20 nodes per pool, `/18` AKS subnet, Standard SKU tier |
 | n8n main | 6 to 60 replicas |
 | n8n webhook | 20 to 80 replicas, 500m CPU and 1 Gi memory requests |
 | n8n workers | 20 to 160 replicas, concurrency 40 |
@@ -31,6 +31,7 @@ This tier sets binary and execution-data writes to Azure Blob. These features re
 | Module input | Default | Purpose |
 | --- | --- | --- |
 | `blob_delete_retention_days` | `null` | Soft-delete retention window, in days, for the module-managed Blob storage account's `delete_retention_policy` and `container_delete_retention_policy`. `null` leaves soft delete disabled, so a deleted blob or container is immediately unrecoverable. |
+| `aks_sku_tier` | `"Standard"` (fixed) | AKS SKU tier. Fixed in this tier's `local.tier` in `main.tf`, not an example variable, so it cannot be set from `terraform.tfvars`. Overrides the module's `"Free"` default so the cluster's API server has a financially backed SLA. |
 
 `pg_backup_retention_days` does not apply to this example: it sets `create_database = false` and owns PostgreSQL itself (see [PostgreSQL and PgBouncer](#postgresql-and-pgbouncer)), so PostgreSQL backup retention is a property of the Flexible Server resource this example manages directly, not of the root module.
 
@@ -42,7 +43,7 @@ The included certificate is self-signed. Replace it with a publicly trusted cert
 
 ## Cost and availability caveats
 
-This tier has a high warm-node floor, large PostgreSQL compute, geo-redundant backups, Redis HA, WAF autoscaling, and replicated storage. Those services dominate cost. GZRS is not available in every region. Zone identifiers and SKU availability also vary. Confirm current Azure availability and pricing before apply. Add organization-specific deletion protection, restore drills, observability, and policy enforcement.
+This tier has a high warm-node floor, large PostgreSQL compute, geo-redundant backups, Redis HA, WAF autoscaling, and replicated storage. Those services dominate cost. The AKS Standard tier adds a smaller per-cluster hourly charge for the financially backed API server SLA. On an existing deployment of this example that predates `aks_sku_tier`, the next apply upgrades the cluster from Free to Standard in place. The AKS API server can be unavailable for up to about a minute during that update, so apply it without other changes where possible; see [Changing `aks_sku_tier` briefly interrupts the AKS API server](../../docs/troubleshooting.md#changing-aks_sku_tier-briefly-interrupts-the-aks-api-server). GZRS is not available in every region. Zone identifiers and SKU availability also vary. Confirm current Azure availability and pricing before apply. Add organization-specific deletion protection, restore drills, observability, and policy enforcement.
 
 See [the tier comparison](../README.md).
 
