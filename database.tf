@@ -77,6 +77,63 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-postgres-dns-link" })
 }
 
+# Reads the live server's actual storage_mb so
+# pg_storage_drift_guard_enabled can compare it against var.pg_storage_mb
+# before Terraform plans a change, instead of only discovering the mismatch
+# once the destructive replace above is already underway. Deliberately has
+# no depends_on / resource-attribute reference to
+# azurerm_postgresql_flexible_server.n8n: that would make this read wait
+# until after this apply's own changes to that resource land, which is one
+# apply too late to guard a replace this same apply is about to cause.
+# Reading it independently, by the same name/resource-group pair the
+# resource itself uses, returns the server's state as it was BEFORE this
+# plan. count depends only on create_database and the guard itself, not on
+# the current value of pg_storage_auto_grow_enabled: Azure never shrinks
+# storage, so a server that already auto-grew keeps its larger live
+# storage_mb even after a caller later sets pg_storage_auto_grow_enabled
+# back to false, and the guard must still catch that stale pg_storage_mb.
+# count is false by default (and whenever create_database or the guard
+# itself is off), so this never runs on the apply that first creates the
+# server: the server does not exist yet, and this data source would error
+# outright if it tried to read something.
+#
+# CAVEAT: this reads by `local.postgres_server_name` / `var.resource_group_name`,
+# the SAME inputs the managed resource below derives its own name/RG from.
+# There is no plan-time way to pin "the old identity" independent of those
+# inputs without a much larger redesign (e.g. a separate caller-supplied
+# prior-identity variable). So an apply that both enables this guard AND
+# changes `friendly_name_prefix` or `resource_group_name` (a rename or a
+# move) makes this data source look up a server at the NEW coordinates,
+# which does not exist there yet (it is still at the old coordinates), and
+# the apply fails with a 404 instead of the intended precondition failure.
+# Set `pg_storage_drift_guard_enabled = false` for any apply that renames
+# or moves the server, then re-enable it on a later apply once the server
+# has settled at its new identity. The same not-found error occurs whenever
+# this lookup runs after the server was deleted outside Terraform, including
+# a `terraform destroy` refresh once the server is already gone (for example
+# after a partially completed destroy). A plan-time lookup blocks the plan;
+# a deferred one fails during apply. Set the guard to false to recover in
+# those cases too.
+#
+# LIMIT: the guard only protects a plan in which this data source is read
+# at plan time. Terraform defers the read to apply when the read depends on
+# objects with pending changes, most commonly a caller's `depends_on` on the
+# `module` block (examples/medium has one). The plan can then proceed
+# without resolving the precondition, and Terraform may destroy the old
+# server before it evaluates the create-side precondition: destroy steps do
+# not check resource preconditions. Treat the guard as a best-effort early
+# warning, not a deletion control. Callers must still review plans for a
+# PostgreSQL delete or replace action and for this data source showing
+# "(known after apply)", and should hold an existing caller-owned
+# CanNotDelete management lock on the server, with lifecycle.prevent_destroy
+# on the lock resource itself (docs/deletion-safety.md).
+data "azurerm_postgresql_flexible_server" "current" {
+  count = var.create_database && var.pg_storage_drift_guard_enabled ? 1 : 0
+
+  name                = local.postgres_server_name
+  resource_group_name = var.resource_group_name
+}
+
 # ── PostgreSQL Flexible Server (managed path only) ──
 # Public network access is hardcoded off — the private-only posture is the
 # whole point of attaching the server to a delegated subnet + private DNS
@@ -92,7 +149,23 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   version  = var.pg_version
   sku_name = var.pg_sku_name
 
+  # When pg_storage_auto_grow_enabled = true, Azure grows storage_mb on the
+  # live server without Terraform's knowledge. Terraform's next plan then
+  # compares the drifted live value against the still-lower var.pg_storage_mb
+  # and plans to shrink it back down. Azure Flexible Server does not support
+  # shrinking storage in place, and azurerm's schema treats any decrease as
+  # force-new: the plan is not a clean failure, it is DESTROY AND RECREATE
+  # the entire server, losing all data. Callers who turn on autogrow MUST
+  # bump pg_storage_mb to at least the live size (Azure portal / `az
+  # postgres flexible-server show`) before their next apply. There's no
+  # `lifecycle.ignore_changes` fix: it only accepts a static attribute list,
+  # not a condition on var.pg_storage_auto_grow_enabled, so it can't be
+  # scoped to "ignore only when autogrow is on" — always ignoring storage_mb
+  # would silently break manual resizes for everyone. pg_storage_drift_guard_enabled
+  # (below) turns this into a precondition failure instead, but only when its
+  # data source is read at plan time (see the LIMIT note on that data source).
   storage_mb                   = var.pg_storage_mb
+  auto_grow_enabled            = var.pg_storage_auto_grow_enabled
   backup_retention_days        = var.pg_backup_retention_days
   geo_redundant_backup_enabled = var.pg_geo_redundant_backup_enabled
 
@@ -153,6 +226,29 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
       zone,
       high_availability[0].standby_availability_zone,
     ]
+
+    # See the data source above: only reads when pg_storage_drift_guard_enabled
+    # is true, so this is a no-op (condition trivially true) until a caller
+    # opts in on an apply after the server already exists.
+    precondition {
+      # A conditional, not `||`: Terraform before 1.12 evaluates both sides of
+      # `||`, so `current[0]` would fail with an invalid index while the guard
+      # is off and the data source has count = 0.
+      condition = (
+        length(data.azurerm_postgresql_flexible_server.current) == 0
+        ? true
+        : var.pg_storage_mb >= data.azurerm_postgresql_flexible_server.current[0].storage_mb
+      )
+      error_message = join("", [
+        "pg_storage_drift_guard_enabled = true and the live PostgreSQL Flexible Server's storage_mb (",
+        tostring(try(data.azurerm_postgresql_flexible_server.current[0].storage_mb, 0)),
+        ") is larger than the configured pg_storage_mb (", tostring(var.pg_storage_mb), "). Autogrow has ",
+        "grown the live server past what Terraform still declares. Azure Database for PostgreSQL Flexible ",
+        "Server cannot shrink storage_mb in place, so without this guard Terraform would plan to destroy ",
+        "and recreate the entire server (data loss) to force it back down. Raise pg_storage_mb to at least ",
+        "the live value shown above before applying.",
+      ])
+    }
   }
 }
 
@@ -249,15 +345,18 @@ check "postgres_tuning_requires_module_managed_database" {
     condition = var.create_database ? true : (
       var.pg_sku_name == "GP_Standard_D2s_v3" &&
       var.pg_storage_mb == 32768 &&
+      var.pg_storage_auto_grow_enabled == false &&
+      var.pg_storage_drift_guard_enabled == false &&
       var.pg_enable_high_availability == false &&
       var.pg_backup_retention_days == 7 &&
       var.pg_geo_redundant_backup_enabled == false
     )
     error_message = join("", [
-      "A PostgreSQL sizing or HA input (pg_sku_name, pg_storage_mb, pg_enable_high_availability, ",
-      "pg_backup_retention_days, pg_geo_redundant_backup_enabled) is set while create_database = false. ",
-      "The module creates no PostgreSQL Flexible Server in that mode, so none of them apply. Configure ",
-      "these on the external database you supply via postgres_external_host.",
+      "A PostgreSQL sizing or HA input (pg_sku_name, pg_storage_mb, pg_storage_auto_grow_enabled, ",
+      "pg_storage_drift_guard_enabled, pg_enable_high_availability, pg_backup_retention_days, ",
+      "pg_geo_redundant_backup_enabled) is set while create_database = false. The module creates no ",
+      "PostgreSQL Flexible Server in that mode, so none of them apply. Configure these on the external ",
+      "database you supply via postgres_external_host.",
     ])
   }
 }

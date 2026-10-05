@@ -49,6 +49,44 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `create_aks = false`
   ([#19](https://github.com/n8n-io/terraform-azurerm-n8n/issues/19)).
 
+- `pg_storage_auto_grow_enabled` (bool, default `false`) enables Azure
+  PostgreSQL Flexible Server storage autogrow, which doubles disk space
+  automatically as usage approaches the limit, which helps keep the server
+  from going read-only when full. Azure does not autogrow across the
+  4,096 GiB boundary; a server that reaches it needs a manual, offline
+  resize. The examples leave it off. Autogrow only grows
+  storage, never shrinks it: after it fires, raise `pg_storage_mb` to at
+  least the live size before the next apply, or a stale `pg_storage_mb`
+  plans to **destroy and recreate the entire server** (data loss), since
+  azurerm forces replacement when `storage_mb` decreases.
+  `pg_storage_drift_guard_enabled` (bool, default `false`) adds a
+  best-effort early warning: while it is `true` (and `create_database` is
+  `true`), the module reads the live server's actual `storage_mb` via a data
+  source and fails with a precondition error if `pg_storage_mb` has fallen
+  behind it. The guard only protects a plan in which that data source is
+  read at plan time. When Terraform defers the read to apply (for example
+  because of a `depends_on` on the calling `module` block), the plan can
+  proceed without resolving the precondition, and Terraform may destroy the
+  old server before it evaluates the create-side precondition. It is not a
+  deletion control: review plans for a PostgreSQL replace action and hold an
+  existing caller-owned `CanNotDelete` management lock on the server, with
+  `lifecycle.prevent_destroy` on the lock resource itself (see
+  `docs/deletion-safety.md`).
+  This check runs independently of the current `pg_storage_auto_grow_enabled`
+  value, since Azure never shrinks storage back down: a server that already
+  auto-grew stays larger than a stale `pg_storage_mb` even after autogrow is
+  later turned off. Leave the guard `false` on the apply that first creates
+  the server (the data source has nothing to read yet); enable it on the
+  next apply for ongoing drift protection. The guard's lookup fails with a
+  not-found error whenever it runs while the server is not at the
+  configured name and resource group (rename, move, out-of-band deletion,
+  or a partially completed destroy). A plan-time lookup blocks the plan; a
+  deferred one fails during apply. Set the guard to `false` for those
+  applies.
+  Triggers a non-blocking check warning when `create_database = false`,
+  alongside the other managed-server sizing inputs
+  ([#27](https://github.com/n8n-io/terraform-azurerm-n8n/issues/27)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by

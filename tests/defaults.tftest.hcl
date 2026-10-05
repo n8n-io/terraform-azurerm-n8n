@@ -688,6 +688,11 @@ run "managed_postgres_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_postgresql_flexible_server.n8n[0].auto_grow_enabled == var.pg_storage_auto_grow_enabled
+    error_message = "Managed PostgreSQL Flexible Server auto_grow_enabled must equal var.pg_storage_auto_grow_enabled (default false)."
+  }
+
+  assert {
     condition     = azurerm_postgresql_flexible_server.n8n[0].backup_retention_days == var.pg_backup_retention_days
     error_message = "Managed PostgreSQL Flexible Server backup_retention_days must equal var.pg_backup_retention_days (default 7)."
   }
@@ -834,6 +839,124 @@ run "pg_backup_retention_days_null_falls_back_to_default" {
     condition     = azurerm_postgresql_flexible_server.n8n[0].backup_retention_days == 7
     error_message = "pg_backup_retention_days = null must resolve to the default of 7, not fail validation (port-aws-050-enhancements)."
   }
+}
+
+run "pg_storage_auto_grow_enabled_renders_on_managed_server" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled = true
+  }
+
+  assert {
+    condition     = azurerm_postgresql_flexible_server.n8n[0].auto_grow_enabled == true
+    error_message = "auto_grow_enabled must be true when var.pg_storage_auto_grow_enabled is true."
+  }
+}
+
+run "pg_storage_drift_guard_disabled_by_default_creates_no_data_source" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled = true
+  }
+
+  assert {
+    condition     = length(data.azurerm_postgresql_flexible_server.current) == 0
+    error_message = "No live-storage data source must be read when pg_storage_drift_guard_enabled is false (the default)."
+  }
+}
+
+run "pg_storage_drift_guard_reads_live_storage_even_when_autogrow_is_currently_off" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled   = false
+    pg_storage_drift_guard_enabled = true
+  }
+
+  assert {
+    condition     = length(data.azurerm_postgresql_flexible_server.current) == 1
+    error_message = "The live-storage data source must still be read when the drift guard is enabled even if pg_storage_auto_grow_enabled is currently false: a server that already auto-grew keeps its larger live storage_mb after autogrow is turned back off, and the guard must keep catching that drift."
+  }
+}
+
+run "pg_storage_drift_guard_ignored_without_managed_database" {
+  command = plan
+
+  variables {
+    create_database                = false
+    postgres_external_host         = "postgres.external.example.com"
+    postgres_external_username     = "n8n"
+    postgres_external_password     = "test-password"
+    pg_storage_drift_guard_enabled = true
+  }
+
+  assert {
+    condition     = length(data.azurerm_postgresql_flexible_server.current) == 0
+    error_message = "No live-storage data source must be read when create_database = false, regardless of pg_storage_drift_guard_enabled: the module manages no Flexible Server to read in that mode."
+  }
+
+  expect_failures = [
+    check.postgres_tuning_requires_module_managed_database,
+  ]
+}
+
+run "pg_storage_drift_guard_passes_when_pg_storage_mb_covers_the_live_size" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled   = true
+    pg_storage_drift_guard_enabled = true
+    pg_storage_mb                  = 65536
+  }
+
+  override_data {
+    target = data.azurerm_postgresql_flexible_server.current[0]
+    values = {
+      storage_mb = 65536
+    }
+  }
+
+  assert {
+    condition     = length(data.azurerm_postgresql_flexible_server.current) == 1
+    error_message = "The live-storage data source must be read when both autogrow and the drift guard are enabled."
+  }
+}
+
+run "pg_storage_drift_guard_blocks_apply_when_pg_storage_mb_is_stale" {
+  command = plan
+
+  variables {
+    pg_storage_auto_grow_enabled   = true
+    pg_storage_drift_guard_enabled = true
+    pg_storage_mb                  = 32768
+  }
+
+  override_data {
+    target = data.azurerm_postgresql_flexible_server.current[0]
+    values = {
+      storage_mb = 65536
+    }
+  }
+
+  expect_failures = [azurerm_postgresql_flexible_server.n8n[0]]
+}
+
+run "rejects_pg_storage_auto_grow_enabled_without_managed_database" {
+  command = plan
+
+  variables {
+    create_database              = false
+    postgres_external_host       = "postgres.external.example.com"
+    postgres_external_username   = "n8n_app"
+    postgres_external_password   = "synthetic-external-postgres-password"
+    pg_storage_auto_grow_enabled = true
+  }
+
+  expect_failures = [
+    check.postgres_tuning_requires_module_managed_database,
+  ]
 }
 
 # ── External PostgreSQL path ─────────────────────────────────────────────────

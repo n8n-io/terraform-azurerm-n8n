@@ -52,6 +52,33 @@ everything ahead of it in the graph (AKS, the Helm release, Redis, storage)
 by then, so prefer the same-state `prevent_destroy` form, which stops the
 destroy before it touches anything.
 
+### Storage autogrow and replacement
+
+The same lock also guards against an unplanned replacement. With
+`pg_storage_auto_grow_enabled = true`, Azure grows the server's storage
+outside Terraform. If `pg_storage_mb` is not raised to the live size, the
+next plan tries to shrink `storage_mb`, and azurerm plans to destroy and
+recreate the server, because it forces replacement whenever `storage_mb`
+decreases. An existing lock in the same state, with `prevent_destroy` and
+`scope = module.n8n.postgres_server_id` as in the snippet above, stops that
+plan: the server's computed ID becomes unknown when the server is planned
+for replacement, `scope` forces replacement of the lock, and the lock's
+`prevent_destroy` rejects the plan. This only holds for a lock that already
+exists before the plan. A lock added in the same apply as the replacement,
+a lock with a literal `scope`, or a lock left out of the plan (for example
+with `-target`) does not give this plan-time protection. An existing lock
+outside the state makes the delete request fail with `ScopeLocked`, possibly
+on a child resource first, but other operations in the same apply may
+already have run.
+
+`pg_storage_drift_guard_enabled` is only a best-effort early warning on
+top of the lock. It reads the live server through a data source. If
+Terraform defers that read to apply, for example because the calling
+`module` block has a `depends_on` with pending changes, the plan can
+proceed without resolving the guard's precondition, and Terraform may
+destroy the old server before it evaluates that precondition. Use the lock,
+and review every plan for a PostgreSQL replace action.
+
 ## Blob storage
 
 | AWS input | Azure outcome | Why |
