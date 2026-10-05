@@ -417,6 +417,19 @@ run "aks_sku_tier_override_renders" {
   }
 }
 
+run "aks_sku_tier_premium_renders" {
+  command = plan
+
+  variables {
+    aks_sku_tier = "Premium"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].sku_tier == "Premium"
+    error_message = "AKS cluster sku_tier must accept and render \"Premium\"."
+  }
+}
+
 run "rejects_invalid_aks_sku_tier" {
   command = plan
 
@@ -5391,6 +5404,21 @@ run "warns_when_aks_system_pool_critical_addons_only_is_inert_on_existing_cluste
     existing_aks_resource_group_name             = "shared-aks-rg"
     existing_aks_cluster_prerequisites_confirmed = true
     aks_system_pool_critical_addons_only         = true
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "warns_when_aks_sku_tier_is_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_sku_tier                                 = "Standard"
   }
 
   expect_failures = [check.aks_tuning_requires_module_managed_aks]

@@ -6,7 +6,7 @@ A sustained-production reference tier with more warm AKS and n8n capacity than `
 
 | Concern | Configuration |
 |---|---|
-| AKS | Two pools, `Standard_D8s_v5`, 3 to 10 nodes per pool |
+| AKS | Two pools, `Standard_D8s_v5`, 3 to 10 nodes per pool, Standard SKU tier |
 | n8n main | 3 to 16 replicas, 1500m CPU and 3 Gi memory requests |
 | n8n webhook | 4 to 24 replicas, 500m CPU and 1 Gi memory requests |
 | n8n workers | 4 to 30 replicas, concurrency 20, 750m CPU and 2 Gi memory requests |
@@ -27,7 +27,7 @@ The root default writes binary data to private Azure Blob and requires the separ
 
 ## Cost and operational caveats
 
-The warm node floor, larger PostgreSQL and Redis SKUs, ZRS storage, and Application Gateway autoscaling make this materially more expensive than `small`. Zone-redundant storage does not replace backups. PostgreSQL HA remains disabled in this tier. Use `large` when database or Redis availability, connection pressure, or substantially higher pod ceilings require those controls.
+The warm node floor, the AKS Standard tier, larger PostgreSQL and Redis SKUs, ZRS storage, and Application Gateway autoscaling make this materially more expensive than `small`. The Standard tier adds a per-cluster hourly charge for the financially backed API server SLA. On an existing deployment of this example that predates `aks_sku_tier`, the next apply upgrades the cluster from Free to Standard in place. Zone-redundant storage does not replace backups. PostgreSQL HA remains disabled in this tier. Use `large` when database or Redis availability, connection pressure, or substantially higher pod ceilings require those controls.
 
 See [the tier comparison](../README.md).
 

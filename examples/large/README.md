@@ -6,7 +6,7 @@ A high-volume Azure reference topology with larger network ranges, zone-redundan
 
 | Concern | Configuration |
 |---|---|
-| AKS | Two pools, `Standard_D16s_v5`, 5 to 20 nodes per pool, `/18` AKS subnet |
+| AKS | Two pools, `Standard_D16s_v5`, 5 to 20 nodes per pool, `/18` AKS subnet, Standard SKU tier |
 | n8n main | 6 to 60 replicas |
 | n8n webhook | 20 to 80 replicas, 500m CPU and 1 Gi memory requests |
 | n8n workers | 20 to 160 replicas, concurrency 40 |
@@ -43,7 +43,7 @@ The included certificate is self-signed. Replace it with a publicly trusted cert
 
 ## Cost and availability caveats
 
-This tier has a high warm-node floor, large PostgreSQL compute, geo-redundant backups, Redis HA, WAF autoscaling, and replicated storage. Those services dominate cost. GZRS is not available in every region. Zone identifiers and SKU availability also vary. Confirm current Azure availability and pricing before apply. Add organization-specific deletion protection, restore drills, observability, and policy enforcement.
+This tier has a high warm-node floor, large PostgreSQL compute, geo-redundant backups, Redis HA, WAF autoscaling, and replicated storage. Those services dominate cost. The AKS Standard tier adds a smaller per-cluster hourly charge for the financially backed API server SLA. On an existing deployment of this example that predates `aks_sku_tier`, the next apply upgrades the cluster from Free to Standard in place. GZRS is not available in every region. Zone identifiers and SKU availability also vary. Confirm current Azure availability and pricing before apply. Add organization-specific deletion protection, restore drills, observability, and policy enforcement.
 
 See [the tier comparison](../README.md).
 

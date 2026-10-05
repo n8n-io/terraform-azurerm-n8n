@@ -12,6 +12,7 @@ locals {
     aks_node_vm_size             = "Standard_D8s_v5"
     aks_node_count_min           = 3
     aks_node_count_max           = 10
+    aks_sku_tier                 = "Standard"
     pg_sku_name                  = "GP_Standard_D4s_v3"
     pg_storage_mb                = 131072
     pg_backup_retention_days     = var.pg_backup_retention_days
@@ -181,7 +182,7 @@ module "n8n" {
   aks_node_vm_size             = local.tier.aks_node_vm_size
   aks_node_count_min           = local.tier.aks_node_count_min
   aks_node_count_max           = local.tier.aks_node_count_max
-  aks_sku_tier                 = "Standard"
+  aks_sku_tier                 = local.tier.aks_sku_tier
   aks_api_authorized_ip_ranges = var.aks_api_authorized_ip_ranges
 
   pg_sku_name              = local.tier.pg_sku_name

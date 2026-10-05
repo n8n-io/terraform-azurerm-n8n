@@ -103,7 +103,7 @@ variable "aks_kubernetes_version" {
 }
 
 variable "aks_sku_tier" {
-  description = "SKU tier for the AKS cluster: \"Free\", \"Standard\", or \"Premium\". The Free tier has no financially backed SLA for the API server; production deployments generally want \"Standard\". \"Premium\" is required alongside a Long Term Support kubernetes_version outside the standard support window. Has no effect when create_aks = false; an existing caller-managed cluster's tier is left as-is."
+  description = "SKU tier for the AKS cluster: \"Free\", \"Standard\", or \"Premium\". The Free tier has no financially backed SLA for the API server; production deployments generally want \"Standard\". \"Premium\" is a prerequisite for AKS Long Term Support, but this module does not set the cluster's support_plan, so selecting \"Premium\" alone does not enroll the cluster in Long Term Support. Has no effect when create_aks = false; an existing caller-managed cluster's tier is left as-is."
   type        = string
   default     = "Free"
 
