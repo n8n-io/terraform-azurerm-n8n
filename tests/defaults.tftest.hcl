@@ -1191,6 +1191,23 @@ run "rejects_malformed_redis_eviction_policy" {
   ]
 }
 
+run "redis_eviction_policy_with_external_redis_warns" {
+  command = plan
+
+  variables {
+    create_redis               = false
+    redis_external_host        = "external-redis.example.com"
+    redis_external_password    = "super-secret-external-password"
+    redis_external_port        = 6379
+    redis_external_tls_enabled = false
+    redis_eviction_policy      = "VolatileLRU"
+  }
+
+  expect_failures = [
+    check.redis_tuning_requires_module_managed_redis,
+  ]
+}
+
 run "external_redis_plan_creates_no_managed_resources" {
   command = plan
 

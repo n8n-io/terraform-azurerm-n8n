@@ -32,13 +32,14 @@
 #   - `access_keys_authentication_enabled = true` — n8n and KEDA both
 #     authenticate with the primary access key (design.md decision 3),
 #     the same bearer-credential shape the legacy Redis Cache used.
-#   - `eviction_policy = var.redis_eviction_policy` (default `"NoEviction"`)
-#     — the azurerm provider's own default is `VolatileLRU`, which can evict
+#   - `eviction_policy = var.redis_eviction_policy` (default `"NoEviction"`).
+#     The azurerm provider's own default is `VolatileLRU`, which can evict
 #     any key carrying a TTL under memory pressure, including n8n's Bull
 #     queue keys. `NoEviction` instead rejects writes with an OOM error when
-#     Redis is full, so a job is never silently dropped. See "Changing
-#     eviction policy" below for the same replacement caveat as
-#     clustering_policy.
+#     Redis is full, so queue keys are never evicted to free memory. It
+#     does not add persistence or stop TTL expiry. Unlike clustering_policy,
+#     the provider changes eviction_policy in place (see the comment on the
+#     attribute below).
 # `public_network_access = "Disabled"` on the top-level resource matches
 # the legacy Redis Cache's hardcoded `public_network_access_enabled = false`.
 #
@@ -112,10 +113,12 @@ resource "azurerm_managed_redis" "n8n" {
     # future version of this module changes the hardcoded value itself.
     clustering_policy = "NoCluster"
     client_protocol   = "Encrypted"
-    # Changing eviction_policy also forces database recreation (Azure sets
-    # eviction policy at creation time only, same ForceNew caveat as
-    # clustering_policy above). Drain the queue before flipping this on a
-    # live deployment; see README -> "Redis high availability".
+    # Not ForceNew: azurerm (verified against v4.81.0) updates
+    # eviction_policy in place with a PUT on the existing default database;
+    # it does not delete or recreate the instance or database. Moving to
+    # NoEviction changes behavior: a full Redis then rejects writes instead
+    # of evicting keys.
+    # See docs/redis.md -> "Eviction policy".
     eviction_policy                    = var.redis_eviction_policy
     access_keys_authentication_enabled = true
   }
