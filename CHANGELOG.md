@@ -186,6 +186,27 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `Delete` and `Purge` for destroy); `Create` was never used
   ([#16](https://github.com/n8n-io/terraform-azurerm-n8n/issues/16)).
 
+- The module-managed Azure Managed Redis instance now sets
+  `eviction_policy = "NoEviction"` on `default_database` (new
+  `redis_eviction_policy` input, default `"NoEviction"`, validated against
+  the azurerm provider's enum). The provider's own default is
+  `VolatileLRU`, which can evict keys carrying a TTL under memory
+  pressure, including n8n's Bull queue keys, so jobs could disappear
+  without an error. `NoEviction` instead rejects writes with an
+  out-of-memory error on enqueue; set an alert on used memory to catch it
+  (see [`docs/redis.md`](./docs/redis.md#eviction-policy)). **Upgrade
+  impact:** existing instances get an in-place update of
+  `default_database.eviction_policy` from `VolatileLRU` to `NoEviction` on
+  the next apply. For this change alone, the azurerm provider (v4.81.0)
+  updates the existing database; it does not replace the instance or
+  delete and recreate the database. Review the plan before applying.
+  After the
+  update, a full Redis rejects writes instead of evicting keys. Set
+  `redis_eviction_policy = "VolatileLRU"` to keep the previous behavior.
+  `redis_eviction_policy` has no effect when `create_redis = false`;
+  configure eviction on your own Redis
+  ([#18](https://github.com/n8n-io/terraform-azurerm-n8n/issues/18)).
+
 ## [0.1.0] - 2026-09-29
 
 Initial release of `terraform-azurerm-n8n`: a single resource-bearing

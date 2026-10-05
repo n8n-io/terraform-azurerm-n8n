@@ -18,9 +18,22 @@ Azure can still reject a listed SKU with a capacity-allocation error even when t
 
 The module always requests `clustering_policy = "NoCluster"` on `default_database`, because n8n's Bull client and KEDA's Redis scaler both assume a single logical keyspace, not Enterprise/OSS-cluster key-slot routing. Per [Microsoft's cluster-policy documentation](https://learn.microsoft.com/en-us/azure/redis/architecture#cluster-policies), `NoCluster` "only applies to caches sized 25 GB and smaller" — this is why `redis_sku_name`'s validation allowlists only SKUs documented at 25 GB or smaller, and excludes the `FlashOptimized_*` family (which starts at 250 GB) outright. The module never offers a SKU where `NoCluster` is unavailable in the first place.
 
+## Eviction policy
+
+`redis_eviction_policy` defaults to `NoEviction`. The azurerm provider's own default for `azurerm_managed_redis` is `VolatileLRU`, which evicts keys that carry a TTL once Redis runs out of memory. n8n's Bull queue keys can carry a TTL, so `VolatileLRU` (or any other eviction policy) can silently drop in-flight jobs under memory pressure instead of failing loudly. With `NoEviction`, a full Redis instance rejects new writes with an out-of-memory error on enqueue instead of evicting a queue key. `NoEviction` only stops eviction under memory pressure. It does not add persistence, and keys with a TTL still expire.
+
+Set an alert on used memory so you catch that condition before Redis starts rejecting writes. Use the Azure Monitor `usedmemorypercentage` metric on the Azure Managed Redis resource, or run `redis-cli -h <redis_hostname> -p <redis_port> --tls INFO memory` from a debug pod inside the VNet. The managed instance uses access-key authentication, so `redis-cli` needs the key. Export it as `REDISCLI_AUTH` from the `password` key of the module's `n8n-redis-secret` Secret. Do not pass it with `-a`, which leaves it in shell history and the process list, and unset the variable when you finish.
+
+**Upgrading an existing deployment:** if you deployed this module before `redis_eviction_policy` existed, your instance has the provider's `VolatileLRU` default. On the next apply, Terraform plans a change of `default_database.eviction_policy` to `NoEviction`. For an eviction-policy-only change, the azurerm provider (verified against v4.81.0 source) plans an in-place update and sends it to the existing database. It does not replace the instance or delete and recreate the database. Review the complete plan before you apply: `azurerm_managed_redis.n8n[0]` should show as updated in place, not replaced, and check for unrelated changes in the same apply. After the update, a full Redis rejects writes instead of evicting keys. To keep the previous behavior, set `redis_eviction_policy = "VolatileLRU"`. This keeps the eviction risk this default avoids.
+
 ## Changing high availability or the clustering policy
 
-`redis_high_availability_enabled` and the (always-`NoCluster`) clustering policy are both **ForceNew** attributes on `azurerm_managed_redis` — Azure requires destroying and recreating the instance to change either one. On a live deployment this means:
+These two settings have different lifecycles from `redis_eviction_policy`, and both lose data:
+
+- `redis_high_availability_enabled` is a **ForceNew** attribute on `azurerm_managed_redis`. Changing it destroys and recreates the whole instance.
+- The clustering policy is always `NoCluster` and the module never changes it. The azurerm provider does not mark `clustering_policy` as ForceNew, but if it changes, the provider deletes and recreates the default database during the update. The plan shows an in-place update, but the data is still lost.
+
+On a live deployment, either change means:
 
 - In-flight Bull jobs are dropped.
 - Multi-main leader election breaks until the new instance is reachable and n8n/KEDA reconnect.
@@ -35,6 +48,8 @@ Before flipping `redis_high_availability_enabled` on a deployment carrying real 
 ## Managed vs. external Redis
 
 Set `create_redis = false` and supply `redis_external_host` to point n8n and KEDA at a Redis you already run — an unauthenticated endpoint is supported (`redis_external_username` and `redis_external_password` are both optional in that case), but `redis_external_host` is required. The module's `check` diagnostics (`external_redis_inputs_require_create_redis_false` / `redis_tuning_requires_module_managed_redis` in [`redis.tf`](../redis.tf)) flag the two directions Terraform can't reject outright: managed-only tuning left non-default while external Redis is active, and external inputs supplied while a managed instance is still created (and used instead).
+
+`redis_eviction_policy` has no effect on an external Redis. Configure the eviction policy on the Redis you run yourself: set `maxmemory-policy noeviction`, or `eviction_policy = "NoEviction"` on a caller-owned `azurerm_managed_redis`, as `examples/customer-managed-redis` does. Any other policy can evict Bull queue keys under memory pressure.
 
 ## Connectivity
 
