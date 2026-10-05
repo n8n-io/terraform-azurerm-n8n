@@ -51,8 +51,10 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 - `pg_storage_auto_grow_enabled` (bool, default `false`) enables Azure
   PostgreSQL Flexible Server storage autogrow, which doubles disk space
-  automatically as usage approaches the limit instead of the server going
-  read-only when full. The examples leave it off. Autogrow only grows
+  automatically as usage approaches the limit, which helps keep the server
+  from going read-only when full. Azure does not autogrow across the
+  4,096 GiB boundary; a server that reaches it needs a manual, offline
+  resize. The examples leave it off. Autogrow only grows
   storage, never shrinks it: after it fires, raise `pg_storage_mb` to at
   least the live size before the next apply, or a stale `pg_storage_mb`
   plans to **destroy and recreate the entire server** (data loss), since
@@ -67,7 +69,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   proceed without resolving the precondition, and Terraform may destroy the
   old server before it evaluates the create-side precondition. It is not a
   deletion control: review plans for a PostgreSQL replace action and hold an
-  existing `CanNotDelete` lock with `prevent_destroy` on the server (see
+  existing caller-owned `CanNotDelete` management lock on the server, with
+  `lifecycle.prevent_destroy` on the lock resource itself (see
   `docs/deletion-safety.md`).
   This check runs independently of the current `pg_storage_auto_grow_enabled`
   value, since Azure never shrinks storage back down: a server that already

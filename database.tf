@@ -124,8 +124,9 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
 # not check resource preconditions. Treat the guard as a best-effort early
 # warning, not a deletion control. Callers must still review plans for a
 # PostgreSQL delete or replace action and for this data source showing
-# "(known after apply)", and should hold an existing CanNotDelete lock with
-# prevent_destroy on the server (docs/deletion-safety.md).
+# "(known after apply)", and should hold an existing caller-owned
+# CanNotDelete management lock on the server, with lifecycle.prevent_destroy
+# on the lock resource itself (docs/deletion-safety.md).
 data "azurerm_postgresql_flexible_server" "current" {
   count = var.create_database && var.pg_storage_drift_guard_enabled ? 1 : 0
 
