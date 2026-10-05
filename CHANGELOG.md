@@ -41,8 +41,12 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `aks_sku_tier = "Standard"`: an existing deployment of either example
   gets an in-place Free-to-Standard update and a recurring per-cluster
   control-plane charge. Premium is a prerequisite for AKS Long Term
-  Support, but this module does not set `support_plan`. Like the other
-  AKS-only inputs, a non-default value warns when `create_aks = false`
+  Support, but this module does not set `support_plan`. Changing the tier
+  on an existing cluster can make the AKS API server unavailable for up
+  to about a minute, so change it in its own apply; see
+  [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_sku_tier-briefly-interrupts-the-aks-api-server).
+  Like the other AKS-only inputs, a non-default value warns when
+  `create_aks = false`
   ([#19](https://github.com/n8n-io/terraform-azurerm-n8n/issues/19)).
 
 ### Changed

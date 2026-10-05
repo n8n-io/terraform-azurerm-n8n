@@ -159,6 +159,28 @@ This control has no effect at all when `create_aks = false`; `check.aks_tuning_r
 
 Setting the input back to false is a second rotation of the system pool with the same disruption, not an instant rollback. If an apply fails partway through the rotation, inspect the actual node pools (`az aks nodepool list`) and build a fresh, reviewed plan from that state rather than toggling the input back blindly.
 
+## Changing `aks_sku_tier` briefly interrupts the AKS API server
+
+**Validation scope.** One live run (`examples/small`, `Standard_D2s_v5`) changed this input from `"Free"` to `"Standard"` and back on an existing cluster, probing the API server's `/readyz` every 5 seconds. Both changes were in-place updates with no replacement and no drift afterwards. Free to Standard took about 6 minutes, with one failed probe out of 81. Standard to Free took about 3 minutes, with the API server unavailable for about 50 seconds (7 of 10 probes failed) and one more failed probe near the end of the update. n8n, KEDA, and AGIC pods kept running and did not restart in either direction. Treat these timings as one observation, not a guarantee.
+
+**Symptom**
+
+While `azurerm_kubernetes_cluster.n8n` updates its `sku_tier`, `kubectl` or the Kubernetes and Helm providers fail with errors such as `InternalError`, `ServiceUnavailable`, or `Unable to connect to the server ... context deadline exceeded`. The n8n workload itself keeps serving traffic.
+
+**Root cause**
+
+Changing the tier is an in-place update of the managed control plane (no node or pod is recreated), but AKS reconfigures the API server while it runs, so the API server can be unavailable for up to about a minute. Terraform applies Kubernetes and Helm changes that depend on the cluster only after the cluster update finishes, and `time_sleep.aks_api_warmup` does not run again on an update (it re-runs only when the cluster ID changes). A Kubernetes or Helm change in the same apply can therefore still hit the tail of the interruption.
+
+This input has no effect at all when `create_aks = false`; `check.aks_tuning_requires_module_managed_aks` warns (non-failing) if it is left non-default in that mode, because the existing cluster's tier is owned by whoever created it.
+
+**Resolution**
+
+1. Change `aks_sku_tier` in its own apply, without other module changes. Save the plan (`terraform plan -out=...`) and confirm the only change is `sku_tier` on `azurerm_kubernetes_cluster.n8n`, as an in-place update.
+2. Do not run other `kubectl` or Helm operations against the cluster while the update runs.
+3. If an apply that combined the tier change with Kubernetes or Helm changes fails with one of the errors above, wait until `kubectl get --raw=/readyz` returns `ok`, then run `terraform plan` and `terraform apply` again. The tier change has already been applied, so the next plan contains only the remaining changes.
+
+The Standard and Premium tiers add an hourly charge per cluster. Premium is a prerequisite for AKS Long Term Support, but this module does not set the cluster's `support_plan`.
+
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
 **Symptom**
