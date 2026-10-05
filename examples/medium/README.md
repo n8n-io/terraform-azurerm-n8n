@@ -27,7 +27,7 @@ The root default writes binary data to private Azure Blob and requires the separ
 
 ## Cost and operational caveats
 
-The warm node floor, the AKS Standard tier, larger PostgreSQL and Redis SKUs, ZRS storage, and Application Gateway autoscaling make this materially more expensive than `small`. The Standard tier adds a per-cluster hourly charge for the financially backed API server SLA. On an existing deployment of this example that predates `aks_sku_tier`, the next apply upgrades the cluster from Free to Standard in place. Zone-redundant storage does not replace backups. PostgreSQL HA remains disabled in this tier. Use `large` when database or Redis availability, connection pressure, or substantially higher pod ceilings require those controls.
+The warm node floor, the AKS Standard tier, larger PostgreSQL and Redis SKUs, ZRS storage, and Application Gateway autoscaling make this materially more expensive than `small`. The Standard tier adds a per-cluster hourly charge for the financially backed API server SLA. On an existing deployment of this example that predates `aks_sku_tier`, the next apply upgrades the cluster from Free to Standard in place. The AKS API server can be unavailable for up to about a minute during that update, so apply it without other changes where possible; see [Changing `aks_sku_tier` briefly interrupts the AKS API server](../../docs/troubleshooting.md#changing-aks_sku_tier-briefly-interrupts-the-aks-api-server). Zone-redundant storage does not replace backups. PostgreSQL HA remains disabled in this tier. Use `large` when database or Redis availability, connection pressure, or substantially higher pod ceilings require those controls.
 
 See [the tier comparison](../README.md).
 
