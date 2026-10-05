@@ -15,7 +15,6 @@ locals {
     aks_sku_tier                 = "Standard"
     pg_sku_name                  = "GP_Standard_D4s_v3"
     pg_storage_mb                = 131072
-    pg_storage_auto_grow_enabled = true
     pg_backup_retention_days     = var.pg_backup_retention_days
     redis_sku_name               = "Balanced_B5"
     storage_replication_type     = "ZRS"
@@ -186,10 +185,9 @@ module "n8n" {
   aks_sku_tier                 = local.tier.aks_sku_tier
   aks_api_authorized_ip_ranges = var.aks_api_authorized_ip_ranges
 
-  pg_sku_name                  = local.tier.pg_sku_name
-  pg_storage_mb                = local.tier.pg_storage_mb
-  pg_storage_auto_grow_enabled = local.tier.pg_storage_auto_grow_enabled
-  pg_backup_retention_days     = local.tier.pg_backup_retention_days
+  pg_sku_name              = local.tier.pg_sku_name
+  pg_storage_mb            = local.tier.pg_storage_mb
+  pg_backup_retention_days = local.tier.pg_backup_retention_days
 
   redis_sku_name = local.tier.redis_sku_name
 

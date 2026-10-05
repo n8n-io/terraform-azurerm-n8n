@@ -108,7 +108,24 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
 # the apply fails with a 404 instead of the intended precondition failure.
 # Set `pg_storage_drift_guard_enabled = false` for any apply that renames
 # or moves the server, then re-enable it on a later apply once the server
-# has settled at its new identity.
+# has settled at its new identity. The same not-found error occurs whenever
+# this lookup runs after the server was deleted outside Terraform, including
+# a `terraform destroy` refresh once the server is already gone (for example
+# after a partially completed destroy). A plan-time lookup blocks the plan;
+# a deferred one fails during apply. Set the guard to false to recover in
+# those cases too.
+#
+# LIMIT: the guard only protects a plan in which this data source is read
+# at plan time. Terraform defers the read to apply when the read depends on
+# objects with pending changes, most commonly a caller's `depends_on` on the
+# `module` block (examples/medium has one). The plan can then proceed
+# without resolving the precondition, and Terraform may destroy the old
+# server before it evaluates the create-side precondition: destroy steps do
+# not check resource preconditions. Treat the guard as a best-effort early
+# warning, not a deletion control. Callers must still review plans for a
+# PostgreSQL delete or replace action and for this data source showing
+# "(known after apply)", and should hold an existing CanNotDelete lock with
+# prevent_destroy on the server (docs/deletion-safety.md).
 data "azurerm_postgresql_flexible_server" "current" {
   count = var.create_database && var.pg_storage_drift_guard_enabled ? 1 : 0
 
@@ -144,7 +161,8 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   # not a condition on var.pg_storage_auto_grow_enabled, so it can't be
   # scoped to "ignore only when autogrow is on" — always ignoring storage_mb
   # would silently break manual resizes for everyone. pg_storage_drift_guard_enabled
-  # (below) turns this into a clean precondition failure instead.
+  # (below) turns this into a precondition failure instead, but only when its
+  # data source is read at plan time (see the LIMIT note on that data source).
   storage_mb                   = var.pg_storage_mb
   auto_grow_enabled            = var.pg_storage_auto_grow_enabled
   backup_retention_days        = var.pg_backup_retention_days

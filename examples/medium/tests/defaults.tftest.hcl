@@ -49,7 +49,6 @@ run "medium_tier_plan" {
       aks_sku_tier                 = "Standard"
       pg_sku_name                  = "GP_Standard_D4s_v3"
       pg_storage_mb                = 131072
-      pg_storage_auto_grow_enabled = true
       pg_backup_retention_days     = 14
       redis_sku_name               = "Balanced_B5"
       storage_replication_type     = "ZRS"
@@ -69,11 +68,6 @@ run "medium_tier_plan" {
   assert {
     condition     = output.tier_configuration.pg_backup_retention_days == 14
     error_message = "The default pg_backup_retention_days (14) must reach the module n8n call unchanged."
-  }
-
-  assert {
-    condition     = output.tier_configuration.pg_storage_auto_grow_enabled == true
-    error_message = "pg_storage_auto_grow_enabled (true) must reach the module n8n call unchanged."
   }
 
   assert {

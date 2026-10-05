@@ -10,13 +10,11 @@ A high-volume Azure reference topology with larger network ranges, zone-redundan
 | n8n main | 6 to 60 replicas |
 | n8n webhook | 20 to 80 replicas, 500m CPU and 1 Gi memory requests |
 | n8n workers | 20 to 160 replicas, concurrency 40 |
-| PostgreSQL | `GP_Standard_D8s_v3`, 512 GB, zones 1 and 2, 35-day geo-redundant backups, storage autogrow enabled |
+| PostgreSQL | `GP_Standard_D8s_v3`, 512 GB, zones 1 and 2, 35-day geo-redundant backups |
 | PgBouncer | 2 replicas, required node anti-affinity, transaction pooling |
 | Redis | `MemoryOptimized_M20`, high availability enabled |
 | Blob | Private endpoint, ZRS, binary and execution-data modes |
 | Ingress | WAF_v2 Prevention mode, autoscaling from 2 to 30 instances |
-
-Storage autogrow only grows `local.tier.postgres_storage_mb` (the example-owned `azurerm_postgresql_flexible_server.n8n` resource in `database.tf`), it never shrinks it. This example manages PostgreSQL directly (`create_database = false`), so the root module's `pg_storage_drift_guard_enabled` input does not apply here. After Azure grows the live server past 512 GB, raise `local.tier.postgres_storage_mb` to at least the new live size before the next apply, or Terraform plans to **destroy and recreate the entire server** (data loss) instead of failing cleanly, since Azure cannot shrink storage in place. Check the live size first with `az postgres flexible-server show --name <server> --resource-group <rg> --query storage.storageSizeGb`, or add the same data-source-plus-precondition guard the root module uses in its own `database.tf` directly to this example's server resource.
 
 The maximum n8n CPU requests fit the module's two-pool AKS model. PgBouncer bounds PostgreSQL server connections when all pod families scale out. This configuration is not a throughput guarantee. Load-test representative workflows and measure PostgreSQL I/O, connection waits, Redis queue latency, Blob latency, pod startup, and downstream service limits.
 

@@ -33,7 +33,6 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   sku_name = local.tier.postgres_sku_name
 
   storage_mb                   = local.tier.postgres_storage_mb
-  auto_grow_enabled            = local.tier.postgres_storage_auto_grow_enabled
   backup_retention_days        = 35
   geo_redundant_backup_enabled = true
 
