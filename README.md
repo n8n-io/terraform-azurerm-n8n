@@ -22,6 +22,7 @@ An **n8n Enterprise license key is required** (`var.n8n_license_key`) — this m
 - [Sizing and capacity](#sizing-and-capacity)
 - [Examples](#examples)
 - [Operator documentation](#operator-documentation)
+- [Stability & versioning](#stability--versioning)
 - [Compatibility](#compatibility)
 - [Support](#support)
 - [Out of scope](#out-of-scope)
@@ -164,7 +165,7 @@ n8n application version `2.29.0` or later is required for the Azure binary/execu
 
 Worker and webhook-processor scaling (KEDA `ScaledObject`, webhook HPA) are unaffected by this choice; only their rollout strategy follows the main topology, because the pinned chart exposes a single top-level `strategy` for all three Deployments. `Recreate` is not a general at-most-one guarantee: it prevents a rolling-upgrade overlap, but manual pod deletion, node loss, or a forced operation can still produce more than one main process. For a maintenance window, `n8n_worker_keda_pause = true` freezes the worker `ScaledObject` at its current count, and `n8n_worker_keda_paused_replica_count = 0` scales workers to zero while jobs wait in Redis (chart `1.13.0` or later; `n8n_worker_pools` pools are not paused); webhook processors have no pause input because the module scales them with its own HPA rather than a KEDA `ScaledObject`.
 
-Selecting single-main does **not** grant any other Enterprise entitlement. A Business license without `feat:binaryDataAz` / `feat:executionDataAz` still cannot use the Azure binary/execution-data modes — for a new deployment on such a license, set `n8n_binary_data_storage_mode = "database"`, `n8n_execution_data_storage_mode = "database"`, and `n8n_available_binary_data_modes = ["database"]`; see [`docs/data-storage.md`](./docs/data-storage.md#new-deployment-without-azure-storage-entitlements-business-license). Do not remove an existing deployment's Azure storage modes before its retained objects are migrated or expired.
+Selecting single-main does **not** grant any other Enterprise entitlement. A Business license without `feat:binaryDataAz` / `feat:executionDataAz` still cannot use the Azure binary/execution-data modes — for a new deployment on such a license, set `n8n_binary_data_storage_mode = "database"` and `n8n_execution_data_storage_mode = "database"`; see [`docs/data-storage.md`](./docs/data-storage.md#new-deployment-without-azure-storage-entitlements-business-license). An existing deployment moving off Azure must set `azure_blob_retain_read_access = true` until its retained Azure objects are migrated or expired.
 
 Switch topology only in a maintenance window; raising the minimum above 1 without the multi-main entitlement fails the additional main pod's license activation, and `helm_release.n8n`'s `atomic = true` rolls the release back automatically after its timeout — see [`docs/troubleshooting.md`](./docs/troubleshooting.md#switching-to-multi-main-fails-because-the-license-lacks-featmultiplemaininstances) for diagnosis and recovery.
 
@@ -339,7 +340,7 @@ Every stateful dependency has a managed (module-owned) and an external (caller-o
 
 Both managed and external paths render one canonical connection object per service (`local.postgres_connection`, `local.redis_connection`) so the n8n Helm values and KEDA `TriggerAuthentication` never branch on `create_database` / `create_redis` themselves. Non-blocking `check` diagnostics flag the two directions Terraform can't reject outright: managed-only tuning inputs set while the external path is active, and external-only inputs set while the managed path is active.
 
-Azure Managed Redis regional/SKU availability, `NoCluster` capacity limits, and the queue-draining implications of changing high availability or clustering policy are documented in [`docs/redis.md`](./docs/redis.md).
+Azure Managed Redis regional/SKU availability, `NoCluster` capacity limits, and the queue-draining implications of changing high availability or clustering policy are documented in [`docs/redis.md`](./docs/redis.md). PostgreSQL TLS mode selection (`postgres_managed_ssl_mode` / `postgres_external_ssl_mode`), supplying a CA bundle for `verify-ca` / `verify-full`, and Azure's CA rotation schedule are documented in [`docs/postgresql-tls.md`](./docs/postgresql-tls.md).
 
 What `terraform destroy` can and cannot make recoverable on the managed PostgreSQL and Blob layers, and why AWS's RDS/S3 deletion-safety controls have no literal Azure equivalent, is documented in [`docs/deletion-safety.md`](./docs/deletion-safety.md).
 
@@ -363,7 +364,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 
 ## Sizing and capacity
 
-`aks_node_vm_size` plus the main/worker/webhook autoscaler floors and ceilings (`n8n_main_hpa_min_replicas`/`_max_replicas`, `n8n_worker_keda_min_replicas`/`_max_replicas`, `n8n_webhook_hpa_min_replicas`/`_max_replicas`) drive an advisory, non-blocking capacity `check`: it maps a curated set of reviewed `Dsv4`/`Dsv5`/`Dsv7` SKUs to vCPU counts, counts both untainted node pools, subtracts documented AKS and per-node system-workload reservations, and warns only when the configured autoscaler ceilings would not fit — it stays silent for unknown-but-valid SKUs and never blocks `terraform apply`. The model is a documented estimate, not a live capacity guarantee; re-validate it during load testing and after AKS/KEDA/CSI/AGIC version changes.
+`aks_node_vm_size` plus the main/worker/webhook autoscaler floors and ceilings (`n8n_main_hpa_min_replicas`/`_max_replicas`, `n8n_worker_keda_min_replicas`/`_max_replicas`, `n8n_webhook_hpa_min_replicas`/`_max_replicas`) drive an advisory, non-blocking capacity `check`: it maps a curated set of reviewed `Dsv4`/`Dsv5`/`Dsv7` SKUs to vCPU counts, counts both node pools (or only the user pool when `aks_system_pool_critical_addons_only = true` taints the system pool against n8n pods), subtracts documented AKS and per-node system-workload reservations, and warns only when the configured autoscaler ceilings would not fit — it stays silent for unknown-but-valid SKUs and never blocks `terraform apply`. The model is a documented estimate, not a live capacity guarantee; re-validate it during load testing and after AKS/KEDA/CSI/AGIC version changes.
 
 [`examples/README.md`](./examples/README.md) has the full small/medium/large sizing comparison table (AKS SKU, node/replica floors and ceilings, PostgreSQL/Redis SKU, storage durability, and the dominant cost factors per tier) — start from the tier closest to your expected workload rather than tuning every input from the `small` defaults.
 
@@ -384,20 +385,40 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 ## Operator documentation
 
 - [`docs/post-deployment.md`](./docs/post-deployment.md) — DNS verification, encryption-key backup, license activation, post-apply health checks.
-- [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md): bumping `n8n_image_tag` or `n8n_chart_version` on an existing deployment, per-chart-version upgrade notes (the one-time worker reset to 1 replica, which can interrupt running executions, and main sidecar removal on `1.13.0`), rollback.
+- [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md): bumping `n8n_image_tag` or `n8n_chart_version` on an existing deployment, per-chart-version upgrade notes (the main task-runner sidecar removal on `1.12.0`, the one-time worker reset to 1 replica on `1.13.0`, which can interrupt running executions, and the `N8N_AVAILABLE_BINARY_DATA_MODES` removal on `1.14.0`), rollback.
 - [`docs/troubleshooting.md`](./docs/troubleshooting.md) — symptom → root cause → fix for the failure modes observed in real `terraform apply` runs.
 - [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md) — manual recovery for stuck namespace finalizers, half-uninstalled Helm releases, and App Gateway frontend-IP release.
 - [`docs/deletion-safety.md`](./docs/deletion-safety.md) — which AWS deletion-time controls (RDS/S3) have a real Azure analog, and which do not.
 - [`docs/tls-rotation.md`](./docs/tls-rotation.md) — rotating the App Gateway TLS certificate under the BYO-secret contract.
 - [`docs/redis.md`](./docs/redis.md) — Azure Managed Redis SKU/region availability, `NoCluster` sizing, and HA/clustering-policy change caveats.
+- [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) — PostgreSQL TLS mode selection, supplying a CA bundle for `verify-ca` / `verify-full`, and Azure's CA rotation schedule.
+- [`docs/build-time-decisions.md`](./docs/build-time-decisions.md): inputs to decide before the first `terraform apply` because a later change replaces resources (names and location, AKS networking, the PostgreSQL subnet and geo-redundant backup, Redis HA, Blob replication, the n8n encryption key), plus in-place changes that still disrupt workloads.
 - [`docs/data-storage.md`](./docs/data-storage.md) — binary-data and execution-data mode combinations, entitlements, and migration guidance.
 - [`docs/observability.md`](./docs/observability.md) — Prometheus, OpenTelemetry, and log-streaming configuration.
 - [`docs/azure-key-vault-external-secrets.md`](./docs/azure-key-vault-external-secrets.md) — infrastructure prerequisites for n8n's Azure Key Vault external-secrets integration.
+- [`docs/shared-responsibility.md`](./docs/shared-responsibility.md): one-table summary of what the module does versus what the caller owns: cluster security add-ons, network egress and DNS, secrets and Terraform state, TLS certificates, backup and restore, upgrades, and monitoring.
 - [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md) — ownership convention, reference/attestation contracts, direct `modules/controllers` composition, and the pre-release upgrade boundary for the caller-managed AKS, Blob, namespace, Secret, KEDA, and webhook-HPA layers.
 - [`examples/split-ingress/README.md`](./examples/split-ingress/README.md) — operating a split public-webhook/internal-admin topology, including how `n8n_webhook_url` advertises webhooks on the public host while the editor identity stays on the private one.
 - [`docs/manual-azure-qualification.md`](./docs/manual-azure-qualification.md): manual checklist for live Azure lifecycle behavior that offline tests cannot prove. Incomplete checks do not block a merge, but their behaviors remain unverified. A verified one-apply release guarantee requires the live lifecycle evidence specified in `AGENTS.md`. Filled-in copies from completed runs live in [`docs/qualification-runs/`](./docs/qualification-runs/); the 2026-09-16 run covers the `port-aws-040-enhancements` branch.
 - [`CHANGELOG.md`](./CHANGELOG.md) — release history.
 - [`AGENTS.md`](./AGENTS.md) — contributor guide, Azure-specific deltas vs the AWS sibling, and the registry quality bar this module is held to.
+
+## Stability & versioning
+
+This module is pre-1.0. We use minor versions (0.1, 0.2, ...) as the
+breaking-change boundary and patches (0.1.0, 0.1.1, ...) for additive and
+bug-fix changes.
+
+| Across | What may change |
+| ------ | --------------- |
+| `0.MINOR.PATCH` -> `0.MINOR.PATCH+1` | Bug fixes, new optional inputs, new outputs, new resources whose absence would not affect existing callers. No removed or renamed inputs/outputs, no changed defaults that move infra, no changed resource addresses. |
+| `0.MINOR` -> `0.MINOR+1` | Anything else, including removed or renamed inputs, default changes that force resource replacement, refactored resource addresses, and bumped provider version floors. Each such change is called out in [`CHANGELOG.md`](./CHANGELOG.md) with an upgrade note. |
+
+Pin `version = "~> 0.1.0"` to auto-receive 0.1.x patches without accidentally
+crossing the 0.1 -> 0.2 boundary. Note that the three-component constraint
+`~> 0.1.0` resolves to `>= 0.1.0, < 0.2.0`, whereas the two-component `~> 0.1`
+would resolve to `>= 0.1, < 1.0` and let you cross minor boundaries
+unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
 
 ## Compatibility
 
@@ -408,8 +429,8 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
   warnings on unversioned resource types (`kubernetes_namespace`, three
   `kubernetes_secret` resources), no resource replacement.
 - **`time` provider:** `~> 0.14`.
-- **n8n Helm chart:** default `1.13.0` (see `n8n_chart_version`'s
-  description for what changed since `1.11.0`).
+- **n8n Helm chart:** default `1.14.0` (matches the AWS sibling; see
+  `n8n_chart_version`'s description for what changed since `1.11.0`).
 - **AKS:** `aks_kubernetes_version` default stays `1.35`.
 - See [`docs/versioning.md`](./docs/versioning.md) for the full pin
   inventory (every provider, the n8n chart, PostgreSQL, Redis, and the CI
@@ -418,6 +439,14 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 ## Support
 
 This module is open source software, maintained by the n8n Solutions team independently of n8n's enterprise products. While the n8n Support team provides dedicated support for the enterprise offerings, this module isn't included.
+
+**Bug reports and feature requests:** open a [GitHub issue](https://github.com/n8n-io/terraform-azurerm-n8n/issues). We triage on a best-effort basis; there is no SLA.
+
+**Security issues:** see [`SECURITY.md`](./SECURITY.md) for the disclosure process. **Do not** open public issues for security findings.
+
+**General n8n questions** (not specific to this module): use the [n8n community forum](https://community.n8n.io/).
+
+Contributions: see [`CONTRIBUTING.md`](./CONTRIBUTING.md). Planned work: [`ROADMAP.md`](./ROADMAP.md).
 
 ## Out of scope
 
@@ -429,6 +458,7 @@ This module does not:
 - Certify sovereign-cloud (Azure Government, Azure China) deployments — the pinned n8n Azure Key Vault client constructs the public `vault.azure.net` endpoint unconditionally; see the same doc for the current limitation.
 - Back up or restore PostgreSQL, Redis, or Blob data on an ongoing basis beyond PostgreSQL's own configured backup retention — build your own backup/DR runbook around the managed services' native capabilities.
 - Approximate AWS-only capabilities without a secure Azure-native equivalent, including keyless n8n Azure Key Vault external secrets, IAM permission boundaries, AWS KMS controls, RDS snapshot restoration, and EBS CSI ownership — see [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#excluded-aws-only-capabilities).
+- Enable cluster security add-ons (Microsoft Defender for Containers, Azure Policy, KMS etcd encryption, Microsoft Entra ID integration), an egress firewall, or monitoring/alerting beyond what the caller configures. See [`docs/shared-responsibility.md`](./docs/shared-responsibility.md) for the main ownership boundaries.
 
 ## Reference
 

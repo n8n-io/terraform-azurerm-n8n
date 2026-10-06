@@ -204,7 +204,8 @@ module itself created. When a service's `create_postgres_private_dns_zone`,
 `create_redis_private_dns_zone`, or `create_blob_private_dns_zone` is
 `false`, the module creates no zone or VNet link for that service, so
 `terraform destroy` leaves the caller-supplied zone and its link untouched.
-The other services keep their module-managed zones. One exception: if you
+This does not change the other services: `terraform destroy` still deletes
+their module-managed zones and links as described above. One exception: if you
 switched an existing deployment over by passing the ID of the zone the module
 had already created, that zone is still in this module's state until you
 move it out, and the next plan destroys it. See

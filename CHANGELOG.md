@@ -143,7 +143,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   follows the switch, never the ID being null, so the ID may come from a
   zone created in the same configuration. A supplied ID that has no effect
   raises a warning, not an error. PostgreSQL accepts any zone name ending in
-  `.postgres.database.azure.com`; Redis and Blob require their `privatelink`
+  `.postgres.database.azure.com` except the server's own FQDN
+  (`<friendly_name_prefix>-postgres.postgres.database.azure.com`), which
+  Azure rejects; Redis and Blob require their `privatelink`
   zone names. The caller owns the zone's VNet link and needs Private DNS
   Zone Contributor on it. Switching an existing deployment to a
   caller-supplied zone destroys the module's own zone and link, can
