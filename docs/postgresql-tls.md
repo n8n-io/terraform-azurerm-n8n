@@ -45,11 +45,13 @@ values derive from.
 The pinned n8n Helm chart (`1.14.0`, and `1.13.0` before it) renders
 `database.ssl.enabled` into an environment variable named
 `DB_POSTGRESDB_SSL`, but n8n only reads `DB_POSTGRESDB_SSL_ENABLED`
-([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175),
-open upstream). The module works around this by setting
+([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
+fixes this upstream; it was merged after `1.14.0` and is not yet in a
+released chart). The module works around this by setting
 `DB_POSTGRESDB_SSL_ENABLED=true` directly through `config.extraEnv`
 (`locals.tf`'s `n8n_postgres_ssl_enabled_env`) whenever the effective
-`ssl_mode` is not `disable`, independent of chart version.
+`ssl_mode` is not `disable`, independent of chart version. The entry stays
+harmless on a chart that includes the fix.
 
 How the chart bug affected each mode before this workaround:
 

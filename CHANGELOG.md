@@ -181,8 +181,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 - PostgreSQL `verify-ca` / `verify-full` on the external path connected
   in plaintext. The pinned chart (`1.14.0`, and `1.13.0` before it) renders
   `database.ssl.enabled` as `DB_POSTGRESDB_SSL`, which n8n does not read
-  ([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
-  upstream). `require`, `allow`, and `prefer` were not affected: the chart
+  (fixed upstream by
+  [n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175),
+  not yet in a released chart). `require`, `allow`, and `prefer` were not affected: the chart
   also sets `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false` for them, which
   makes n8n use TLS anyway. The module now sets `DB_POSTGRESDB_SSL_ENABLED`
   directly whenever the effective mode is not `disable`. **Upgrade impact:**
