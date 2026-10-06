@@ -178,10 +178,14 @@ fails the plan instead, or the apply if the zone ID is only known then. See
   once the link exists. If the link is created in the same configuration as
   the module call, create it in an earlier apply, or add it to the module
   block's `depends_on`. While the link has pending changes, a `depends_on`
-  on the module block defers the module's data source reads to apply time,
-  which weakens the plan-time protection of
-  `pg_storage_drift_guard_enabled` (see the comment above
-  `data.azurerm_postgresql_flexible_server.current` in `database.tf`).
+  on the module block defers the module's data source reads to apply time.
+  That weakens the plan-time protection of `pg_storage_drift_guard_enabled`
+  (see the comment above `data.azurerm_postgresql_flexible_server.current`
+  in `database.tf`), and with `create_ingress = true` it replaces the two
+  AGIC `Reader` role assignments, whose scope comes from
+  `data.azurerm_resource_group.n8n`. A live test that created the zones and
+  links in the same apply without `depends_on` resolved correctly once the
+  apply finished, so prefer an earlier apply over `depends_on`.
 - **Permissions.** The identity running Terraform must be allowed to write
   records into the zone. Microsoft's
   [private endpoint permission troubleshooting guide](https://learn.microsoft.com/troubleshoot/azure/private-link/troubleshoot-private-endpoint-permission-denied)
@@ -224,9 +228,11 @@ hide a real misconfiguration as well.
 
 Plan this change in its own apply, save and review the plan before
 applying, and back up the n8n encryption key and the database first. The
-behavior below follows from the `hashicorp/azurerm` v4.81.0 source and
-Microsoft's documentation. It has not been qualified on a live deployment,
-so the length of any interruption is not known. There are two cases.
+behavior below follows from the `hashicorp/azurerm` v4.81.0 source,
+Microsoft's documentation, and one live test of `examples/small` that moved
+all three services to caller-owned zones with the same names and back
+again. Timings from that test are a guide, not a guarantee. There are two
+cases.
 
 **Moving to a different zone, such as a central landing-zone zone.** Set the
 switch to `false` and pass the new zone ID. The plan destroys the module's
@@ -240,14 +246,29 @@ own zone and VNet link, and changes the service's DNS attachment:
 
 Expect the following:
 
+- **Expect a name-resolution outage of a few minutes per service.** In the
+  live test it lasted about 3 minutes per service when moving to the
+  caller-owned zones, and about 4 minutes when moving back. It starts when
+  Terraform begins deleting the module's VNet link, and ends only once the
+  server or private endpoint has written its record into the new zone.
+  Terraform switches the server and the endpoints' zone groups after it has
+  destroyed the old zone, so the outage includes the link deletion (more
+  than 2 minutes in the test). Schedule a maintenance window.
+- **During the outage, Redis and Blob first resolve to their public IP
+  addresses**, then to nothing. Public network access is disabled on both,
+  so n8n sees connection failures, not only lookup errors. PostgreSQL does
+  not resolve at all. In the test, n8n logged database lookup and ping
+  failures, but no pod restarted and the editor stayed reachable.
 - If the n8n VNet resolves the zone through a direct VNet link, note that a
   VNet cannot be linked to two private DNS zones with the same name
   ([Microsoft Q&A](https://learn.microsoft.com/answers/questions/2283009/a-virtual-network-cannot-be-linked-to-multiple-zon)).
-  The link to the new zone can only be created once the module's link is
-  deleted, so n8n cannot resolve that service's hostname in between. A new
-  PostgreSQL zone with a different name, or resolution through a central
-  DNS resolver, avoids this conflict. Schedule a maintenance window either
-  way.
+  In the live test, Azure accepted the new link while the module's
+  same-named link was still being deleted, in both directions, so creating
+  both in one apply worked. Expect the conflict when the old link is still
+  active, for example if you create the new link in an earlier apply than
+  the one that removes the module's link. A new PostgreSQL zone with a
+  different name, or resolution through a central DNS resolver, avoids the
+  conflict.
 - After the change, check from an n8n pod that the service's hostname
   resolves to its private IP address and that n8n can connect, not only that
   the new zone contains the record.
@@ -259,8 +280,9 @@ Expect the following:
   zone, then turn high availability back on. Turning it back on creates a
   new standby.
 - Rolling back to `create_*_private_dns_zone = true` creates a new
-  module-owned zone and link. The link fails while the VNet is still linked
-  to a zone with the same name.
+  module-owned zone and link, with the same kind of outage. Remove the
+  caller's same-named link in the same apply: the module's new link fails
+  while the VNet is still actively linked to a zone with the same name.
 
 **Handing the module's existing zone over to central management.** If you
 pass the ID of the zone the module already created, the plan destroys that

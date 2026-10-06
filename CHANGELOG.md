@@ -148,8 +148,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   Azure rejects; Redis and Blob require their `privatelink`
   zone names. The caller owns the zone's VNet link and needs Private DNS
   Zone Contributor on it. Switching an existing deployment to a
-  caller-supplied zone destroys the module's own zone and link, can
-  interrupt name resolution, and fails for a PostgreSQL server with high
+  caller-supplied zone destroys the module's own zone and link, interrupts
+  name resolution for a few minutes per service (about 3 to 4 minutes in a
+  live test), and fails for a PostgreSQL server with high
   availability enabled; see
   [`docs/customer-managed-infrastructure.md`](docs/customer-managed-infrastructure.md#caller-supplied-private-dns-zones)
   for the requirements and migration steps
