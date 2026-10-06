@@ -1152,8 +1152,8 @@ run "postgres_ssl_ca_pem_mounts_a_file_and_sets_ssl_enabled_env" {
   }
 
   assert {
-    condition     = one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "postgres-ssl-ca"]).mountPath == "/etc/n8n/postgres-ssl-ca"
-    error_message = "The module must mount the postgres-ssl-ca volume at /etc/n8n/postgres-ssl-ca."
+    condition     = one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "postgres-ssl-ca"]).mountPath == "/etc/n8n/postgres-ssl-ca" && one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "postgres-ssl-ca"]).readOnly == true
+    error_message = "The module must mount the postgres-ssl-ca volume read-only at /etc/n8n/postgres-ssl-ca."
   }
 
   assert {
