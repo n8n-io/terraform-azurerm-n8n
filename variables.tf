@@ -279,7 +279,7 @@ variable "pg_storage_drift_guard_enabled" {
 }
 
 variable "pg_version" {
-  description = "PostgreSQL major version (e.g. 14, 15, 16). 16 is the current GA on Azure Flexible Server. Major-version upgrades are not in-place — see Azure docs for the upgrade workflow. Ignored when `create_database = false`."
+  description = "PostgreSQL major version (e.g. 14, 15, 16). 16 is the current GA on Azure Flexible Server. Raising it on an existing server runs Azure's in-place major version upgrade, which stops the server and cannot be rolled back except by a point-in-time restore to a new server; lowering it replaces the server with an empty one. See docs/build-time-decisions.md. Ignored when `create_database = false`."
   type        = string
   default     = "16"
 
