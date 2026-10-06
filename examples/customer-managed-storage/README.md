@@ -26,7 +26,7 @@ The root default writes binary data to private Azure Blob and requires the separ
 
 `blob_delete_retention_days` does not apply to this example: the Blob container above is caller-owned (`create_blob_storage = false`), so its own platform team configures Blob soft delete, not this module.
 
-See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for settings above (and elsewhere in the root module) that are fixed at the first `terraform apply`.
+See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for root-module settings to decide before the first `terraform apply`, and for changes that disrupt or replace resources on an existing deployment.
 
 ## Reference
 

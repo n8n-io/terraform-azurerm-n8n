@@ -216,7 +216,7 @@ This example is a reference deployment optimized for clean `apply` / `destroy` c
 
 These inputs are passed straight through to the root module; set them in `terraform.tfvars` (or via any other variable source) to override the defaults.
 
-See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for settings above (and elsewhere in the root module) that are fixed at the first `terraform apply`.
+See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for root-module settings to decide before the first `terraform apply`, and for changes that disrupt or replace resources on an existing deployment.
 
 ## Reference
 

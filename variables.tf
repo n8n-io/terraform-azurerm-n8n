@@ -149,7 +149,7 @@ variable "aks_node_count_max" {
 }
 
 variable "aks_availability_zones" {
-  description = "Availability zones the AKS default node pool and user node pool spread across (e.g. [\"1\", \"2\", \"3\"]). Set to [] to deploy into a region without zone support (e.g. some smaller Azure regions). Zonal placement survives a single-zone outage without waiting for the cluster autoscaler to reschedule pods into a healthy zone. Changing this on an existing pool forces AzureRM to recreate it; see docs/build-time-decisions.md."
+  description = "Availability zones the AKS default node pool and user node pool spread across (e.g. [\"1\", \"2\", \"3\"]). Set to [] to deploy into a region without zone support (e.g. some smaller Azure regions). Zonal placement survives a single-zone outage without waiting for the cluster autoscaler to reschedule pods into a healthy zone. Changing this on an existing cluster rotates both node pools through their temporary rotation pools and recreates every node, without a graceful drain; the cluster itself is not replaced. See docs/build-time-decisions.md."
   type        = list(string)
   default     = ["1", "2", "3"]
 
@@ -714,7 +714,7 @@ variable "azure_blob_container_stores_execution_data" {
 }
 
 variable "storage_account_replication_type" {
-  description = "Replication type for the module-managed StorageV2 account used by Azure Blob: LRS, ZRS, GRS, RAGRS, GZRS, or RAGZRS. The default LRS minimizes cost; production deployments that need zone or regional durability should select a replication type available in their Azure region. Converting to or from a zone-redundant type is not always a live in-place change; see docs/build-time-decisions.md."
+  description = "Replication type for the module-managed StorageV2 account used by Azure Blob: LRS, ZRS, GRS, RAGRS, GZRS, or RAGZRS. The default LRS minimizes cost; production deployments that need zone or regional durability should select a replication type available in their Azure region. Changing between a non-zonal type (LRS, GRS, RAGRS) and a zone-redundant type (ZRS, GZRS, RAGZRS) makes Terraform replace the storage account, losing the data in it; changes within one group update in place. See docs/build-time-decisions.md."
   type        = string
   default     = "LRS"
 
