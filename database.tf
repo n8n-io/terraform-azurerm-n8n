@@ -366,15 +366,17 @@ check "postgres_tuning_requires_module_managed_database" {
 # keys off the effective local.postgres_connection.ssl_mode rather than
 # var.create_database. In any mode other than verify-ca/verify-full the module
 # ignores the CA entirely (local.postgres_ssl_ca_active in locals.tf: no
-# Secret, mount, or environment entry), so a warning is enough here. It is not
+# database.ssl.ca chart value), so a warning is enough here. The condition
+# reads the local.postgres_ssl_ca_set boolean rather than the variable so the
+# diagnostic does not print the whole PEM bundle. It is not
 # a plan failure because callers may stage the CA before switching modes.
 check "postgres_ssl_ca_requires_verify_mode" {
   assert {
-    condition = var.postgres_ssl_ca_pem == null ? true : contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
+    condition = !local.postgres_ssl_ca_set || local.postgres_ssl_ca_active
     error_message = join("", [
       "postgres_ssl_ca_pem is set but the effective ssl_mode (", local.postgres_connection.ssl_mode, ") is ",
-      "not verify-ca or verify-full, so the module ignores it and renders no CA Secret, mount, or ",
-      "DB_POSTGRESDB_SSL_CA_FILE entry. Set postgres_managed_ssl_mode or postgres_external_ssl_mode to ",
+      "not verify-ca or verify-full, so the module ignores it and does not pass it to the n8n chart. ",
+      "Set postgres_managed_ssl_mode or postgres_external_ssl_mode to ",
       "verify-ca or verify-full, or remove postgres_ssl_ca_pem.",
     ])
   }

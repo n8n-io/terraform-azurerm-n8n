@@ -97,18 +97,16 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   managed or external PostgreSQL path, needed for `verify-ca` /
   `verify-full` unless the pod image's trust store already covers the
   server's issuing CA. When the effective mode is `verify-ca` or
-  `verify-full`, the module stores the PEM in a dedicated Kubernetes Secret,
-  mounts it read-only at `/etc/n8n/postgres-ssl-ca` on main, worker, and
-  webhook-processor pods, and sets `DB_POSTGRESDB_SSL_CA_FILE` to the
-  mounted file. A `checksum/postgres-ssl-ca` pod annotation hashes the PEM,
-  so changing only the CA also rolls the pods. In any other mode the input
-  is ignored and a plan-time warning fires; with `disable`, delivering a CA
-  would make n8n turn on verified TLS. While the input is set,
-  `n8n_extra_volumes` may not use the name `postgres-ssl-ca` and
-  `n8n_extra_volume_mounts` may not use the path `/etc/n8n/postgres-ssl-ca`.
-  See [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) for mode
-  selection, the CA bundle, rollout behavior on single-main vs. multi-main,
-  and Azure's CA rotation schedule
+  `verify-full`, the module passes the trimmed PEM to the n8n chart's
+  `database.ssl.ca` value, which the chart renders into its ConfigMap as
+  `DB_POSTGRESDB_SSL_CA` for main, worker, and webhook-processor pods.
+  Because the CA is part of the Helm release, changing it rolls the pods,
+  and a failed upgrade's rollback restores the previous CA. In any other
+  mode the input is ignored and a plan-time warning fires; with `disable`,
+  delivering a CA would make n8n turn on verified TLS. See
+  [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) for mode
+  selection, the CA bundle, what happens when a CA change fails, rollout
+  behavior on single-main vs. multi-main, and Azure's CA rotation schedule
   ([#25](https://github.com/n8n-io/terraform-azurerm-n8n/issues/25)).
 
 ### Changed

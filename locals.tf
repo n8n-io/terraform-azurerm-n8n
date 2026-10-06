@@ -206,22 +206,6 @@ locals {
         }
       },
     ],
-    local.postgres_ssl_ca_active ? [
-      {
-        name = "postgres-ssl-ca"
-        secret = {
-          # Resource reference (not the literal name) so helm_release.n8n
-          # depends on the Secret and never rolls pods before it exists.
-          secretName = kubernetes_secret_v1.n8n_postgres_ssl_ca[0].metadata[0].name
-          items = [
-            {
-              key  = "ca.pem"
-              path = "ca.pem"
-            },
-          ]
-        }
-      },
-    ] : [],
   )
 
   n8n_extra_volume_mounts = concat(
@@ -242,13 +226,6 @@ locals {
         readOnly  = true
       },
     ],
-    local.postgres_ssl_ca_active ? [
-      {
-        name      = "postgres-ssl-ca"
-        mountPath = "/etc/n8n/postgres-ssl-ca"
-        readOnly  = true
-      },
-    ] : [],
   )
 
   # CREDENTIALS_OVERWRITE_DATA_FILE is deliberately absent from
@@ -280,12 +257,15 @@ locals {
     },
   ]
 
-  # The CA bundle reaches n8n as a file: a dedicated Secret (n8n.tf), mounted
-  # read-only through the postgres-ssl-ca volume/mount above, with
-  # DB_POSTGRESDB_SSL_CA_FILE pointing at it. n8n's config loader reads the
-  # file's contents into DB_POSTGRESDB_SSL_CA, and only does so while
-  # DB_POSTGRESDB_SSL_CA itself is unset, so the chart's database.ssl.ca
-  # value must stay unset.
+  # The CA bundle reaches n8n through the chart's own database.ssl.ca value
+  # (n8n.tf), which the chart renders into its ConfigMap as
+  # DB_POSTGRESDB_SSL_CA. n8n passes that string to the TLS socket as PEM
+  # content. Keeping the CA inside the Helm release means a failed upgrade's
+  # atomic rollback restores the previous CA together with the pods, and the
+  # chart's checksum/config annotation rolls the pods when only the CA
+  # changes. A Terraform-managed Secret or ConfigMap would do neither: Helm
+  # cannot roll it back, and removing it before the Helm upgrade leaves the
+  # previous release mounting an object that no longer exists.
   #
   # Delivery is gated on a verifying mode. Any non-empty CA makes n8n build
   # a TLS options object, and with ssl_mode = "disable" the chart omits
@@ -294,16 +274,12 @@ locals {
   # declared plaintext. Under require/allow/prefer the CA is never used for
   # verification. In every non-verifying mode the input is therefore
   # ignored, and check.postgres_ssl_ca_requires_verify_mode warns.
-  postgres_ssl_ca_active = var.postgres_ssl_ca_pem != null && contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
+  postgres_ssl_ca_set    = var.postgres_ssl_ca_pem != null
+  postgres_ssl_ca_active = local.postgres_ssl_ca_set && contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
 
-  postgres_ssl_ca_secret_name = "n8n-postgres-ssl-ca"
-
-  n8n_postgres_ssl_ca_file_env = !local.postgres_ssl_ca_active ? [] : [
-    {
-      name  = "DB_POSTGRESDB_SSL_CA_FILE"
-      value = "/etc/n8n/postgres-ssl-ca/ca.pem"
-    },
-  ]
+  # trimspace keeps the rendered value stable when the caller's PEM file ends
+  # in a newline, so whitespace-only edits do not roll the pods.
+  postgres_ssl_ca_values = local.postgres_ssl_ca_active ? { ca = trimspace(var.postgres_ssl_ca_pem) } : {}
 
   # PostgreSQL connection/health-check runtime tuning (port-aws-040-enhancements
   # section 3): four nullable inputs rendered as one shared list so main,

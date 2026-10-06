@@ -69,23 +69,25 @@ default.
 
 `verify-ca` and `verify-full` both require n8n to trust the certificate
 authority that signed the server's certificate. Set `postgres_ssl_ca_pem` to
-a PEM-encoded CA bundle. The module stores it in a dedicated Kubernetes
-Secret, mounts it read-only at `/etc/n8n/postgres-ssl-ca` on every main,
-worker, and webhook-processor pod, and sets `DB_POSTGRESDB_SSL_CA_FILE` to
-the mounted file's path. n8n's configuration loader reads the file's
-contents into `DB_POSTGRESDB_SSL_CA`, but only while `DB_POSTGRESDB_SSL_CA`
-itself is unset, so the chart's native `database.ssl.ca` value is
-deliberately left unset. This works for both the managed and external
-paths.
+a PEM-encoded CA bundle. The module trims surrounding whitespace and passes
+it to the n8n Helm chart's `database.ssl.ca` value. The chart renders it into
+its own ConfigMap as `DB_POSTGRESDB_SSL_CA`, which every main, worker, and
+webhook-processor pod reads, and n8n passes that value to the TLS connection
+as PEM content. This works for both the managed and external paths.
+
+Because the CA is part of the Helm release:
+
+- Changing the CA rolls the pods through the chart's own `checksum/config`
+  pod annotation.
+- A failed upgrade's atomic rollback restores the previous CA together with
+  the previous pods (see [When a CA change fails](#when-a-ca-change-fails)).
+- Removing the CA removes it in the same Helm upgrade, with no separate
+  Kubernetes object to delete first.
 
 ```hcl
 postgres_managed_ssl_mode = "verify-full"
 postgres_ssl_ca_pem       = file("${path.module}/azure-postgres-root-cas.pem")
 ```
-
-While `postgres_ssl_ca_pem` is set, `n8n_extra_volumes` may not use the
-volume name `postgres-ssl-ca` and `n8n_extra_volume_mounts` may not use the
-mount path `/etc/n8n/postgres-ssl-ca`. Plan-time validation rejects both.
 
 If `postgres_ssl_ca_pem` is left null, `verify-ca` / `verify-full` still work
 as long as the pod image's own default trust store (Node's bundled CA list)
@@ -104,13 +106,40 @@ Microsoft does not support pinning them.
 ### The CA is ignored outside `verify-ca` / `verify-full`
 
 In any other mode (`disable`, `allow`, `prefer`, `require`), the module
-ignores `postgres_ssl_ca_pem`: it creates no Secret, mount, annotation, or
-`DB_POSTGRESDB_SSL_CA_FILE` entry, and an advisory `check` in `database.tf`
+ignores `postgres_ssl_ca_pem`: it does not pass it to the chart, and an
+advisory `check` in `database.tf`
 (`postgres_ssl_ca_requires_verify_mode`) warns. This matters most for
 `disable`: n8n turns on TLS with certificate verification whenever it sees a
 CA, so delivering one would break a connection to a server you declared
 plaintext. You can stage the CA before switching the mode; it takes effect
 on the apply that selects `verify-ca` or `verify-full`.
+
+### When a CA change fails
+
+If a new bundle does not cover the certificate chain the server presents, the
+new pods cannot connect and the Helm upgrade fails when it reaches
+`n8n_helm_timeout` (600 seconds by default). `atomic = true` then rolls the
+release back. The rollback restores the previous CA and the previous
+Deployment specification, so the pods Kubernetes creates afterwards use the
+working CA and connect without another apply. Set `postgres_ssl_ca_pem` back
+to the working bundle before the next apply.
+
+What stays available while the failing upgrade runs depends on the topology:
+
+- **Multi-main (default):** main and webhook-processor pods keep serving,
+  because their HTTP readiness probes keep the failing new pods out of
+  rotation while the old pods stay up. Workers do not: the chart's worker
+  readiness probe only checks that the `n8n worker` process exists
+  (`pgrep`), so a new worker that cannot reach the database still counts as
+  ready, and the rollout removes the healthy old worker. Queued executions
+  wait in Redis until the rollback finishes.
+- **Single-main (`n8n_main_hpa_min_replicas = 1`):** the chart's `Recreate`
+  strategy applies to the main, worker, and webhook-processor Deployments, so
+  all old pods stop before the new ones start. The editor, REST API,
+  webhooks, scheduled triggers, and queue processing are unavailable until
+  the rollback finishes and the restored pods are Ready.
+
+Test a new bundle in a non-production environment first.
 
 ## Azure's CA rotation
 
@@ -144,17 +173,16 @@ shows a Helm values diff and rolls the pods even if you change no input.
 
 Changing `postgres_managed_ssl_mode`, `postgres_external_ssl_mode`, or
 `postgres_ssl_ca_pem` only changes what n8n's application containers send as
-connection parameters and, for the CA bundle, which Secret is mounted. None
-of these recreate the PostgreSQL server. Adding or changing the CA in a
-verifying mode changes the rendered Helm values (the Secret volume, the
-`DB_POSTGRESDB_SSL_CA_FILE` entry, and a `checksum/postgres-ssl-ca` pod
-annotation that hashes the PEM), so expect a plan diff and a rolling pod
-update. On the default multi-main topology, that rollout is a standard
-rolling update: n8n keeps serving requests while each pod cycles in turn. On
-the single-main topology (`n8n_main_hpa_min_replicas = 1`), the chart's
-`Recreate` strategy stops the single main pod before its replacement starts,
-so the editor, REST API, and scheduled triggers are briefly unavailable until
-the new pod is Ready. This is the same interruption any single-main rollout
+connection parameters. None of these recreate the PostgreSQL server. Adding
+or changing the CA in a verifying mode changes the rendered Helm values (the
+chart's `database.ssl.ca`), so expect a plan diff and a rolling pod update.
+On the default multi-main topology, that rollout is a standard rolling
+update: n8n keeps serving requests while each pod cycles in turn. On the
+single-main topology (`n8n_main_hpa_min_replicas = 1`), the chart's
+`Recreate` strategy stops the old main, worker, and webhook-processor pods
+before their replacements start, so the editor, REST API, webhooks,
+scheduled triggers, and queue processing are briefly unavailable until the
+new pods are Ready. This is the same interruption any single-main rollout
 causes (see [`docs/upgrading-n8n.md`](./upgrading-n8n.md)). Plan a
 maintenance window for that case.
 

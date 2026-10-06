@@ -467,7 +467,7 @@ variable "postgres_managed_ssl_mode" {
 }
 
 variable "postgres_ssl_ca_pem" {
-  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set and the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `verify-ca` or `verify-full`, the module stores it in a dedicated Kubernetes Secret, mounts it read-only at `/etc/n8n/postgres-ssl-ca` on main, worker, and webhook-processor pods, and points `DB_POSTGRESDB_SSL_CA_FILE` at the mounted file. Needed for `verify-ca`/`verify-full` unless the pod image's default trust store already trusts the server's issuing CA (for Azure Database for PostgreSQL Flexible Server, Microsoft recommends trusting both current roots: DigiCert Global Root G2 and Microsoft RSA Root CA 2017). In every other mode (`disable`, `allow`, `prefer`, `require`) the module ignores it and a plan-time warning fires. While set, `n8n_extra_volumes` may not use the volume name `postgres-ssl-ca` and `n8n_extra_volume_mounts` may not use the mount path `/etc/n8n/postgres-ssl-ca`. See `docs/postgresql-tls.md`."
+  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set and the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `verify-ca` or `verify-full`, the module passes it (whitespace-trimmed) to the n8n Helm chart's `database.ssl.ca` value, which the chart renders into its ConfigMap as `DB_POSTGRESDB_SSL_CA` for main, worker, and webhook-processor pods. Because the CA is part of the Helm release, a failed upgrade's rollback restores the previous CA, and changing the CA rolls the pods. Needed for `verify-ca`/`verify-full` unless the pod image's default trust store already trusts the server's issuing CA (for Azure Database for PostgreSQL Flexible Server, Microsoft recommends trusting both current roots: DigiCert Global Root G2 and Microsoft RSA Root CA 2017). In every other mode (`disable`, `allow`, `prefer`, `require`) the module ignores it and a plan-time warning fires. See `docs/postgresql-tls.md`."
   type        = string
   default     = null
   nullable    = true
@@ -475,20 +475,6 @@ variable "postgres_ssl_ca_pem" {
   validation {
     condition     = var.postgres_ssl_ca_pem == null ? true : length(trimspace(var.postgres_ssl_ca_pem)) > 0
     error_message = "postgres_ssl_ca_pem must be null or a non-empty PEM-encoded CA bundle."
-  }
-
-  validation {
-    condition = var.postgres_ssl_ca_pem == null || alltrue([
-      for volume in var.n8n_extra_volumes : volume.name != "postgres-ssl-ca"
-    ])
-    error_message = "postgres_ssl_ca_pem reserves the volume name \"postgres-ssl-ca\". Rename or remove the conflicting n8n_extra_volumes entry."
-  }
-
-  validation {
-    condition = var.postgres_ssl_ca_pem == null || alltrue([
-      for mount in var.n8n_extra_volume_mounts : mount.mount_path != "/etc/n8n/postgres-ssl-ca"
-    ])
-    error_message = "postgres_ssl_ca_pem reserves the mount path \"/etc/n8n/postgres-ssl-ca\". Move or remove the conflicting n8n_extra_volume_mounts entry."
   }
 }
 
