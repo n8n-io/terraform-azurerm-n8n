@@ -66,14 +66,17 @@
 # private DNS zone differ from legacy Azure Cache for Redis Enterprise. See
 # https://learn.microsoft.com/azure/redis/private-link#azure-managed-redis-private-endpoint-private-dns-zone-value.
 # Not created on the external path: an external Redis endpoint's DNS is the
-# caller's responsibility. Also not created when `var.redis_private_dns_zone_id`
-# is set: some landing zones centralize privatelink zones in a connectivity
-# subscription (often under an Azure Policy DeployIfNotExists mandate), and a
-# second same-named zone in the n8n resource group would conflict with that.
-# In that case the caller owns the zone and its VNet link; the module only
-# reads the supplied zone ID.
+# caller's responsibility. Also not created when
+# `var.create_redis_private_dns_zone = false`: some landing zones centralize
+# privatelink zones in a connectivity subscription (often under an Azure
+# Policy DeployIfNotExists mandate), and a second same-named zone in the n8n
+# resource group would conflict with that. The caller then owns the zone and
+# its VNet link and passes its ID as `var.redis_private_dns_zone_id`. Gated
+# on the boolean, never on the ID being null, so the ID may come from a
+# resource created in the same apply (docs/customer-managed-infrastructure.md,
+# rule 3).
 resource "azurerm_private_dns_zone" "redis" {
-  count = var.create_redis && var.redis_private_dns_zone_id == null ? 1 : 0
+  count = var.create_redis && var.create_redis_private_dns_zone ? 1 : 0
 
   name                = "privatelink.redis.azure.net"
   resource_group_name = var.resource_group_name
@@ -82,7 +85,7 @@ resource "azurerm_private_dns_zone" "redis" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
-  count = var.create_redis && var.redis_private_dns_zone_id == null ? 1 : 0
+  count = var.create_redis && var.create_redis_private_dns_zone ? 1 : 0
 
   name                  = "${var.friendly_name_prefix}-redis-dns-link"
   resource_group_name   = var.resource_group_name
@@ -92,13 +95,16 @@ resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-redis-dns-link" })
 }
 
-# Resolves to the caller-supplied zone ID when set, otherwise the
-# module-managed zone created above. Consumed by the private endpoint's
-# `private_dns_zone_group` below.
+# Selects the zone by the create_redis_private_dns_zone switch, not by
+# whether the caller's ID is null, so a supplied ID is ignored (and the
+# redis_private_dns_zone_inputs_ignored check warns) while the module still
+# owns the zone. Consumed by the private endpoint's `private_dns_zone_group`
+# below.
 locals {
-  redis_private_dns_zone_id = var.create_redis ? coalesce(
-    var.redis_private_dns_zone_id,
-    one(azurerm_private_dns_zone.redis[*].id),
+  redis_private_dns_zone_id = var.create_redis ? (
+    var.create_redis_private_dns_zone
+    ? one(azurerm_private_dns_zone.redis[*].id)
+    : var.redis_private_dns_zone_id
   ) : null
 }
 
@@ -268,6 +274,27 @@ check "redis_tuning_requires_module_managed_redis" {
       "= false. The module creates no Azure Managed Redis instance in that mode, so none of these apply. ",
       "Sizing, high availability, and eviction policy are properties of the Redis you supply via ",
       "redis_external_host.",
+    ])
+  }
+}
+
+# Same contract as database.tf's postgres_private_dns_zone_inputs_ignored:
+# the zone inputs only take effect with create_redis = true and
+# create_redis_private_dns_zone = false. Warn, do not fail, on any other
+# combination that changes either input from its default.
+check "redis_private_dns_zone_inputs_ignored" {
+  assert {
+    # Keep this a single-line ternary, matching the same check in
+    # database.tf and storage.tf, where the multi-line form made checkov
+    # 3.3.17 silently drop findings. Equivalent to "valid only when the
+    # module manages the redis resource and not its zone, or when nothing
+    # was supplied".
+    condition = var.create_redis_private_dns_zone ? var.redis_private_dns_zone_id == null : var.create_redis
+    error_message = join("", [
+      "redis_private_dns_zone_id or create_redis_private_dns_zone is set but has no effect. ",
+      var.create_redis
+      ? "With create_redis_private_dns_zone left at true the module creates and uses its own zone and never reads redis_private_dns_zone_id. Set create_redis_private_dns_zone = false to attach the private endpoint to the zone you supplied."
+      : "With create_redis = false the module creates no Azure Managed Redis instance or private endpoint, so neither private DNS zone input applies. Configure DNS for the external Redis you supply via redis_external_host.",
     ])
   }
 }

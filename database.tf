@@ -14,9 +14,9 @@
 # count instead of always-on):
 #   - Private-only posture: `public_network_access_enabled = false`, no
 #     caller-tunable knob to re-enable it.
-#   - `privatelink.postgres.database.azure.com` private DNS zone name is
-#     fixed (Azure's Flexible Server private-DNS auto-registration only
-#     fires for that exact name).
+#   - The module-managed private DNS zone name is fixed at
+#     `privatelink.postgres.database.azure.com` (see the zone resource below
+#     for why, and for the caller-supplied alternative).
 #   - `azure.extensions = UUID-OSSP` server-level allowlist as a
 #     forward-compatible safety belt (n8n's own migrations do not need it
 #     — see the comment on `azurerm_postgresql_flexible_server_configuration
@@ -52,18 +52,24 @@ resource "random_password" "postgres_admin" {
 }
 
 # ── Private DNS zone + VNet link (managed path only, unless caller-supplied) ──
-# The DNS zone name MUST be `privatelink.postgres.database.azure.com`
-# verbatim — Azure's Flexible Server private-DNS auto-registration only fires
-# for that exact name. Do not prefix with `friendly_name_prefix` or otherwise
-# customize. Not created on the external path: an external PostgreSQL
-# endpoint's DNS is the caller's responsibility. Also not created when
-# `var.postgres_private_dns_zone_id` is set: some landing zones centralize
-# privatelink zones in a connectivity subscription (often under an Azure
-# Policy DeployIfNotExists mandate), and a second same-named zone in the
-# n8n resource group would conflict with that. In that case the caller owns
-# the zone and its VNet link; the module only reads the supplied zone ID.
+# Azure accepts any private DNS zone name ending in
+# `.postgres.database.azure.com` for a Flexible Server with private access
+# (https://learn.microsoft.com/azure/postgresql/network/concepts-networking-private#use-a-private-dns-zone).
+# The module-managed zone uses `privatelink.postgres.database.azure.com`, the
+# name landing zones conventionally centralize. Do not prefix it with
+# `friendly_name_prefix`: changing the name replaces the zone. Not created on
+# the external path: an external PostgreSQL endpoint's DNS is the caller's
+# responsibility. Also not created when
+# `var.create_postgres_private_dns_zone = false`: some landing zones
+# centralize privatelink zones in a connectivity subscription (often under
+# an Azure Policy DeployIfNotExists mandate), and a second same-named zone in
+# the n8n resource group would conflict with that. The caller then owns the
+# zone and its VNet link and passes its ID as
+# `var.postgres_private_dns_zone_id`. Gated on the boolean, never on the ID
+# being null, so the ID may come from a resource created in the same apply
+# (docs/customer-managed-infrastructure.md, rule 3).
 resource "azurerm_private_dns_zone" "postgres" {
-  count = var.create_database && var.postgres_private_dns_zone_id == null ? 1 : 0
+  count = var.create_database && var.create_postgres_private_dns_zone ? 1 : 0
 
   name                = "privatelink.postgres.database.azure.com"
   resource_group_name = var.resource_group_name
@@ -72,7 +78,7 @@ resource "azurerm_private_dns_zone" "postgres" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  count = var.create_database && var.postgres_private_dns_zone_id == null ? 1 : 0
+  count = var.create_database && var.create_postgres_private_dns_zone ? 1 : 0
 
   name                  = "${var.friendly_name_prefix}-postgres-dns-link"
   resource_group_name   = var.resource_group_name
@@ -139,13 +145,16 @@ data "azurerm_postgresql_flexible_server" "current" {
   resource_group_name = var.resource_group_name
 }
 
-# Resolves to the caller-supplied zone ID when set, otherwise the
-# module-managed zone created above. Consumed by the Flexible Server's
+# Selects the zone by the create_postgres_private_dns_zone switch, not by
+# whether the caller's ID is null, so a supplied ID is ignored (and the
+# postgres_private_dns_zone_inputs_ignored check warns) while the module
+# still owns the zone. Consumed by the Flexible Server's
 # `private_dns_zone_id` below.
 locals {
-  postgres_private_dns_zone_id = var.create_database ? coalesce(
-    var.postgres_private_dns_zone_id,
-    one(azurerm_private_dns_zone.postgres[*].id),
+  postgres_private_dns_zone_id = var.create_database ? (
+    var.create_postgres_private_dns_zone
+    ? one(azurerm_private_dns_zone.postgres[*].id)
+    : var.postgres_private_dns_zone_id
   ) : null
 }
 
@@ -241,6 +250,19 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
       zone,
       high_availability[0].standby_availability_zone,
     ]
+
+    # Azure rejects a zone named `<server name>.postgres.database.azure.com`
+    # during provisioning (concepts-networking-private, "Use a private DNS
+    # zone"). Only a caller-supplied zone can hit this; the module-managed
+    # zone is always `privatelink.*`.
+    precondition {
+      condition = (
+        local.postgres_private_dns_zone_id == null
+        ? true
+        : lower(element(split("/", local.postgres_private_dns_zone_id), 8)) != lower("${local.postgres_server_name}.postgres.database.azure.com")
+      )
+      error_message = "postgres_private_dns_zone_id names a zone identical to the module-managed server's own FQDN (${local.postgres_server_name}.postgres.database.azure.com). Azure rejects that zone name during provisioning. Use a different zone name, for example privatelink.postgres.database.azure.com."
+    }
 
     # See the data source above: only reads when pg_storage_drift_guard_enabled
     # is true, so this is a no-op (condition trivially true) until a caller
@@ -373,6 +395,32 @@ check "postgres_tuning_requires_module_managed_database" {
       "pg_geo_redundant_backup_enabled, postgres_managed_ssl_mode) is set while create_database = false. ",
       "The module creates no PostgreSQL Flexible Server in that mode, so none of them apply. Configure ",
       "these on the external database you supply via postgres_external_host.",
+    ])
+  }
+}
+
+# The private DNS zone inputs only take effect together: the module attaches
+# the server to postgres_private_dns_zone_id only when it manages the server
+# (create_database = true) and does not manage the zone
+# (create_postgres_private_dns_zone = false). Any other combination that
+# changes either input from its default plans and applies cleanly while
+# discarding it. Warn rather than fail, matching the tuning check above and
+# the AWS sibling's db_kms_key_arn check: staging the zone inputs in tfvars
+# ahead of a cutover is a legitimate thing to do.
+check "postgres_private_dns_zone_inputs_ignored" {
+  assert {
+    # Keep this a single-line ternary. With checkov 3.3.17, a parenthesized
+    # multi-line ternary here made the scan silently drop its findings for
+    # the module.n8n resources in this file, as evaluated through the
+    # examples. Found while reviewing PR #43. Equivalent to "valid only when the
+    # module manages the postgres resource and not its zone, or when nothing
+    # was supplied".
+    condition = var.create_postgres_private_dns_zone ? var.postgres_private_dns_zone_id == null : var.create_database
+    error_message = join("", [
+      "postgres_private_dns_zone_id or create_postgres_private_dns_zone is set but has no effect. ",
+      var.create_database
+      ? "With create_postgres_private_dns_zone left at true the module creates and uses its own zone and never reads postgres_private_dns_zone_id. Set create_postgres_private_dns_zone = false to attach the server to the zone you supplied."
+      : "With create_database = false the module creates no PostgreSQL Flexible Server, so neither private DNS zone input applies. Configure DNS for the external database you supply via postgres_external_host.",
     ])
   }
 }
