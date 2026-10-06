@@ -39,6 +39,8 @@ See [the tier comparison](../README.md).
 | `aks_sku_tier` | `"Standard"` (fixed) | AKS SKU tier. Fixed in this tier's `local.tier` in `main.tf`, not an example variable, so it cannot be set from `terraform.tfvars`. Overrides the module's `"Free"` default so the cluster's API server has a financially backed SLA. |
 | `blob_delete_retention_days` | `null` | Optional Blob soft-delete retention window, in days (1-365). `null` leaves soft delete disabled, so a deleted blob or container is immediately unrecoverable. |
 
+`pg_backup_retention_days` and `blob_delete_retention_days` can both be changed in place after the first apply. See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for root-module settings to decide before the first `terraform apply`, and for changes that disrupt or replace resources on an existing deployment.
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->

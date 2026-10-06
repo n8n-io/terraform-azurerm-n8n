@@ -48,6 +48,8 @@ Two Application Gateways cost roughly twice one, and this example runs two addit
 | `pg_backup_retention_days` | `7` | Days to retain automated PostgreSQL Flexible Server backups. Azure enforces 7-35 days for Flexible Server. |
 | `blob_delete_retention_days` | `null` | Soft-delete retention window, in days, for the module-managed Blob storage account. `null` leaves soft delete disabled; set 1-365 to enable it. |
 
+See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for root-module settings to decide before the first `terraform apply`, and for changes that disrupt or replace resources on an existing deployment.
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->

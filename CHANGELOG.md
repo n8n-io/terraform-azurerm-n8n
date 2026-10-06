@@ -109,6 +109,27 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   behavior on single-main vs. multi-main, and Azure's CA rotation schedule
   ([#25](https://github.com/n8n-io/terraform-azurerm-n8n/issues/25)).
 
+- `docs/build-time-decisions.md`: inputs and hardcoded values that are
+  hard or impossible to change after the first `terraform apply`. One
+  table lists changes that force replacement or have no in-place path
+  (resource names and location, the AKS service CIDR and subnet size,
+  the PostgreSQL subnet, admin username, geo-redundant backup, and
+  version or storage decreases, Redis high availability, Blob
+  replication across the zonal and non-zonal groups, the Blob container
+  name, and the n8n encryption key). A second table lists in-place
+  changes that still disrupt workloads (AKS zones, VM size, OS disk
+  size, the system-pool taint, and the SKU tier), and notes that the
+  PostgreSQL HA zone inputs are ignored after the server exists.
+  Provider behavior is cited against the `hashicorp/azurerm` v4.81.0
+  source. The page also covers the available protections and how to move
+  a layer to a caller-owned resource without losing data. Linked from
+  `README.md` and every example README. The `aks_availability_zones` and
+  `storage_account_replication_type` descriptions now state what a
+  change on an existing deployment does, and the `pg_version`
+  description and `docs/versioning.md` no longer say a major version
+  upgrade is not in-place
+  ([#31](https://github.com/n8n-io/terraform-azurerm-n8n/issues/31)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by

@@ -33,6 +33,8 @@ The root default writes binary data to private Azure Blob and requires the separ
 | `pg_backup_retention_days` | `7` | Days to retain automated PostgreSQL Flexible Server backups. Azure enforces 7-35; raise it for a longer recovery window. |
 | `blob_delete_retention_days` | `null` (soft delete disabled) | Days to retain a deleted blob or container before it is purged for good. Azure Blob has no `force_destroy`-style guard, so leaving this `null` means a delete is unrecoverable; set 1-365 to add a recovery window. |
 
+See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for root-module settings to decide before the first `terraform apply`, and for changes that disrupt or replace resources on an existing deployment.
+
 ## Reference
 
 <!-- BEGIN_TF_DOCS -->
