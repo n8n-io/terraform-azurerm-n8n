@@ -262,13 +262,18 @@ Expect the following:
 - If the n8n VNet resolves the zone through a direct VNet link, note that a
   VNet cannot be linked to two private DNS zones with the same name
   ([Microsoft Q&A](https://learn.microsoft.com/answers/questions/2283009/a-virtual-network-cannot-be-linked-to-multiple-zon)).
-  In the live test, Azure accepted the new link while the module's
-  same-named link was still being deleted, in both directions, so creating
-  both in one apply worked. Expect the conflict when the old link is still
-  active, for example if you create the new link in an earlier apply than
-  the one that removes the module's link. A new PostgreSQL zone with a
-  different name, or resolution through a central DNS resolver, avoids the
-  conflict.
+  Azure rejects the new link while the old same-named link is still
+  active. If both changes are in one apply, Terraform does not order the
+  old link's deletion before the new link's creation; they are independent
+  resources. In the live test the deletion started first and Azure accepted
+  the new link while the old one was still being deleted, in both
+  directions, but that order is not guaranteed. If the new link fails with
+  the conflict, run `terraform apply` again once the old link is gone; the
+  outage lasts until that second apply finishes. To avoid the race
+  entirely, remove the old link in one apply and create the new one in the
+  next, which keeps the service unresolvable for the time between the two
+  applies. A new PostgreSQL zone with a different name, or resolution
+  through a central DNS resolver, avoids the conflict altogether.
 - After the change, check from an n8n pod that the service's hostname
   resolves to its private IP address and that n8n can connect, not only that
   the new zone contains the record.
@@ -280,9 +285,11 @@ Expect the following:
   zone, then turn high availability back on. Turning it back on creates a
   new standby.
 - Rolling back to `create_*_private_dns_zone = true` creates a new
-  module-owned zone and link, with the same kind of outage. Remove the
-  caller's same-named link in the same apply: the module's new link fails
-  while the VNet is still actively linked to a zone with the same name.
+  module-owned zone and link, with the same kind of outage and the same
+  link conflict in reverse: the module's new link fails while the caller's
+  same-named link is still active. Remove the caller's link in the same
+  apply and re-run the apply if the module's link loses the race, or remove
+  it in an earlier apply, as described above.
 
 **Handing the module's existing zone over to central management.** If you
 pass the ID of the zone the module already created, the plan destroys that
