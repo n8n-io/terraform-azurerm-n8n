@@ -197,7 +197,19 @@ done
 terraform destroy
 ```
 
-Repeat for `privatelink.redis.cache.windows.net` if Redis hits the same error.
+Repeat for `privatelink.redis.azure.net` if Redis hits the same error.
+
+**Caller-supplied zones:** the workaround above only applies to a zone the
+module itself created. When a service's `create_postgres_private_dns_zone`,
+`create_redis_private_dns_zone`, or `create_blob_private_dns_zone` is
+`false`, the module creates no zone or VNet link for that service, so
+`terraform destroy` leaves the caller-supplied zone and its link untouched.
+This does not change the other services: `terraform destroy` still deletes
+their module-managed zones and links as described above. One exception: if you
+switched an existing deployment over by passing the ID of the zone the module
+had already created, that zone is still in this module's state until you
+move it out, and the next plan destroys it. See
+[Adopting a caller-supplied zone on an existing deployment](./customer-managed-infrastructure.md#adopting-a-caller-supplied-zone-on-an-existing-deployment).
 
 ### Key Vault destroy fails with `purge protection`
 

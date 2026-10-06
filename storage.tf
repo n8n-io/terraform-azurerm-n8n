@@ -58,8 +58,16 @@ resource "azurerm_storage_container" "n8n" {
   container_access_type = "private"
 }
 
+# Not created when `var.create_blob_private_dns_zone = false`: some landing
+# zones centralize privatelink zones in a connectivity subscription (often
+# under an Azure Policy DeployIfNotExists mandate), and a second same-named
+# zone in the n8n resource group would conflict with that. The caller then
+# owns the zone and its VNet link and passes its ID as
+# `var.blob_private_dns_zone_id`. Gated on the boolean, never on the ID being
+# null, so the ID may come from a resource created in the same apply
+# (docs/customer-managed-infrastructure.md, rule 3).
 resource "azurerm_private_dns_zone" "blob" {
-  count = var.create_blob_storage ? 1 : 0
+  count = var.create_blob_storage && var.create_blob_private_dns_zone ? 1 : 0
 
   name                = "privatelink.blob.core.windows.net"
   resource_group_name = var.resource_group_name
@@ -68,7 +76,7 @@ resource "azurerm_private_dns_zone" "blob" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
-  count = var.create_blob_storage ? 1 : 0
+  count = var.create_blob_storage && var.create_blob_private_dns_zone ? 1 : 0
 
   name                  = "${var.friendly_name_prefix}-blob-vnet-link"
   resource_group_name   = var.resource_group_name
@@ -77,6 +85,19 @@ resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
   registration_enabled  = false
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-blob-vnet-link" })
+}
+
+# Selects the zone by the create_blob_private_dns_zone switch, not by
+# whether the caller's ID is null, so a supplied ID is ignored (and the
+# blob_private_dns_zone_inputs_ignored check warns) while the module still
+# owns the zone. Consumed by the private endpoint's `private_dns_zone_group`
+# below.
+locals {
+  blob_private_dns_zone_id = var.create_blob_storage ? (
+    var.create_blob_private_dns_zone
+    ? one(azurerm_private_dns_zone.blob[*].id)
+    : var.blob_private_dns_zone_id
+  ) : null
 }
 
 resource "azurerm_private_endpoint" "blob" {
@@ -96,7 +117,7 @@ resource "azurerm_private_endpoint" "blob" {
 
   private_dns_zone_group {
     name                 = "blob-private-dns"
-    private_dns_zone_ids = [azurerm_private_dns_zone.blob[0].id]
+    private_dns_zone_ids = [local.blob_private_dns_zone_id]
   }
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-blob-pe" })
@@ -186,6 +207,28 @@ check "blob_tuning_requires_module_managed_blob_storage" {
       "override is set while create_blob_storage = false. The module creates no storage account, container, ",
       "or lifecycle policy in that mode, so none of them apply. Replication, retention, networking, and ",
       "encryption are properties of the existing Blob storage account and container you supplied.",
+    ])
+  }
+}
+
+# Same contract as database.tf's postgres_private_dns_zone_inputs_ignored:
+# the zone inputs only take effect with create_blob_storage = true and
+# create_blob_private_dns_zone = false. Warn, do not fail, on any other
+# combination that changes either input from its default.
+check "blob_private_dns_zone_inputs_ignored" {
+  assert {
+    # Keep this a single-line ternary. With checkov 3.3.17, a parenthesized
+    # multi-line ternary here made the scan silently drop its findings for
+    # the module.n8n resources in this file, as evaluated through the
+    # examples. Found while reviewing PR #43. Equivalent to "valid only when the
+    # module manages the blob resource and not its zone, or when nothing
+    # was supplied".
+    condition = var.create_blob_private_dns_zone ? var.blob_private_dns_zone_id == null : var.create_blob_storage
+    error_message = join("", [
+      "blob_private_dns_zone_id or create_blob_private_dns_zone is set but has no effect. ",
+      var.create_blob_storage
+      ? "With create_blob_private_dns_zone left at true the module creates and uses its own zone and never reads blob_private_dns_zone_id. Set create_blob_private_dns_zone = false to attach the private endpoint to the zone you supplied."
+      : "With create_blob_storage = false the module creates no storage account or private endpoint, so neither private DNS zone input applies. Private networking and DNS are properties of the existing Blob storage account you supplied.",
     ])
   }
 }

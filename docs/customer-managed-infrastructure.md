@@ -125,6 +125,211 @@ Business license without those entitlements should keep
 `database` even when `create_blob_storage = false` — see
 [`docs/data-storage.md`](./data-storage.md#new-deployment-without-azure-storage-entitlements-business-license).
 
+### Caller-supplied private DNS zones
+
+On the managed paths, the module creates its own private DNS zone and VNet
+link for PostgreSQL, Redis, and Blob storage. Many enterprise Azure landing
+zones instead keep these zones in a central connectivity subscription,
+often under an Azure Policy `DeployIfNotExists` assignment. A VNet cannot be
+linked to two private DNS zones with the same name, so a second zone in the
+n8n resource group either fails to link or resolves differently than the
+central one. Each service can therefore use a caller-owned zone instead:
+
+| Service | Switch | Zone ID input | Accepted zone names |
+|---|---|---|---|
+| PostgreSQL Flexible Server (`create_database = true`) | `create_postgres_private_dns_zone` | `postgres_private_dns_zone_id` | Any name ending in `.postgres.database.azure.com` |
+| Azure Managed Redis private endpoint (`create_redis = true`) | `create_redis_private_dns_zone` | `redis_private_dns_zone_id` | `privatelink.redis.azure.net` |
+| Blob storage private endpoint (`create_blob_storage = true`) | `create_blob_private_dns_zone` | `blob_private_dns_zone_id` | `privatelink.blob.core.windows.net` |
+
+The inputs follow [the ownership convention](#the-ownership-convention):
+
+- Each switch defaults to `true`, which keeps the module-owned zone.
+- Setting a switch to `false` requires the matching zone ID. The module then
+  creates neither that zone nor its VNet link, and attaches the server or
+  private endpoint to the supplied zone. The three services are independent.
+- Because ownership follows the switch, the zone ID may be computed, for
+  example from a zone created in the same configuration as the module call.
+- A zone ID supplied while its switch is `true`, or either input changed
+  while the matching `create_database`, `create_redis`, or
+  `create_blob_storage` is `false`, has no effect. A `check` block warns
+  about it without failing the plan, so you can stage the inputs before a
+  cutover.
+- Zone names are compared case-insensitively.
+
+For PostgreSQL, Azure accepts any zone whose name ends in
+`.postgres.database.azure.com`, for example
+`privatelink.postgres.database.azure.com` or
+`n8n.private.postgres.database.azure.com`. The zone name must not be the
+server's own FQDN, `<friendly_name_prefix>-postgres.postgres.database.azure.com`.
+Azure rejects that during provisioning, so a precondition on the server
+fails the plan instead, or the apply if the zone ID is only known then. See
+[Azure Database for PostgreSQL: use a private DNS zone](https://learn.microsoft.com/azure/postgresql/network/concepts-networking-private#use-a-private-dns-zone).
+
+#### What you own when you supply a zone
+
+- **Name resolution from the n8n VNet.** Link the zone to `var.vnet_id`, or
+  resolve it through your central DNS design. If the VNet uses custom DNS
+  servers, they must forward these names to Azure DNS (`168.63.129.16`),
+  for example through an Azure DNS Private Resolver in the hub. The module
+  never creates a VNet link into a zone it does not own.
+- **Link ordering.** Azure does not check for a VNet link when it creates
+  the Flexible Server, and the private endpoints register their records in
+  the zone either way. The n8n pods, however, can only resolve the hostnames
+  once the link exists. If the link is created in the same configuration as
+  the module call, create it in an earlier apply, or add it to the module
+  block's `depends_on`. While the link has pending changes, a `depends_on`
+  on the module block defers the module's data source reads to apply time.
+  That weakens the plan-time protection of `pg_storage_drift_guard_enabled`
+  (see the comment above `data.azurerm_postgresql_flexible_server.current`
+  in `database.tf`), and with `create_ingress = true` it replaces the two
+  AGIC `Reader` role assignments, whose scope comes from
+  `data.azurerm_resource_group.n8n`. A live test that created the zones and
+  links in the same apply without `depends_on` resolved correctly once the
+  apply finished, so prefer an earlier apply over `depends_on`.
+- **Permissions.** The identity running Terraform must be allowed to write
+  records into the zone. Microsoft's
+  [private endpoint permission troubleshooting guide](https://learn.microsoft.com/troubleshoot/azure/private-link/troubleshoot-private-endpoint-permission-denied)
+  names **Private DNS Zone Contributor**, scoped to the zone or to its
+  resource group, as the least-privilege built-in role. If you use a custom
+  role, check that guide for the actions it needs. A new role assignment can
+  take several minutes to take effect.
+- **PostgreSQL zone in another subscription.** That subscription must also
+  have the `Microsoft.DBforPostgreSQL` resource provider registered.
+  Otherwise the server deployment does not complete.
+- **Locks.** A `ReadOnly` or `CanNotDelete` lock on the PostgreSQL zone or
+  its record sets can stop the server from updating its DNS records,
+  including during a high-availability failover. Microsoft advises against
+  these locks when high availability is enabled.
+
+#### Azure Policy `DeployIfNotExists` remediation
+
+Landing-zone policies of this kind usually target private endpoints, so
+they affect the Redis and Blob endpoints, not the PostgreSQL Flexible
+Server, which uses a delegated subnet instead of a private endpoint.
+
+The module manages each endpoint's `private_dns_zone_group` block, including
+its name and zone ID. A private endpoint holds a single zone group, and
+Terraform reads it back on every refresh. If a policy remediation changes
+the zone group, the next plan shows a diff and the next apply deletes and
+recreates the group with the module's settings, so the policy and Terraform
+can keep overwriting each other. To avoid that, do one of the following:
+
+- Check the policy's existence condition and deployment against the zone
+  group the module creates (the zone ID you pass, and the group name in
+  `redis.tf` or `storage.tf`), so that a remediation finds nothing to
+  change. Pointing at the same zone is necessary but may not be enough, for
+  example if the policy also expects a specific group name.
+- Exempt the n8n private endpoints from the policy assignment.
+
+Do not add `ignore_changes` for the zone group as a workaround. It would
+hide a real misconfiguration as well.
+
+#### Adopting a caller-supplied zone on an existing deployment
+
+Plan this change in its own apply, save and review the plan before
+applying, and back up the n8n encryption key and the database first. The
+behavior below follows from the `hashicorp/azurerm` v4.81.0 source,
+Microsoft's documentation, and one live test of `examples/small` that moved
+all three services to caller-owned zones with the same names and back
+again. Timings from that test are a guide, not a guarantee. There are two
+cases.
+
+**Moving to a different zone, such as a central landing-zone zone.** Set the
+switch to `false` and pass the new zone ID. The plan destroys the module's
+own zone and VNet link, and changes the service's DNS attachment:
+
+- For PostgreSQL, the server's `private_dns_zone_id` is updated in place;
+  the server is not replaced.
+- For Redis and Blob, the private endpoint itself is kept, but azurerm
+  deletes its DNS zone group and creates a new one for the new zone. The
+  endpoint's records leave the old zone before they appear in the new one.
+
+Expect the following:
+
+- **Expect a name-resolution outage of a few minutes per service.** In the
+  live test it lasted about 3 minutes per service when moving to the
+  caller-owned zones, and about 4 minutes when moving back. It starts when
+  Terraform begins deleting the module's VNet link, and ends only once the
+  server or private endpoint has written its record into the new zone.
+  Terraform switches the server and the endpoints' zone groups after it has
+  destroyed the old zone, so the outage includes the link deletion (more
+  than 2 minutes in the test). Schedule a maintenance window.
+- **During the outage, Redis and Blob first resolve to their public IP
+  addresses**, then to nothing. Public network access is disabled on both,
+  so n8n sees connection failures, not only lookup errors. PostgreSQL does
+  not resolve at all. In the test, n8n logged database lookup and ping
+  failures, but no pod restarted and the editor stayed reachable.
+- If the n8n VNet resolves the zone through a direct VNet link, note that a
+  VNet cannot be linked to two private DNS zones with the same name
+  ([Microsoft Q&A](https://learn.microsoft.com/answers/questions/2283009/a-virtual-network-cannot-be-linked-to-multiple-zon)).
+  Azure rejects the new link while the old same-named link is still
+  active. If both changes are in one apply, Terraform does not order the
+  old link's deletion before the new link's creation; they are independent
+  resources. In the live test the deletion started first and Azure accepted
+  the new link while the old one was still being deleted, in both
+  directions, but that order is not guaranteed. If the new link fails with
+  the conflict, run `terraform apply` again once the old link is gone; the
+  outage lasts until that second apply finishes. To avoid the race
+  entirely, remove the old link in one apply and create the new one in the
+  next, which keeps the service unresolvable for the time between the two
+  applies. A new PostgreSQL zone with a different name, or resolution
+  through a central DNS resolver, avoids the conflict altogether.
+- After the change, check from an n8n pod that the service's hostname
+  resolves to its private IP address and that n8n can connect, not only that
+  the new zone contains the record.
+- Azure currently does not allow changing the private DNS zone of a
+  PostgreSQL Flexible Server that has high availability enabled. With
+  `pg_enable_high_availability = true`, the apply fails. Either keep
+  `create_postgres_private_dns_zone = true` for that server, or use three
+  separate, completed applies: turn high availability off, change the
+  zone, then turn high availability back on. Turning it back on creates a
+  new standby.
+- Rolling back to `create_*_private_dns_zone = true` creates a new
+  module-owned zone and link, with the same kind of outage and the same
+  link conflict in reverse: the module's new link fails while the caller's
+  same-named link is still active. Remove the caller's link in the same
+  apply and re-run the apply if the module's link loses the race, or remove
+  it in an earlier apply, as described above.
+
+**Handing the module's existing zone over to central management.** If you
+pass the ID of the zone the module already created, the plan destroys that
+zone and its link, because the module no longer owns them. Move them out of
+the module's state first:
+
+1. Stop all other Terraform runs against this state and, if it is a
+   different one, the state of the configuration that will own the zone.
+2. Back up both states, for example with `terraform state pull > backup.tfstate`.
+3. Add `azurerm_private_dns_zone` and
+   `azurerm_private_dns_zone_virtual_network_link` resources to the
+   configuration that will own the zone, with arguments matching the
+   existing resources (same name, resource group, VNet, and tags), so that
+   its plan shows no changes after the move.
+4. Move the two resources out of this module's state:
+   - If the owning configuration uses the same state, move them to its
+     addresses, adjusting `module.n8n` to your module call name:
+
+     ```bash
+     terraform state mv 'module.n8n.azurerm_private_dns_zone.postgres[0]' \
+       'azurerm_private_dns_zone.postgres'
+     terraform state mv 'module.n8n.azurerm_private_dns_zone_virtual_network_link.postgres[0]' \
+       'azurerm_private_dns_zone_virtual_network_link.postgres'
+     ```
+
+   - If it uses a different state, run `terraform state rm` for both
+     addresses here, then import both resources into the other
+     configuration, for example with `import` blocks so the import shows up
+     in a reviewed plan.
+5. Set the switch to `false` and pass the same zone ID. Plan both
+   configurations. Neither plan may delete or replace the zone or the VNet
+   link, and the server's or endpoint's zone ID must stay the same.
+
+Replace `postgres` with `redis` or `blob` for the other services. To roll
+back, restore the state backups, or reverse the moves (`terraform state mv`
+back to the module addresses, or `state rm` in the other configuration and
+re-import at the module addresses) while runs are still stopped. The zone
+stays in `var.resource_group_name`. Moving it to another resource group or
+subscription is an Azure operation outside this module.
+
 ### The n8n workload identity stays module-owned
 
 Even when `create_aks = false` and/or `create_blob_storage = false`, the

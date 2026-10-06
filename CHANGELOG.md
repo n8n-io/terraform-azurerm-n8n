@@ -130,6 +130,32 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   upgrade is not in-place
   ([#31](https://github.com/n8n-io/terraform-azurerm-n8n/issues/31)).
 
+- `create_postgres_private_dns_zone`, `create_redis_private_dns_zone`, and
+  `create_blob_private_dns_zone` (each `true` by default, so existing callers
+  see no plan change), with `postgres_private_dns_zone_id`,
+  `redis_private_dns_zone_id`, and `blob_private_dns_zone_id`, let a caller
+  attach the module-managed PostgreSQL Flexible Server and the Redis/Blob
+  private endpoints to an existing private DNS zone instead of a
+  module-created one. This is for landing zones that keep these zones in a
+  central connectivity subscription, often under an Azure Policy
+  `DeployIfNotExists` assignment. Setting a switch to `false` requires the
+  matching zone ID and skips that service's zone and VNet link. Ownership
+  follows the switch, never the ID being null, so the ID may come from a
+  zone created in the same configuration. A supplied ID that has no effect
+  raises a warning, not an error. PostgreSQL accepts any zone name ending in
+  `.postgres.database.azure.com` except the server's own FQDN
+  (`<friendly_name_prefix>-postgres.postgres.database.azure.com`), which
+  Azure rejects; Redis and Blob require their `privatelink`
+  zone names. The caller owns the zone's VNet link and needs Private DNS
+  Zone Contributor on it. Switching an existing deployment to a
+  caller-supplied zone destroys the module's own zone and link, interrupts
+  name resolution for a few minutes per service (about 3 to 4 minutes in a
+  live test), and fails for a PostgreSQL server with high
+  availability enabled; see
+  [`docs/customer-managed-infrastructure.md`](docs/customer-managed-infrastructure.md#caller-supplied-private-dns-zones)
+  for the requirements and migration steps
+  ([#22](https://github.com/n8n-io/terraform-azurerm-n8n/issues/22)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by
