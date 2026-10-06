@@ -241,6 +241,46 @@ locals {
     },
   ]
 
+  # n8n reads DB_POSTGRESDB_SSL_ENABLED, not the chart-rendered
+  # DB_POSTGRESDB_SSL ConfigMap key (n8n-io/n8n-hosting#175 upstream). n8n
+  # still built a TLS options object for require/allow/prefer, because the
+  # chart renders DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false for them, but
+  # verify-ca/verify-full without a CA connected in plaintext. Setting this
+  # directly whenever the effective ssl_mode is not "disable" fixes that
+  # regardless of chart version. DB_POSTGRESDB_SSL_ENABLED is
+  # deliberately absent from local.n8n_managed_env_names below: the "DB_"
+  # prefix already reserves it in n8n_extra_env.
+  n8n_postgres_ssl_enabled_env = local.postgres_connection.ssl_mode == "disable" ? [] : [
+    {
+      name  = "DB_POSTGRESDB_SSL_ENABLED"
+      value = "true"
+    },
+  ]
+
+  # The CA bundle reaches n8n through the chart's own database.ssl.ca value
+  # (n8n.tf), which the chart renders into its ConfigMap as
+  # DB_POSTGRESDB_SSL_CA. n8n passes that string to the TLS socket as PEM
+  # content. Keeping the CA inside the Helm release means a failed upgrade's
+  # atomic rollback restores the previous CA together with the pods, and the
+  # chart's checksum/config annotation rolls the pods when only the CA
+  # changes. A Terraform-managed Secret or ConfigMap would do neither: Helm
+  # cannot roll it back, and removing it before the Helm upgrade leaves the
+  # previous release mounting an object that no longer exists.
+  #
+  # Delivery is gated on a verifying mode. Any non-empty CA makes n8n build
+  # a TLS options object, and with ssl_mode = "disable" the chart omits
+  # DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED, so n8n's default of true would
+  # turn on TLS with certificate verification against a server the caller
+  # declared plaintext. Under require/allow/prefer the CA is never used for
+  # verification. In every non-verifying mode the input is therefore
+  # ignored, and check.postgres_ssl_ca_requires_verify_mode warns.
+  postgres_ssl_ca_set    = var.postgres_ssl_ca_pem != null
+  postgres_ssl_ca_active = local.postgres_ssl_ca_set && contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
+
+  # trimspace keeps the rendered value stable when the caller's PEM file ends
+  # in a newline, so whitespace-only edits do not roll the pods.
+  postgres_ssl_ca_values = local.postgres_ssl_ca_active ? { ca = trimspace(var.postgres_ssl_ca_pem) } : {}
+
   # PostgreSQL connection/health-check runtime tuning (port-aws-040-enhancements
   # section 3): four nullable inputs rendered as one shared list so main,
   # worker, and webhook containers stay in sync and the offline chart-rendering

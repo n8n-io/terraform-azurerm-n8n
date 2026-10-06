@@ -301,7 +301,7 @@ locals {
     database  = var.create_database ? azurerm_postgresql_flexible_server_database.n8n[0].name : var.postgres_external_database
     username  = var.create_database ? var.pg_admin_username : var.postgres_external_username
     password  = var.create_database ? random_password.postgres_admin[0].result : var.postgres_external_password
-    ssl_mode  = var.create_database ? "require" : var.postgres_external_ssl_mode
+    ssl_mode  = var.create_database ? var.postgres_managed_ssl_mode : var.postgres_external_ssl_mode
     pool_size = var.postgres_pool_size
   }
 }
@@ -349,14 +349,35 @@ check "postgres_tuning_requires_module_managed_database" {
       var.pg_storage_drift_guard_enabled == false &&
       var.pg_enable_high_availability == false &&
       var.pg_backup_retention_days == 7 &&
-      var.pg_geo_redundant_backup_enabled == false
+      var.pg_geo_redundant_backup_enabled == false &&
+      var.postgres_managed_ssl_mode == "require"
     )
     error_message = join("", [
-      "A PostgreSQL sizing or HA input (pg_sku_name, pg_storage_mb, pg_storage_auto_grow_enabled, ",
+      "A PostgreSQL sizing, HA, or TLS input (pg_sku_name, pg_storage_mb, pg_storage_auto_grow_enabled, ",
       "pg_storage_drift_guard_enabled, pg_enable_high_availability, pg_backup_retention_days, ",
-      "pg_geo_redundant_backup_enabled) is set while create_database = false. The module creates no ",
-      "PostgreSQL Flexible Server in that mode, so none of them apply. Configure these on the external ",
-      "database you supply via postgres_external_host.",
+      "pg_geo_redundant_backup_enabled, postgres_managed_ssl_mode) is set while create_database = false. ",
+      "The module creates no PostgreSQL Flexible Server in that mode, so none of them apply. Configure ",
+      "these on the external database you supply via postgres_external_host.",
+    ])
+  }
+}
+
+# postgres_ssl_ca_pem is shared by both database paths, so the advisory below
+# keys off the effective local.postgres_connection.ssl_mode rather than
+# var.create_database. In any mode other than verify-ca/verify-full the module
+# ignores the CA entirely (local.postgres_ssl_ca_active in locals.tf: no
+# database.ssl.ca chart value), so a warning is enough here. The condition
+# reads the local.postgres_ssl_ca_set boolean rather than the variable so the
+# diagnostic does not print the whole PEM bundle. It is not
+# a plan failure because callers may stage the CA before switching modes.
+check "postgres_ssl_ca_requires_verify_mode" {
+  assert {
+    condition = !local.postgres_ssl_ca_set || local.postgres_ssl_ca_active
+    error_message = join("", [
+      "postgres_ssl_ca_pem is set but the effective ssl_mode (", local.postgres_connection.ssl_mode, ") is ",
+      "not verify-ca or verify-full, so the module ignores it and does not pass it to the n8n chart. ",
+      "Set postgres_managed_ssl_mode or postgres_external_ssl_mode to ",
+      "verify-ca or verify-full, or remove postgres_ssl_ca_pem.",
     ])
   }
 }

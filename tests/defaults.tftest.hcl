@@ -1046,6 +1046,281 @@ run "rejects_malformed_postgres_external_ssl_mode" {
   ]
 }
 
+# ── Managed PostgreSQL TLS mode and CA bundle (issue #25) ────────────────────
+
+run "managed_postgres_defaults_to_require" {
+  command = plan
+
+  assert {
+    condition     = local.postgres_connection.ssl_mode == "require"
+    error_message = "local.postgres_connection.ssl_mode must default to require on the managed path."
+  }
+
+  assert {
+    condition     = length(local.n8n_postgres_ssl_enabled_env) == 1 && one([for env in local.n8n_postgres_ssl_enabled_env : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == "true"
+    error_message = "local.n8n_postgres_ssl_enabled_env must set DB_POSTGRESDB_SSL_ENABLED=true whenever ssl_mode is not disable, working around the chart's DB_POSTGRESDB_SSL name bug (n8n-io/n8n-hosting#175)."
+  }
+}
+
+run "managed_postgres_verify_full_sets_ssl_mode" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+  }
+
+  assert {
+    condition     = local.postgres_connection.ssl_mode == "verify-full"
+    error_message = "local.postgres_connection.ssl_mode must equal postgres_managed_ssl_mode on the managed path."
+  }
+}
+
+run "rejects_malformed_postgres_managed_ssl_mode" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "disable"
+  }
+
+  expect_failures = [
+    var.postgres_managed_ssl_mode,
+  ]
+}
+
+run "external_postgres_disable_omits_ssl_enabled_env" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    postgres_external_ssl_mode = "disable"
+  }
+
+  assert {
+    condition     = length(local.n8n_postgres_ssl_enabled_env) == 0
+    error_message = "local.n8n_postgres_ssl_enabled_env must be empty when the effective ssl_mode is disable."
+  }
+}
+
+# The CA reaches n8n through the chart-native database.ssl.ca value, which the
+# chart renders into its ConfigMap as DB_POSTGRESDB_SSL_CA. Keeping it inside
+# the Helm release is what lets a failed upgrade's atomic rollback restore the
+# previous CA, so no module-managed Secret, volume, mount, _FILE entry, or
+# extra checksum annotation may render.
+run "postgres_ssl_ca_pem_reaches_the_chart_and_sets_ssl_enabled_env" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    postgres_external_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem        = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).database.ssl.ca == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----"
+    error_message = "database.ssl.ca must carry the caller-supplied PEM, whitespace-trimmed."
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).database.ssl.enabled == true && yamldecode(helm_release.n8n.values[0]).database.ssl.rejectUnauthorized == true
+    error_message = "verify-full must render database.ssl.enabled and rejectUnauthorized as true alongside the CA."
+  }
+
+  assert {
+    condition     = one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == "true"
+    error_message = "config.extraEnv must set DB_POSTGRESDB_SSL_ENABLED=true so n8n actually enables TLS, independent of the chart's own (misnamed) ConfigMap key."
+  }
+
+  assert {
+    condition     = length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_POSTGRESDB_SSL_CA_FILE" || env.name == "DB_POSTGRESDB_SSL_CA"]) == 0
+    error_message = "The CA must not be delivered through config.extraEnv; DB_POSTGRESDB_SSL_CA comes from the chart ConfigMap only."
+  }
+
+  assert {
+    condition     = length([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "postgres-ssl-ca"]) == 0 && !contains(keys(yamldecode(helm_release.n8n.values[0])), "podAnnotations")
+    error_message = "No module-managed CA volume or checksum podAnnotation may render; the chart's own checksum/config annotation rolls the pods on a CA change."
+  }
+}
+
+run "postgres_ssl_ca_pem_trimmed_value_is_stable" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    postgres_external_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem        = "\n  -----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n\n"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).database.ssl.ca == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----"
+    error_message = "Leading and trailing whitespace must not change the rendered CA, so whitespace-only edits do not roll the pods."
+  }
+}
+
+run "postgres_ssl_ca_pem_null_renders_no_ca" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    postgres_external_ssl_mode = "verify-full"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).database.ssl), "ca")
+    error_message = "database.ssl.ca must not render when postgres_ssl_ca_pem is null."
+  }
+}
+
+run "rejects_empty_postgres_ssl_ca_pem" {
+  command = plan
+
+  variables {
+    postgres_ssl_ca_pem = "   "
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+# With ssl_mode = "disable", any non-empty CA would make n8n build a TLS
+# options object with its default rejectUnauthorized = true (the chart omits
+# DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED when SSL is disabled), turning on
+# verified TLS against a server the caller declared plaintext. The CA must be
+# ignored entirely, with only the advisory check firing.
+run "postgres_ssl_ca_pem_ignored_when_ssl_mode_is_disable" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    postgres_external_ssl_mode = "disable"
+    postgres_ssl_ca_pem        = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).database.ssl), "ca") && yamldecode(helm_release.n8n.values[0]).database.ssl.enabled == false
+    error_message = "database.ssl.ca must not render when the effective ssl_mode is disable; a CA alone makes n8n turn on verified TLS."
+  }
+
+  assert {
+    condition     = length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if startswith(env.name, "DB_POSTGRESDB_SSL")]) == 0
+    error_message = "No DB_POSTGRESDB_SSL_* entry may render in config.extraEnv when the effective ssl_mode is disable."
+  }
+
+  expect_failures = [
+    check.postgres_ssl_ca_requires_verify_mode,
+  ]
+}
+
+run "postgres_ssl_ca_pem_ignored_when_ssl_mode_is_require" {
+  command = plan
+
+  variables {
+    postgres_ssl_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+  }
+
+  assert {
+    condition     = length(local.postgres_ssl_ca_values) == 0
+    error_message = "The CA must be ignored (no database.ssl.ca value) when the effective ssl_mode is require."
+  }
+
+  expect_failures = [
+    check.postgres_ssl_ca_requires_verify_mode,
+  ]
+}
+
+run "postgres_ssl_ca_pem_delivered_for_managed_verify_ca" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-ca"
+    postgres_ssl_ca_pem       = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+  }
+
+  assert {
+    condition     = local.postgres_ssl_ca_values.ca == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----"
+    error_message = "The CA must reach database.ssl.ca on the managed path when postgres_managed_ssl_mode is verify-ca."
+  }
+}
+
+run "warns_on_postgres_managed_ssl_mode_without_managed_database" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    postgres_managed_ssl_mode  = "verify-full"
+  }
+
+  expect_failures = [
+    check.postgres_tuning_requires_module_managed_database,
+  ]
+}
+
 run "rejects_malformed_pg_admin_username" {
   command = plan
 
@@ -2922,6 +3197,23 @@ run "rejects_reserved_additional_environment_names" {
       { name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME", value = "override" },
       { name = "AZURE_CLIENT_ID", value = "override" },
       { name = "N8N_LICENSE_ACTIVATION_KEY", value = "override" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+# The mixed fixture above already fails n8n_extra_env on several other
+# reserved names, so it cannot prove DB_POSTGRESDB_SSL_CA alone is reserved
+# (it would fail even if that one entry were allowed through). This isolates
+# it: the chart renders that name from database.ssl.ca, so a caller entry
+# would duplicate the CA the module delivers.
+run "rejects_reserved_ssl_ca_environment_name" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "DB_POSTGRESDB_SSL_CA", value = "override" },
     ]
   }
 

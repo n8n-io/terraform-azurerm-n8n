@@ -445,13 +445,36 @@ variable "postgres_external_password" {
 }
 
 variable "postgres_external_ssl_mode" {
-  description = "TLS mode for the external PostgreSQL connection (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`). Ignored when `create_database = true` (the module-managed server always uses `require`)."
+  description = "TLS mode for the external PostgreSQL connection (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`). Ignored when `create_database = true` (use `postgres_managed_ssl_mode` instead)."
   type        = string
   default     = "require"
 
   validation {
     condition     = contains(["disable", "allow", "prefer", "require", "verify-ca", "verify-full"], var.postgres_external_ssl_mode)
     error_message = "postgres_external_ssl_mode must be one of: disable, allow, prefer, require, verify-ca, verify-full."
+  }
+}
+
+variable "postgres_managed_ssl_mode" {
+  description = "TLS mode for the module-managed PostgreSQL Flexible Server connection (`require`, `verify-ca`, `verify-full`). Ignored when `create_database = false` (use `postgres_external_ssl_mode` instead). Azure Database for PostgreSQL Flexible Server enforces TLS on every connection, so `disable`, `allow`, and `prefer` are rejected here, unlike on the external path. `verify-ca` and `verify-full` behave the same: n8n's PostgreSQL driver checks both the certificate chain and the server hostname in either mode. Both need a trusted CA: supply one with `postgres_ssl_ca_pem` unless the pod image's default trust store already trusts Microsoft's root CAs. See `docs/postgresql-tls.md`."
+  type        = string
+  default     = "require"
+
+  validation {
+    condition     = contains(["require", "verify-ca", "verify-full"], var.postgres_managed_ssl_mode)
+    error_message = "postgres_managed_ssl_mode must be one of: require, verify-ca, verify-full."
+  }
+}
+
+variable "postgres_ssl_ca_pem" {
+  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set and the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `verify-ca` or `verify-full`, the module passes it (whitespace-trimmed) to the n8n Helm chart's `database.ssl.ca` value, which the chart renders into its ConfigMap as `DB_POSTGRESDB_SSL_CA` for main, worker, and webhook-processor pods. Because the CA is part of the Helm release, a failed upgrade's rollback restores the previous CA, and changing the CA rolls the pods. Needed for `verify-ca`/`verify-full` unless the pod image's default trust store already trusts the server's issuing CA (for Azure Database for PostgreSQL Flexible Server, Microsoft recommends trusting both current roots: DigiCert Global Root G2 and Microsoft RSA Root CA 2017). In every other mode (`disable`, `allow`, `prefer`, `require`) the module ignores it and a plan-time warning fires. See `docs/postgresql-tls.md`."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.postgres_ssl_ca_pem == null ? true : length(trimspace(var.postgres_ssl_ca_pem)) > 0
+    error_message = "postgres_ssl_ca_pem must be null or a non-empty PEM-encoded CA bundle."
   }
 }
 

@@ -297,10 +297,18 @@ resource "helm_release" "n8n" {
       database    = local.postgres_connection.database
       schema      = "public"
       user        = local.postgres_connection.username
-      ssl = {
-        enabled            = local.postgres_connection.ssl_mode != "disable"
-        rejectUnauthorized = contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
-      }
+      # ca is set only while postgres_ssl_ca_pem is set and the mode verifies
+      # the certificate (local.postgres_ssl_ca_values in locals.tf). The chart
+      # renders it into its ConfigMap as DB_POSTGRESDB_SSL_CA (PEM content),
+      # so a Helm rollback restores the previous CA and a CA change rolls the
+      # pods through the chart's checksum/config annotation.
+      ssl = merge(
+        {
+          enabled            = local.postgres_connection.ssl_mode != "disable"
+          rejectUnauthorized = contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
+        },
+        local.postgres_ssl_ca_values,
+      )
       passwordSecret = {
         name = local.postgres_password_secret_name
         key  = local.postgres_password_secret_key
@@ -412,6 +420,13 @@ resource "helm_release" "n8n" {
         # PostgreSQL connection/health-check runtime tuning (section 3). Null
         # inputs contribute no entries and retain n8n's pinned defaults.
         local.n8n_postgres_runtime_env,
+        # DB_POSTGRESDB_SSL_ENABLED works around a chart bug: the pinned
+        # chart renders database.ssl.enabled into a ConfigMap key named
+        # DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
+        # upstream), so verify-ca/verify-full without a CA connected in
+        # plaintext. Setting the correct name here fixes that regardless of
+        # chart version.
+        local.n8n_postgres_ssl_enabled_env,
         # Optional shared V8 heap ceiling (section 6). Null contributes no
         # entries and leaves n8n/Node's own default and any caller NODE_OPTIONS
         # in n8n_extra_env in place.
