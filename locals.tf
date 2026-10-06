@@ -206,11 +206,13 @@ locals {
         }
       },
     ],
-    var.postgres_ssl_ca_pem == null ? [] : [
+    local.postgres_ssl_ca_active ? [
       {
         name = "postgres-ssl-ca"
         secret = {
-          secretName = local.postgres_ssl_ca_secret_name
+          # Resource reference (not the literal name) so helm_release.n8n
+          # depends on the Secret and never rolls pods before it exists.
+          secretName = kubernetes_secret_v1.n8n_postgres_ssl_ca[0].metadata[0].name
           items = [
             {
               key  = "ca.pem"
@@ -219,7 +221,7 @@ locals {
           ]
         }
       },
-    ],
+    ] : [],
   )
 
   n8n_extra_volume_mounts = concat(
@@ -240,13 +242,13 @@ locals {
         readOnly  = true
       },
     ],
-    var.postgres_ssl_ca_pem == null ? [] : [
+    local.postgres_ssl_ca_active ? [
       {
         name      = "postgres-ssl-ca"
         mountPath = "/etc/n8n/postgres-ssl-ca"
         readOnly  = true
       },
-    ],
+    ] : [],
   )
 
   # CREDENTIALS_OVERWRITE_DATA_FILE is deliberately absent from
@@ -263,10 +265,12 @@ locals {
   ]
 
   # n8n reads DB_POSTGRESDB_SSL_ENABLED, not the chart-rendered
-  # DB_POSTGRESDB_SSL ConfigMap key (n8n-io/n8n-hosting#175 upstream), so the
-  # chart's database.ssl.enabled alone leaves the connection plaintext.
-  # Setting this directly whenever the effective ssl_mode is not "disable"
-  # fixes that regardless of chart version. DB_POSTGRESDB_SSL_ENABLED is
+  # DB_POSTGRESDB_SSL ConfigMap key (n8n-io/n8n-hosting#175 upstream). n8n
+  # still built a TLS options object for require/allow/prefer, because the
+  # chart renders DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false for them, but
+  # verify-ca/verify-full without a CA connected in plaintext. Setting this
+  # directly whenever the effective ssl_mode is not "disable" fixes that
+  # regardless of chart version. DB_POSTGRESDB_SSL_ENABLED is
   # deliberately absent from local.n8n_managed_env_names below: the "DB_"
   # prefix already reserves it in n8n_extra_env.
   n8n_postgres_ssl_enabled_env = local.postgres_connection.ssl_mode == "disable" ? [] : [
@@ -276,17 +280,25 @@ locals {
     },
   ]
 
-  # n8n reads DB_POSTGRESDB_SSL_CA as a filesystem path, not inline PEM
-  # content (readFileSync under the hood), so the chart's native
-  # database.ssl.ca value cannot be used here: it renders the PEM text
-  # straight into DB_POSTGRESDB_SSL_CA, which n8n would then try to open as
-  # a file named after the certificate contents. The module instead creates
-  # a dedicated Secret (n8n.tf), mounts it read-only via the reserved
-  # postgres-ssl-ca volume/mount above, and points DB_POSTGRESDB_SSL_CA_FILE
-  # at the mounted path so n8n reads the CA bundle from disk.
+  # The CA bundle reaches n8n as a file: a dedicated Secret (n8n.tf), mounted
+  # read-only through the postgres-ssl-ca volume/mount above, with
+  # DB_POSTGRESDB_SSL_CA_FILE pointing at it. n8n's config loader reads the
+  # file's contents into DB_POSTGRESDB_SSL_CA, and only does so while
+  # DB_POSTGRESDB_SSL_CA itself is unset, so the chart's database.ssl.ca
+  # value must stay unset.
+  #
+  # Delivery is gated on a verifying mode. Any non-empty CA makes n8n build
+  # a TLS options object, and with ssl_mode = "disable" the chart omits
+  # DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED, so n8n's default of true would
+  # turn on TLS with certificate verification against a server the caller
+  # declared plaintext. Under require/allow/prefer the CA is never used for
+  # verification. In every non-verifying mode the input is therefore
+  # ignored, and check.postgres_ssl_ca_requires_verify_mode warns.
+  postgres_ssl_ca_active = var.postgres_ssl_ca_pem != null && contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
+
   postgres_ssl_ca_secret_name = "n8n-postgres-ssl-ca"
 
-  n8n_postgres_ssl_ca_file_env = var.postgres_ssl_ca_pem == null ? [] : [
+  n8n_postgres_ssl_ca_file_env = !local.postgres_ssl_ca_active ? [] : [
     {
       name  = "DB_POSTGRESDB_SSL_CA_FILE"
       value = "/etc/n8n/postgres-ssl-ca/ca.pem"

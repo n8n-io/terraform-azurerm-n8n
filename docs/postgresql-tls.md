@@ -1,128 +1,165 @@
 # PostgreSQL TLS modes and certificate verification
 
 Both the module-managed and external PostgreSQL paths connect over TLS by
-default, but `require` (the default on both paths) only encrypts the
-connection: it does not check that the certificate the server presents
-belongs to the host n8n dialed. `verify-ca` and `verify-full` close that gap
-by validating the certificate against a trusted CA.
+default. `require` (the default on both paths) only encrypts the connection.
+It does not check that the certificate the server presents belongs to the
+host n8n dialed. `verify-ca` and `verify-full` close that gap by validating
+the certificate against a trusted CA.
 
 n8n's Postgres driver (`pg`/node-postgres) does not expose libpq's
 distinction between `verify-ca` (trust the certificate chain, skip the
 hostname check) and `verify-full` (trust the chain and check the hostname).
-Setting `ssl.rejectUnauthorized` on the underlying Node TLS socket always
-performs both the chain and the hostname check. The module renders
-`postgres_managed_ssl_mode` / `postgres_external_ssl_mode` into that single
+With certificate verification on, the underlying Node TLS socket always
+checks both the chain and the hostname. The module renders
+`postgres_managed_ssl_mode` / `postgres_external_ssl_mode` into a single
 `rejectUnauthorized` flag (`true` for both `verify-ca` and `verify-full`,
-`false` otherwise — see `n8n.tf`'s `database.ssl.rejectUnauthorized`), so
-selecting `verify-ca` here does not get you a weaker, hostname-check-skipping
-mode: it renders identical settings to `verify-full` and n8n always checks
-the hostname once either mode is selected. Pick either name for
-documentation/audit purposes; the connection's actual behavior does not
-differ between them.
+`false` otherwise; see `n8n.tf`'s `database.ssl.rejectUnauthorized`). So
+`verify-ca` is not a weaker mode that skips the hostname check here. It
+renders the same settings as `verify-full`. Pick either name for
+documentation or audit purposes; the connection behaves the same.
 
 ## Selecting a mode
 
 - `postgres_managed_ssl_mode` controls the module-managed Flexible Server
   path (`create_database = true`, the default). Azure Database for
   PostgreSQL Flexible Server enforces TLS on every connection, so this input
-  only accepts `require`, `verify-ca`, or `verify-full` — `disable`,
-  `allow`, and `prefer` would never apply and are rejected at plan time.
+  only accepts `require`, `verify-ca`, or `verify-full`. `disable`, `allow`,
+  and `prefer` would never apply and are rejected at plan time.
 - `postgres_external_ssl_mode` controls the external path
   (`create_database = false`) and accepts the full PostgreSQL set
   (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`),
   since an external server's TLS posture is the caller's choice. `allow` and
   `prefer` are accepted for compatibility with PostgreSQL's `sslmode` naming,
-  but the module has no plaintext-fallback path: both render
-  `database.ssl.enabled = true` on the Helm chart (any mode other than
-  `disable` does), so the connection is always encrypted the same as
+  but the module has no plaintext-fallback path: both behave the same as
   `require`. There is no way to request "encrypt if the server supports it,
-  otherwise connect in plaintext" through this module; use `disable` for an
-  unencrypted connection or `require`/`verify-ca`/`verify-full` for an
+  otherwise connect in plaintext" through this module. Use `disable` for an
+  unencrypted connection, or `require`, `verify-ca`, or `verify-full` for an
   encrypted one.
 
 Both inputs feed `local.postgres_connection.ssl_mode` (`database.tf`), which
 the n8n Helm chart's `database.ssl.enabled` / `database.ssl.rejectUnauthorized`
-values derive from. The pinned n8n Helm chart (`1.13.0`) renders
-`database.ssl.enabled` into a ConfigMap key named `DB_POSTGRESDB_SSL`, but
-n8n only reads `DB_POSTGRESDB_SSL_ENABLED`
-([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
-upstream) — the chart's own value alone leaves the connection plaintext
-regardless of the selected mode. The module works around this by also
-setting `DB_POSTGRESDB_SSL_ENABLED` directly through `config.extraEnv`
+values derive from.
+
+### Chart workaround for `DB_POSTGRESDB_SSL_ENABLED`
+
+The pinned n8n Helm chart (`1.14.0`, and `1.13.0` before it) renders
+`database.ssl.enabled` into an environment variable named
+`DB_POSTGRESDB_SSL`, but n8n only reads `DB_POSTGRESDB_SSL_ENABLED`
+([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175),
+open upstream). The module works around this by setting
+`DB_POSTGRESDB_SSL_ENABLED=true` directly through `config.extraEnv`
 (`locals.tf`'s `n8n_postgres_ssl_enabled_env`) whenever the effective
 `ssl_mode` is not `disable`, independent of chart version.
+
+How the chart bug affected each mode before this workaround:
+
+| Mode | Before the workaround | With the workaround |
+| --- | --- | --- |
+| `require`, `allow`, `prefer` | TLS without certificate verification | Unchanged |
+| `verify-ca`, `verify-full` (external path, no CA) | Plaintext | TLS with certificate verification |
+| `disable` | Plaintext | Unchanged |
+
+`require`, `allow`, and `prefer` were already encrypted because the chart
+also renders `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false` for them, and n8n
+builds a TLS options object whenever that flag is `false`. Only the
+verifying modes lost TLS entirely, because they leave that flag at its
+default.
 
 ## Supplying a CA bundle for `verify-ca` / `verify-full`
 
 `verify-ca` and `verify-full` both require n8n to trust the certificate
 authority that signed the server's certificate. Set `postgres_ssl_ca_pem` to
-a PEM-encoded CA bundle; the module stores it in a dedicated Kubernetes
-Secret, mounts it read-only on every main, worker, and webhook-processor pod,
-and sets `DB_POSTGRESDB_SSL_CA_FILE` to the mounted file's path. n8n reads
-this setting as a file path (not inline PEM content), so the chart's native
-`database.ssl.ca` value is deliberately left unset here — passing the PEM
-text through that value directly would cause n8n to try to open a file named
-after the certificate contents. This applies to both the managed and
-external paths — a caller pointing at an external server behind the same CA
-hierarchy can use it too.
+a PEM-encoded CA bundle. The module stores it in a dedicated Kubernetes
+Secret, mounts it read-only at `/etc/n8n/postgres-ssl-ca` on every main,
+worker, and webhook-processor pod, and sets `DB_POSTGRESDB_SSL_CA_FILE` to
+the mounted file's path. n8n's configuration loader reads the file's
+contents into `DB_POSTGRESDB_SSL_CA`, but only while `DB_POSTGRESDB_SSL_CA`
+itself is unset, so the chart's native `database.ssl.ca` value is
+deliberately left unset. This works for both the managed and external
+paths.
 
 ```hcl
 postgres_managed_ssl_mode = "verify-full"
 postgres_ssl_ca_pem       = file("${path.module}/azure-postgres-root-cas.pem")
 ```
 
+While `postgres_ssl_ca_pem` is set, `n8n_extra_volumes` may not use the
+volume name `postgres-ssl-ca` and `n8n_extra_volume_mounts` may not use the
+mount path `/etc/n8n/postgres-ssl-ca`. Plan-time validation rejects both.
+
 If `postgres_ssl_ca_pem` is left null, `verify-ca` / `verify-full` still work
 as long as the pod image's own default trust store (Node's bundled CA list)
 already trusts the server's issuing CA. Azure Database for PostgreSQL
-Flexible Server's certificates chain to
-[DigiCert Global Root G2](https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/concepts-networking-ssl-tls#tls-and-ssl-versions-and-supported-ciphers)
-and, on servers not yet migrated, the retiring
-[Microsoft RSA Root Certificate Authority 2017](https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/concepts-networking-ssl-tls). Both are
-widely trusted roots, so many Node-based images already carry them — verify
-against your actual pod image rather than assuming either way. Setting
-`postgres_ssl_ca_pem` with the exact bundle Microsoft publishes removes that
-uncertainty and survives a future CA rotation without depending on the image's
-bundled trust store being current.
+Flexible Server uses dual-signed certificates anchored by two current root
+CAs, DigiCert Global Root G2 and Microsoft RSA Root CA 2017, and Microsoft
+recommends keeping both in the trusted root store
+([Azure's TLS guidance](https://learn.microsoft.com/en-us/azure/postgresql/security/security-tls)).
+Both are widely trusted roots, so many Node-based images already carry them.
+Verify against your actual pod image rather than assuming either way.
+Setting `postgres_ssl_ca_pem` to a bundle with both roots removes that
+uncertainty and does not depend on the image's bundled trust store being
+current. Do not put intermediate or server certificates in the bundle:
+Microsoft does not support pinning them.
 
-An advisory (non-blocking) `check` in `database.tf`
-(`postgres_ssl_ca_requires_verify_mode`) warns if `postgres_ssl_ca_pem` is
-set while the effective `ssl_mode` is `disable`, `allow`, or `prefer`: the
-chart still receives the value, but n8n never reads it in those modes.
+### The CA is ignored outside `verify-ca` / `verify-full`
+
+In any other mode (`disable`, `allow`, `prefer`, `require`), the module
+ignores `postgres_ssl_ca_pem`: it creates no Secret, mount, annotation, or
+`DB_POSTGRESDB_SSL_CA_FILE` entry, and an advisory `check` in `database.tf`
+(`postgres_ssl_ca_requires_verify_mode`) warns. This matters most for
+`disable`: n8n turns on TLS with certificate verification whenever it sees a
+CA, so delivering one would break a connection to a server you declared
+plaintext. You can stage the CA before switching the mode; it takes effect
+on the apply that selects `verify-ca` or `verify-full`.
 
 ## Azure's CA rotation
 
 Microsoft periodically rotates the root and intermediate CAs Azure Database
-for PostgreSQL Flexible Server uses; see
-[Azure's TLS/SSL certificate rotation guidance](https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/concepts-networking-ssl-tls)
+for PostgreSQL Flexible Server uses. See
+[Azure's TLS/SSL certificate rotation guidance](https://learn.microsoft.com/en-us/azure/postgresql/security/security-tls)
 for the current schedule and the combined bundle Microsoft publishes. If you
 pin `postgres_ssl_ca_pem` to a specific bundle, track that page and refresh
-the input before the old CA's validity window closes, or `verify-ca` /
-`verify-full` connections will start failing closed once the server rolls to
-a certificate signed by a CA your bundle does not include. `require` mode
+the input before the old CA's validity window closes. Otherwise `verify-ca` /
+`verify-full` connections start failing closed once the server rolls to a
+certificate signed by a CA your bundle does not include. `require` mode
 (the default) is unaffected by CA rotation since it never validates the
 certificate chain.
 
 ## Upgrading an existing deployment
 
+The `DB_POSTGRESDB_SSL_ENABLED` workaround adds an environment entry to every
+deployment whose mode is not `disable`, so the first apply after upgrading
+shows a Helm values diff and rolls the pods even if you change no input.
+
+- **Default `require` (managed or external):** connection behavior does not
+  change. The connection was already encrypted and stays unverified.
+- **External `verify-ca` / `verify-full`:** the connection goes from
+  plaintext to TLS with certificate verification. If the server does not
+  accept TLS, uses a private CA that the pod image does not trust, or
+  presents a certificate whose name does not match `postgres_external_host`,
+  the pods fail every database connection after the rollout, and Helm's
+  atomic rollback fails the apply. Before upgrading, confirm the server
+  accepts TLS and supply its CA with `postgres_ssl_ca_pem` if needed. Test in
+  a non-production environment first.
+
 Changing `postgres_managed_ssl_mode`, `postgres_external_ssl_mode`, or
 `postgres_ssl_ca_pem` only changes what n8n's application containers send as
-connection parameters and, for the CA bundle, which Secret is mounted — none
-of these recreate the PostgreSQL server itself. Adding or changing
-`postgres_ssl_ca_pem` changes the rendered Helm values (a new mounted Secret
-volume and the `DB_POSTGRESDB_SSL_CA_FILE` environment entry), so expect a
-plan diff and a rolling pod update, not a no-op apply. On the default
-multi-main topology, that rollout is a standard rolling update: n8n keeps
-serving requests throughout, since surplus mains stay Ready while each pod
-cycles in turn. On the single-main topology
-(`n8n_main_hpa_min_replicas = 1`), the chart's `Recreate` strategy means the
-single main pod stops before its replacement starts, so the editor, REST
-API, and scheduled triggers are briefly unavailable until the new pod is
-Ready — the same interruption any single-main rollout causes (see
-[`docs/upgrading-n8n.md`](./upgrading-n8n.md)). Plan a maintenance window for
-that case.
+connection parameters and, for the CA bundle, which Secret is mounted. None
+of these recreate the PostgreSQL server. Adding or changing the CA in a
+verifying mode changes the rendered Helm values (the Secret volume, the
+`DB_POSTGRESDB_SSL_CA_FILE` entry, and a `checksum/postgres-ssl-ca` pod
+annotation that hashes the PEM), so expect a plan diff and a rolling pod
+update. On the default multi-main topology, that rollout is a standard
+rolling update: n8n keeps serving requests while each pod cycles in turn. On
+the single-main topology (`n8n_main_hpa_min_replicas = 1`), the chart's
+`Recreate` strategy stops the single main pod before its replacement starts,
+so the editor, REST API, and scheduled triggers are briefly unavailable until
+the new pod is Ready. This is the same interruption any single-main rollout
+causes (see [`docs/upgrading-n8n.md`](./upgrading-n8n.md)). Plan a
+maintenance window for that case.
 
-The one failure mode to check before switching to `verify-full`: confirm the
-CA bundle you supply (or the pod image's default trust store) actually
-covers the certificate chain your server currently presents. Test in a
-non-production environment first, or the main, worker, and webhook-processor
-pods will fail every database connection after the rollout completes.
+Before switching to `verify-ca` or `verify-full`, confirm the CA bundle you
+supply (or the pod image's default trust store) covers the certificate chain
+your server currently presents. Test in a non-production environment first,
+or the main, worker, and webhook-processor pods will fail every database
+connection after the rollout completes.

@@ -1128,14 +1128,12 @@ run "postgres_ssl_ca_pem_mounts_a_file_and_sets_ssl_enabled_env" {
     }
   }
 
-  # n8n reads DB_POSTGRESDB_SSL_CA as a filesystem path (readFileSync), not
-  # inline PEM content, so the chart-native database.ssl.ca value must stay
-  # unset: passing the PEM through it would render the certificate text
-  # straight into DB_POSTGRESDB_SSL_CA, which n8n would then try to open as a
-  # file path.
+  # n8n only reads DB_POSTGRESDB_SSL_CA_FILE while DB_POSTGRESDB_SSL_CA is
+  # unset, and the chart renders database.ssl.ca into DB_POSTGRESDB_SSL_CA,
+  # so the chart-native value must stay unset for the mounted file to apply.
   assert {
     condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).database.ssl), "ca")
-    error_message = "database.ssl.ca must stay unset; n8n reads DB_POSTGRESDB_SSL_CA as a file path, not inline PEM content."
+    error_message = "database.ssl.ca must stay unset; it would render DB_POSTGRESDB_SSL_CA, which takes precedence over DB_POSTGRESDB_SSL_CA_FILE."
   }
 
   assert {
@@ -1149,7 +1147,7 @@ run "postgres_ssl_ca_pem_mounts_a_file_and_sets_ssl_enabled_env" {
   }
 
   assert {
-    condition     = one([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "postgres-ssl-ca"]).secret.secretName == kubernetes_secret.n8n_postgres_ssl_ca[0].metadata[0].name
+    condition     = one([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "postgres-ssl-ca"]).secret.secretName == kubernetes_secret_v1.n8n_postgres_ssl_ca[0].metadata[0].name
     error_message = "The module must mount a postgres-ssl-ca Secret volume carrying the caller-supplied PEM."
   }
 
@@ -1159,8 +1157,8 @@ run "postgres_ssl_ca_pem_mounts_a_file_and_sets_ssl_enabled_env" {
   }
 
   assert {
-    condition     = kubernetes_secret.n8n_postgres_ssl_ca[0].data["ca.pem"] == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
-    error_message = "kubernetes_secret.n8n_postgres_ssl_ca must carry the caller-supplied PEM under the ca.pem key."
+    condition     = kubernetes_secret_v1.n8n_postgres_ssl_ca[0].data["ca.pem"] == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+    error_message = "kubernetes_secret_v1.n8n_postgres_ssl_ca must carry the caller-supplied PEM under the ca.pem key."
   }
 
   assert {
@@ -1192,8 +1190,8 @@ run "postgres_ssl_ca_pem_null_creates_no_secret_or_volume" {
   }
 
   assert {
-    condition     = length(kubernetes_secret.n8n_postgres_ssl_ca) == 0
-    error_message = "kubernetes_secret.n8n_postgres_ssl_ca must not be created when postgres_ssl_ca_pem is null."
+    condition     = length(kubernetes_secret_v1.n8n_postgres_ssl_ca) == 0
+    error_message = "kubernetes_secret_v1.n8n_postgres_ssl_ca must not be created when postgres_ssl_ca_pem is null."
   }
 
   assert {
@@ -1217,6 +1215,183 @@ run "rejects_empty_postgres_ssl_ca_pem" {
   expect_failures = [
     var.postgres_ssl_ca_pem,
   ]
+}
+
+# With ssl_mode = "disable", any non-empty CA would make n8n build a TLS
+# options object with its default rejectUnauthorized = true (the chart omits
+# DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED when SSL is disabled), turning on
+# verified TLS against a server the caller declared plaintext. The CA must be
+# ignored entirely, with only the advisory check firing.
+run "postgres_ssl_ca_pem_ignored_when_ssl_mode_is_disable" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    postgres_external_ssl_mode = "disable"
+    postgres_ssl_ca_pem        = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = length(kubernetes_secret_v1.n8n_postgres_ssl_ca) == 0
+    error_message = "No CA Secret may be created when the effective ssl_mode is disable."
+  }
+
+  assert {
+    condition     = length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if startswith(env.name, "DB_POSTGRESDB_SSL")]) == 0
+    error_message = "No DB_POSTGRESDB_SSL_* entry (in particular DB_POSTGRESDB_SSL_CA_FILE) may render when the effective ssl_mode is disable; a CA alone makes n8n turn on verified TLS."
+  }
+
+  assert {
+    condition     = length([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "postgres-ssl-ca"]) == 0 && length([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "postgres-ssl-ca"]) == 0
+    error_message = "No postgres-ssl-ca volume or mount may render when the effective ssl_mode is disable."
+  }
+
+  assert {
+    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).podAnnotations), "checksum/postgres-ssl-ca")
+    error_message = "No checksum/postgres-ssl-ca podAnnotation may render when the effective ssl_mode is disable."
+  }
+
+  expect_failures = [
+    check.postgres_ssl_ca_requires_verify_mode,
+  ]
+}
+
+run "postgres_ssl_ca_pem_ignored_when_ssl_mode_is_require" {
+  command = plan
+
+  variables {
+    postgres_ssl_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+  }
+
+  assert {
+    condition     = length(kubernetes_secret_v1.n8n_postgres_ssl_ca) == 0 && length(local.n8n_postgres_ssl_ca_file_env) == 0
+    error_message = "The CA must be ignored (no Secret, no DB_POSTGRESDB_SSL_CA_FILE) when the effective ssl_mode is require."
+  }
+
+  expect_failures = [
+    check.postgres_ssl_ca_requires_verify_mode,
+  ]
+}
+
+run "postgres_ssl_ca_pem_delivered_for_managed_verify_ca" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-ca"
+    postgres_ssl_ca_pem       = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+  }
+
+  assert {
+    condition     = length(kubernetes_secret_v1.n8n_postgres_ssl_ca) == 1 && length(local.n8n_postgres_ssl_ca_file_env) == 1
+    error_message = "The CA Secret and DB_POSTGRESDB_SSL_CA_FILE must render on the managed path when postgres_managed_ssl_mode is verify-ca."
+  }
+}
+
+run "warns_on_postgres_managed_ssl_mode_without_managed_database" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    postgres_managed_ssl_mode  = "verify-full"
+  }
+
+  expect_failures = [
+    check.postgres_tuning_requires_module_managed_database,
+  ]
+}
+
+run "rejects_postgres_ssl_ca_pem_with_reserved_volume_name" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem       = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+    n8n_extra_volumes = [
+      {
+        name       = "postgres-ssl-ca"
+        config_map = { name = "caller-ca" }
+      },
+    ]
+    n8n_extra_volume_mounts = [
+      {
+        name       = "postgres-ssl-ca"
+        mount_path = "/etc/caller-ca"
+      },
+    ]
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+run "rejects_postgres_ssl_ca_pem_with_reserved_mount_path" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem       = "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----\n"
+    n8n_extra_volumes = [
+      {
+        name       = "caller-ca"
+        config_map = { name = "caller-ca" }
+      },
+    ]
+    n8n_extra_volume_mounts = [
+      {
+        name       = "caller-ca"
+        mount_path = "/etc/n8n/postgres-ssl-ca"
+      },
+    ]
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+# The postgres-ssl-ca name is reserved only while postgres_ssl_ca_pem is set,
+# so callers who already use it for their own volume keep working.
+run "accepts_postgres_ssl_ca_volume_name_without_postgres_ssl_ca_pem" {
+  command = plan
+
+  variables {
+    n8n_extra_volumes = [
+      {
+        name       = "postgres-ssl-ca"
+        config_map = { name = "caller-ca" }
+      },
+    ]
+    n8n_extra_volume_mounts = [
+      {
+        name       = "postgres-ssl-ca"
+        mount_path = "/etc/n8n/postgres-ssl-ca"
+      },
+    ]
+  }
+
+  assert {
+    condition     = length([for v in local.n8n_extra_volumes : v if v.name == "postgres-ssl-ca"]) == 1 && one([for v in local.n8n_extra_volumes : v if v.name == "postgres-ssl-ca"]).configMap.name == "caller-ca"
+    error_message = "A caller volume named postgres-ssl-ca must be accepted and rendered unchanged while postgres_ssl_ca_pem is null."
+  }
 }
 
 run "rejects_malformed_pg_admin_username" {

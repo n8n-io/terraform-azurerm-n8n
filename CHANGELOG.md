@@ -90,35 +90,25 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 - `postgres_managed_ssl_mode` lets the module-managed PostgreSQL Flexible
   Server path use `verify-ca` or `verify-full` instead of the previously
   hardcoded `require`, which encrypts the connection but does not validate
-  the server certificate. `verify-ca` and `verify-full` validate it against
-  a trusted CA. Default stays `require`.
-- The module now sets `DB_POSTGRESDB_SSL_ENABLED` directly through
-  `config.extraEnv` whenever the effective `ssl_mode` is not `disable`: the
-  pinned chart (`1.13.0`) renders `database.ssl.enabled` into a ConfigMap key
-  named `DB_POSTGRESDB_SSL`, which n8n does not read
-  ([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
-  upstream), so every existing deployment's PostgreSQL connection was
-  actually plaintext regardless of the configured mode. **This is a
-  behavioral fix, not a no-op**: every deployment sees a plan diff adding
-  this environment variable, and upgrading turns the connection from
-  plaintext to TLS-encrypted on the next rollout. Test the upgrade in a
-  non-production environment first in case a security appliance or firewall
-  between the pods and the server does not expect TLS on that connection.
+  the server certificate. `verify-ca` and `verify-full` validate the
+  certificate chain and the hostname (n8n's driver does not separate the
+  two). Default stays `require`.
 - `postgres_ssl_ca_pem` accepts a PEM-encoded CA bundle for either the
-  managed or external PostgreSQL path, required for `verify-ca` /
+  managed or external PostgreSQL path, needed for `verify-ca` /
   `verify-full` unless the pod image's trust store already covers the
-  server's issuing CA. The module stores the PEM in a dedicated Kubernetes
-  Secret, mounts it read-only on main, worker, and webhook-processor pods,
-  and sets `DB_POSTGRESDB_SSL_CA_FILE` to the mounted path (n8n reads this
-  setting as a file path, not inline PEM content). A `checksum/postgres-ssl-ca`
-  pod annotation hashes the PEM content, so later changing the CA value (not
-  just setting it for the first time) also triggers a rollout: the Secret
-  value alone produces no Helm values diff. Setting this input also
-  produces a plan diff: a new Secret, a new mounted volume, and a new
-  environment entry. See
-  [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) for mode selection,
-  the CA bundle, rollout behavior on single-main vs. multi-main, and Azure's
-  CA rotation schedule
+  server's issuing CA. When the effective mode is `verify-ca` or
+  `verify-full`, the module stores the PEM in a dedicated Kubernetes Secret,
+  mounts it read-only at `/etc/n8n/postgres-ssl-ca` on main, worker, and
+  webhook-processor pods, and sets `DB_POSTGRESDB_SSL_CA_FILE` to the
+  mounted file. A `checksum/postgres-ssl-ca` pod annotation hashes the PEM,
+  so changing only the CA also rolls the pods. In any other mode the input
+  is ignored and a plan-time warning fires; with `disable`, delivering a CA
+  would make n8n turn on verified TLS. While the input is set,
+  `n8n_extra_volumes` may not use the name `postgres-ssl-ca` and
+  `n8n_extra_volume_mounts` may not use the path `/etc/n8n/postgres-ssl-ca`.
+  See [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) for mode
+  selection, the CA bundle, rollout behavior on single-main vs. multi-main,
+  and Azure's CA rotation schedule
   ([#25](https://github.com/n8n-io/terraform-azurerm-n8n/issues/25)).
 
 ### Changed
@@ -190,6 +180,24 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Fixed
 
+- PostgreSQL `verify-ca` / `verify-full` on the external path connected
+  in plaintext. The pinned chart (`1.14.0`, and `1.13.0` before it) renders
+  `database.ssl.enabled` as `DB_POSTGRESDB_SSL`, which n8n does not read
+  ([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
+  upstream). `require`, `allow`, and `prefer` were not affected: the chart
+  also sets `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false` for them, which
+  makes n8n use TLS anyway. The module now sets `DB_POSTGRESDB_SSL_ENABLED`
+  directly whenever the effective mode is not `disable`. **Upgrade impact:**
+  every deployment not on `disable` gets a Helm values diff and one pod
+  rollout. Connection behavior is unchanged for `require`, `allow`, and
+  `prefer`. External `verify-ca` / `verify-full` callers move from
+  plaintext to TLS with certificate verification: if the server does not
+  accept TLS, uses a CA the pod image does not trust (supply it with
+  `postgres_ssl_ca_pem`), or presents a certificate that does not match
+  `postgres_external_host`, the pods fail to connect and Helm rolls the
+  release back. See
+  [`docs/postgresql-tls.md`](./docs/postgresql-tls.md#upgrading-an-existing-deployment)
+  ([#25](https://github.com/n8n-io/terraform-azurerm-n8n/issues/25)).
 - Webhook URLs on n8n images older than `2.30.0`. Those images do not read
   `N8N_WEBHOOK_URL`, which was the only webhook variable the module
   rendered, so they advertised `http://<n8n_domain>:5678/` instead of the

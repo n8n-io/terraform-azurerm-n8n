@@ -181,13 +181,12 @@ resource "kubernetes_secret" "n8n_task_runners" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
-# Gated to zero when postgres_ssl_ca_pem is unset. n8n reads
-# DB_POSTGRESDB_SSL_CA as a file path (readFileSync), not inline PEM content,
-# so the CA bundle has to land on disk through a mounted Secret rather than
-# the chart's native database.ssl.ca value. See locals.tf's
-# n8n_postgres_ssl_ca_file_env and the postgres-ssl-ca volume/mount above it.
-resource "kubernetes_secret" "n8n_postgres_ssl_ca" {
-  count = var.postgres_ssl_ca_pem == null ? 0 : 1
+# Gated to zero unless postgres_ssl_ca_pem is set and the effective ssl_mode
+# is verify-ca or verify-full (local.postgres_ssl_ca_active). The bundle is
+# mounted as a file and read through DB_POSTGRESDB_SSL_CA_FILE; see locals.tf's
+# n8n_postgres_ssl_ca_file_env for why the chart's database.ssl.ca stays unset.
+resource "kubernetes_secret_v1" "n8n_postgres_ssl_ca" {
+  count = local.postgres_ssl_ca_active ? 1 : 0
 
   metadata {
     name      = local.postgres_ssl_ca_secret_name
@@ -237,13 +236,13 @@ resource "helm_release" "n8n" {
     # checksum/secret annotations (hashes of its rendered configmap.yaml and
     # secrets.yaml) into podAnnotations, so a Helm values change always
     # triggers a rollout. postgres_ssl_ca_pem is mounted through the
-    # out-of-band kubernetes_secret.n8n_postgres_ssl_ca Terraform resource
+    # out-of-band kubernetes_secret_v1.n8n_postgres_ssl_ca Terraform resource
     # (see n8n_postgres_ssl_ca_file_env below), not through chart values, so
     # changing the CA content alone produces no Helm values diff and no
     # automatic rollout. Adding its own checksum here closes that gap: any
     # change to the CA PEM changes this annotation, which changes the pod
     # template, which Helm then rolls out.
-    podAnnotations = var.postgres_ssl_ca_pem == null ? {} : {
+    podAnnotations = !local.postgres_ssl_ca_active ? {} : {
       "checksum/postgres-ssl-ca" = sha256(var.postgres_ssl_ca_pem)
     }
 
@@ -331,11 +330,10 @@ resource "helm_release" "n8n" {
       database    = local.postgres_connection.database
       schema      = "public"
       user        = local.postgres_connection.username
-      # No ca here: the chart renders database.ssl.ca straight into
-      # DB_POSTGRESDB_SSL_CA as inline PEM text, but n8n treats that value as
-      # a file path (readFileSync), not certificate content. The CA bundle is
-      # instead mounted as a file and pointed to by DB_POSTGRESDB_SSL_CA_FILE
-      # in config.extraEnv below (local.n8n_postgres_ssl_ca_file_env).
+      # No ca here: n8n only reads DB_POSTGRESDB_SSL_CA_FILE while
+      # DB_POSTGRESDB_SSL_CA is unset, and the chart renders database.ssl.ca
+      # into DB_POSTGRESDB_SSL_CA. The CA bundle is mounted as a file instead
+      # (local.n8n_postgres_ssl_ca_file_env in config.extraEnv below).
       ssl = {
         enabled            = local.postgres_connection.ssl_mode != "disable"
         rejectUnauthorized = contains(["verify-ca", "verify-full"], local.postgres_connection.ssl_mode)
@@ -454,15 +452,15 @@ resource "helm_release" "n8n" {
         # DB_POSTGRESDB_SSL_ENABLED works around a chart bug: the pinned
         # chart renders database.ssl.enabled into a ConfigMap key named
         # DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
-        # upstream). Setting the correct name directly here fixes TLS
-        # enablement regardless of chart version.
+        # upstream), so verify-ca/verify-full without a CA connected in
+        # plaintext. Setting the correct name here fixes that regardless of
+        # chart version.
         local.n8n_postgres_ssl_enabled_env,
         # Optional CA bundle for the PostgreSQL connection. The PEM is
-        # mounted read-only from kubernetes_secret.n8n_postgres_ssl_ca via
+        # mounted read-only from kubernetes_secret_v1.n8n_postgres_ssl_ca via
         # the postgres-ssl-ca volume (locals.tf), and this points
-        # DB_POSTGRESDB_SSL_CA_FILE at the mounted file so n8n reads the CA
-        # bundle from disk instead of treating inline PEM text as a path.
-        # Null contributes no entry.
+        # DB_POSTGRESDB_SSL_CA_FILE at the mounted file. Contributes no entry
+        # unless the CA is set and the mode is verify-ca or verify-full.
         local.n8n_postgres_ssl_ca_file_env,
         # Optional shared V8 heap ceiling (section 6). Null contributes no
         # entries and leaves n8n/Node's own default and any caller NODE_OPTIONS

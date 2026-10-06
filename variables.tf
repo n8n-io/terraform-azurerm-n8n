@@ -456,7 +456,7 @@ variable "postgres_external_ssl_mode" {
 }
 
 variable "postgres_managed_ssl_mode" {
-  description = "TLS mode for the module-managed PostgreSQL Flexible Server connection (`require`, `verify-ca`, `verify-full`). Ignored when `create_database = false` (use `postgres_external_ssl_mode` instead). Azure Database for PostgreSQL Flexible Server enforces TLS on every connection, so `disable`, `allow`, and `prefer` are rejected here, unlike on the external path. `verify-full` additionally checks the server certificate's hostname against `local.postgres_connection.host` and requires a trusted CA: supply one with `postgres_ssl_ca_pem` unless the pod image's default trust store already trusts Microsoft's root CAs. See `docs/postgresql-tls.md`."
+  description = "TLS mode for the module-managed PostgreSQL Flexible Server connection (`require`, `verify-ca`, `verify-full`). Ignored when `create_database = false` (use `postgres_external_ssl_mode` instead). Azure Database for PostgreSQL Flexible Server enforces TLS on every connection, so `disable`, `allow`, and `prefer` are rejected here, unlike on the external path. `verify-ca` and `verify-full` behave the same: n8n's PostgreSQL driver checks both the certificate chain and the server hostname in either mode. Both need a trusted CA: supply one with `postgres_ssl_ca_pem` unless the pod image's default trust store already trusts Microsoft's root CAs. See `docs/postgresql-tls.md`."
   type        = string
   default     = "require"
 
@@ -467,7 +467,7 @@ variable "postgres_managed_ssl_mode" {
 }
 
 variable "postgres_ssl_ca_pem" {
-  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set, the module stores it in a dedicated Kubernetes Secret, mounts it read-only on main, worker, and webhook-processor pods, and points `DB_POSTGRESDB_SSL_CA_FILE` at the mounted file (n8n reads this setting as a file path, not inline PEM content). Required for `verify-full` against Azure Database for PostgreSQL Flexible Server unless the pod image's default trust store already trusts Microsoft's root CAs (DigiCert Global Root G2 and Microsoft RSA Root CA 2017). Ignored (with a plan-time warning) when the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `disable`, `allow`, or `prefer`. See `docs/postgresql-tls.md`."
+  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set and the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `verify-ca` or `verify-full`, the module stores it in a dedicated Kubernetes Secret, mounts it read-only at `/etc/n8n/postgres-ssl-ca` on main, worker, and webhook-processor pods, and points `DB_POSTGRESDB_SSL_CA_FILE` at the mounted file. Needed for `verify-ca`/`verify-full` unless the pod image's default trust store already trusts the server's issuing CA (for Azure Database for PostgreSQL Flexible Server, Microsoft recommends trusting both current roots: DigiCert Global Root G2 and Microsoft RSA Root CA 2017). In every other mode (`disable`, `allow`, `prefer`, `require`) the module ignores it and a plan-time warning fires. While set, `n8n_extra_volumes` may not use the volume name `postgres-ssl-ca` and `n8n_extra_volume_mounts` may not use the mount path `/etc/n8n/postgres-ssl-ca`. See `docs/postgresql-tls.md`."
   type        = string
   default     = null
   nullable    = true
@@ -475,6 +475,20 @@ variable "postgres_ssl_ca_pem" {
   validation {
     condition     = var.postgres_ssl_ca_pem == null ? true : length(trimspace(var.postgres_ssl_ca_pem)) > 0
     error_message = "postgres_ssl_ca_pem must be null or a non-empty PEM-encoded CA bundle."
+  }
+
+  validation {
+    condition = var.postgres_ssl_ca_pem == null || alltrue([
+      for volume in var.n8n_extra_volumes : volume.name != "postgres-ssl-ca"
+    ])
+    error_message = "postgres_ssl_ca_pem reserves the volume name \"postgres-ssl-ca\". Rename or remove the conflicting n8n_extra_volumes entry."
+  }
+
+  validation {
+    condition = var.postgres_ssl_ca_pem == null || alltrue([
+      for mount in var.n8n_extra_volume_mounts : mount.mount_path != "/etc/n8n/postgres-ssl-ca"
+    ])
+    error_message = "postgres_ssl_ca_pem reserves the mount path \"/etc/n8n/postgres-ssl-ca\". Move or remove the conflicting n8n_extra_volume_mounts entry."
   }
 }
 
@@ -2359,9 +2373,9 @@ variable "n8n_extra_volumes" {
   validation {
     condition = alltrue([
       for volume in var.n8n_extra_volumes :
-      !contains(["data", "task-runner-config", "n8n-azure-files", "postgres-ssl-ca"], volume.name)
+      !contains(["data", "task-runner-config", "n8n-azure-files"], volume.name)
     ])
-    error_message = "n8n_extra_volumes must not use chart or module-reserved names: data, task-runner-config, n8n-azure-files, or postgres-ssl-ca."
+    error_message = "n8n_extra_volumes must not use chart or module-reserved names: data, task-runner-config, or n8n-azure-files."
   }
 
   validation {

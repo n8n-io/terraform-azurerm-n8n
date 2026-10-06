@@ -398,14 +398,14 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
     || { echo "FAIL: ${template} must carry exactly one DB_POSTGRESDB_SSL_ENABLED=true entry when the effective ssl_mode is not disable" >&2; exit 1; }
 done
 
-# n8n reads DB_POSTGRESDB_SSL_CA as a filesystem path (readFileSync), not
-# inline PEM content, so the module must not pass the PEM through the
-# chart's native database.ssl.ca value (which would land it verbatim in the
-# ConfigMap under that same key). It instead mounts a dedicated Secret and
-# points DB_POSTGRESDB_SSL_CA_FILE at the mounted file.
+# n8n's config loader reads DB_POSTGRESDB_SSL_CA_FILE only while
+# DB_POSTGRESDB_SSL_CA is unset, so the module must not pass the PEM through
+# the chart's native database.ssl.ca value (which the chart renders into the
+# ConfigMap under DB_POSTGRESDB_SSL_CA). It instead mounts a dedicated Secret
+# and points DB_POSTGRESDB_SSL_CA_FILE at the mounted file.
 jq -e '.data | has("DB_POSTGRESDB_SSL_CA") | not' \
   "$tmp/ssl-ca-configmap.json" >/dev/null \
-  || { echo "FAIL: the chart ConfigMap must not carry DB_POSTGRESDB_SSL_CA; n8n reads that setting as a file path, not inline PEM content" >&2; exit 1; }
+  || { echo "FAIL: the chart ConfigMap must not carry DB_POSTGRESDB_SSL_CA; it would take precedence over DB_POSTGRESDB_SSL_CA_FILE" >&2; exit 1; }
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   jq -e '
@@ -423,9 +423,16 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
     [.spec.template.spec.containers[0].volumeMounts[] | select(.name == "postgres-ssl-ca" and .mountPath == "/etc/n8n/postgres-ssl-ca" and .readOnly == true)] | length == 1
   ' "$tmp/ssl-ca-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} must mount the postgres-ssl-ca volume read-only at /etc/n8n/postgres-ssl-ca" >&2; exit 1; }
+
+  # The Secret is managed outside Helm, so this annotation is what rolls the
+  # pods when only the CA content changes.
+  jq -e '
+    .spec.template.metadata.annotations["checksum/postgres-ssl-ca"] // "" | test("^[0-9a-f]{64}$")
+  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must carry a sha256 checksum/postgres-ssl-ca pod annotation" >&2; exit 1; }
 done
 
-echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders on every application pod family and postgres_ssl_ca_pem reaches n8n through a mounted file, not the chart's ConfigMap"
+echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders on every application pod family and postgres_ssl_ca_pem reaches n8n through a mounted file with a rollout checksum, not the chart's ConfigMap"
 
 echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval/graceful shutdown timeout) =="
 
