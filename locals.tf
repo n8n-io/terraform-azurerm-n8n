@@ -410,14 +410,35 @@ locals {
   # because it is the one literal already in play as the variable's default.
   n8n_default_chart_repository = "oci://ghcr.io/n8n-io/n8n-helm-chart"
 
+  # Every chart fact this module verifies (the default shutdown timeout below,
+  # worker-only task runners and KEDA pause support in scaling.tf) was checked
+  # against the upstream repository. A mirror can carry a rebuilt or patched
+  # chart under the same version number, so each of those decisions falls back
+  # to its "cannot verify" branch whenever this is false. Same rule as
+  # terraform-aws-n8n and terraform-google-n8n, which compare against the same
+  # literal. An exact string match: any other spelling of the upstream URL
+  # (e.g. a trailing slash) is treated as a mirror, which is the safe side.
+  n8n_chart_is_upstream = var.n8n_chart_repository == local.n8n_default_chart_repository
+
   # check.graceful_shutdown_fits_grace_period (n8n.tf) only has a verified
   # chart default to compare against on the upstream repository; a private
   # mirror's values.yaml default cannot be verified, so the check is skipped
   # whenever n8n_chart_repository points anywhere else.
   n8n_graceful_shutdown_default_applies = (
     var.n8n_graceful_shutdown_timeout == null &&
-    var.n8n_chart_repository == local.n8n_default_chart_repository
+    local.n8n_chart_is_upstream
   )
+
+  # Docker's image reference grammar for a repository without a tag or digest,
+  # shared by n8n_image_repository and n8n_task_runner_image_repository
+  # (variables.tf) so the two cannot drift. Optional registry host (DNS labels
+  # or a bracketed IPv6 literal) with an optional port, then one or more
+  # lowercase path components separated by "/", each using Docker's separators
+  # ("_", "__", ".", or one or more "-"). No scheme, whitespace, uppercase
+  # path component, or empty component, which rules out a trailing slash, a
+  # doubled slash, and a doubled dot. Same grammar as terraform-aws-n8n's
+  # local of the same name.
+  image_repository_regex = "^(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:]+\\])(?::[0-9]+)?/)?[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*)*$"
 
   # The chart appends config.extraEnv after its own environment variables, and
   # Kubernetes resolves duplicates last-wins. Reserve every current module and

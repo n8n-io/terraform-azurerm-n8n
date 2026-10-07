@@ -172,6 +172,18 @@ run "rejects_malformed_chart_repository" {
   expect_failures = [var.n8n_chart_repository]
 }
 
+# Same rule as the module root's validation: credentials in the URL would
+# land in plans and state.
+run "rejects_chart_repository_with_embedded_credentials" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://user:token@n8nchartmirror.azurecr.io/n8n-helm-chart"
+  }
+
+  expect_failures = [var.n8n_chart_repository]
+}
+
 run "chart_repository_defaults_to_upstream" {
   command = plan
 

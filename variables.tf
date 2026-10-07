@@ -1288,7 +1288,7 @@ variable "keda_chart_version" {
 }
 
 variable "n8n_chart_version" {
-  description = "n8n Helm chart version from oci://ghcr.io/n8n-io/n8n-helm-chart. The default 1.14.0 matches the AWS sibling's pin. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner, and the first upgrade from an older chart resets the worker count to 1, terminating any surplus worker pods, until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount are usable (added in chart 1.12.0 by #177, reliable only from 1.13.0; see n8n_worker_keda_pause). Inert here: the chart's image.tag default moving from a floating stable tag to its appVersion (this module always sets n8n_image_tag), the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject), and 1.14.0's WEBHOOK_URL to N8N_WEBHOOK_URL rename (chart #184), S3-only N8N_AVAILABLE_BINARY_DATA_MODES removal (chart #185), and aggregated values-validation errors (chart #209): this module sets neither webhook.url nor ingress nor s3 and renders its own N8N_WEBHOOK_URL."
+  description = "n8n Helm chart version, fetched from n8n_chart_repository (default oci://ghcr.io/n8n-io/n8n-helm-chart). The version-dependent behavior below describes the upstream charts; a mirror must serve this exact version. The default 1.14.0 matches the AWS sibling's pin. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner, and the first upgrade from an older chart resets the worker count to 1, terminating any surplus worker pods, until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount are usable (added in chart 1.12.0 by #177, reliable only from 1.13.0; see n8n_worker_keda_pause). Inert here: the chart's image.tag default moving from a floating stable tag to its appVersion (this module always sets n8n_image_tag), the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject), and 1.14.0's WEBHOOK_URL to N8N_WEBHOOK_URL rename (chart #184), S3-only N8N_AVAILABLE_BINARY_DATA_MODES removal (chart #185), and aggregated values-validation errors (chart #209): this module sets neither webhook.url nor ingress nor s3 and renders its own N8N_WEBHOOK_URL."
   type        = string
   default     = "1.14.0"
 
@@ -1299,14 +1299,17 @@ variable "n8n_chart_version" {
 }
 
 variable "n8n_chart_repository" {
-  description = "Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Terraform's Helm provider fetches the chart from wherever `terraform apply` runs, not from inside the AKS cluster, so point this at a private mirror, e.g. an ACR OCI repository, when the machine running Terraform (not the cluster) has no egress to ghcr.io. This does not affect runtime container images pulled by the cluster's nodes; use n8n_image_repository (and n8n_task_runner_image_repository) to mirror those separately. The mirror must serve the exact chart version named by n8n_chart_version; this module does not verify that a mirrored repository actually carries it. check.graceful_shutdown_fits_grace_period (n8n.tf) is skipped whenever this is not the default, because this module cannot verify a mirror's values.yaml default shutdown timeout."
+  description = "Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Terraform's Helm provider fetches the chart from wherever `terraform apply` runs, not from inside the AKS cluster, so point this at a private mirror, e.g. an ACR OCI repository, when the machine running Terraform (not the cluster) has no egress to ghcr.io. This does not affect runtime container images pulled by the cluster's nodes; use n8n_image_repository (and n8n_task_runner_image_repository) to mirror those separately. The mirror must serve the exact chart version named by n8n_chart_version; this module does not verify that a mirrored repository actually carries it. Authenticate the Terraform runner to a private OCI mirror outside this module, through a registry block in the caller's helm provider configuration; never embed credentials in this URL, which is stored in plans and state and is rejected when it carries user:password@ userinfo. Basic-auth https:// chart repositories are not supported. Any value other than the exact default counts as a mirror whose chart this module cannot verify: check.graceful_shutdown_fits_grace_period and check.worker_keda_pause_requires_a_supported_chart (n8n.tf) are skipped, and the advisory capacity model keeps the task-runner sidecar allowance on main pods regardless of n8n_chart_version."
   type        = string
   default     = "oci://ghcr.io/n8n-io/n8n-helm-chart"
   nullable    = false
 
   validation {
-    condition     = can(regex("^(https|oci)://[^[:space:]]+$", var.n8n_chart_repository))
-    error_message = "n8n_chart_repository must be an https:// or oci:// URL with no whitespace."
+    # A non-empty host (DNS name or bracketed IPv6 literal) with an optional
+    # port must follow the scheme directly, which rejects user:password@
+    # userinfo and an empty authority such as https:///charts.
+    condition     = can(regex("^(https|oci)://(?:[A-Za-z0-9._~-]+|\\[[0-9A-Fa-f:.]+\\])(?::[0-9]+)?(?:/[^[:space:]]*)?$", var.n8n_chart_repository))
+    error_message = "n8n_chart_repository must be an https:// or oci:// URL with a host, an optional port, and no whitespace, such as oci://myregistry.azurecr.io/helm. It must not embed credentials (user:password@): authenticate the Terraform runner to the registry instead."
   }
 }
 
@@ -1382,16 +1385,34 @@ variable "n8n_image_repository" {
   default     = null
 
   validation {
-    condition = var.n8n_image_repository == null ? true : (
-      length(var.n8n_image_repository) <= 255 &&
-      can(regex("^(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:]+\\])(?::[0-9]+)?/)?[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*)*$", var.n8n_image_repository))
-    )
+    # Docker's reference grammar, shared with n8n_task_runner_image_repository
+    # (local.image_repository_regex in locals.tf).
+    condition     = var.n8n_image_repository == null ? true : can(regex(local.image_repository_regex, var.n8n_image_repository))
     error_message = "n8n_image_repository must be a bare Docker repository reference with no scheme, whitespace, tag, digest, uppercase path component, or empty path component, such as registry.internal:5000/n8n or n8nio/n8n."
   }
 
   validation {
     condition     = var.n8n_image_repository == null ? true : !can(regex(":", reverse(split("/", var.n8n_image_repository))[0]))
     error_message = "n8n_image_repository must not include a tag or digest because the chart appends n8n_image_tag."
+  }
+
+  validation {
+    # Docker limits the repository path to 255 characters, measured after it
+    # normalizes the reference (distribution/reference v0.6.0, Parse and
+    # splitDockerDomain), not the whole string. The registry host is removed
+    # when the first component looks like one (localhost, or it contains a
+    # dot, a colon or an uppercase letter), and a single-component Docker Hub
+    # name gains a "library/" prefix. So "registry.example.com/" plus 255
+    # characters is pullable, while a bare 248-character name is not.
+    # The host-stripping pattern excludes "_" on purpose: a host label cannot
+    # contain one, so Docker counts the whole string as the path. "(?s)" keeps
+    # a value containing a newline on the grammar validation's message instead
+    # of a regex error. Same rule as terraform-aws-n8n.
+    condition = var.n8n_image_repository == null ? true : length(join("", [
+      can(regex("^(?:(?:docker\\.io|index\\.docker\\.io)/)?[^/]+$", var.n8n_image_repository)) ? "library/" : "",
+      can(regex("^(?:localhost|[^/_]*[.:A-Z][^/_]*)/", var.n8n_image_repository)) ? regex("(?s)^[^/]+/(.*)$", var.n8n_image_repository)[0] : var.n8n_image_repository,
+    ])) <= 255
+    error_message = "n8n_image_repository's repository path must be 255 characters or fewer, Docker's limit. The path is measured without the registry host, and a single-component Docker Hub name counts its implicit \"library/\" prefix."
   }
 }
 
@@ -1971,7 +1992,7 @@ variable "n8n_worker_keda_max_replicas" {
 }
 
 variable "n8n_worker_keda_pause" {
-  description = "Pause KEDA autoscaling of the chart's worker Deployment (sets autoscaling.keda.sh/paused on the worker ScaledObject). While paused, workers hold their current replica count, or n8n_worker_keda_paused_replica_count when that is set. Use for maintenance windows and migrations. Pause freezes scaling, not processing: held workers keep consuming jobs, and jobs only wait in Redis without default-worker consumers once n8n_worker_keda_paused_replica_count = 0 has reconciled and the workers have terminated. Applies to the chart's default worker Deployment only: n8n_worker_pools pools have their own ScaledObjects and keep scaling on their own queues. Requires n8n_chart_version 1.13.0 or later; a plan-time warning fires otherwise, because older charts ignore the key or overwrite the held count on the next Helm upgrade. Webhook processors have no equivalent here because this module scales them with its own HPA (scaling.tf), not a KEDA ScaledObject. tests/scripts/smoke-test.sh skips the worker-floor assertion while this is true, and the worker-dependent checks while paused at 0."
+  description = "Pause KEDA autoscaling of the chart's worker Deployment (sets autoscaling.keda.sh/paused on the worker ScaledObject). While paused, workers hold their current replica count, or n8n_worker_keda_paused_replica_count when that is set. Use for maintenance windows and migrations. Pause freezes scaling, not processing: held workers keep consuming jobs, and jobs only wait in Redis without default-worker consumers once n8n_worker_keda_paused_replica_count = 0 has reconciled and the workers have terminated. Applies to the chart's default worker Deployment only: n8n_worker_pools pools have their own ScaledObjects and keep scaling on their own queues. Requires n8n_chart_version 1.13.0 or later; on the default n8n_chart_repository a plan-time warning fires otherwise (a custom repository is not checked, because this module cannot verify a mirror's chart), because older charts ignore the key or overwrite the held count on the next Helm upgrade. Webhook processors have no equivalent here because this module scales them with its own HPA (scaling.tf), not a KEDA ScaledObject. tests/scripts/smoke-test.sh skips the worker-floor assertion while this is true, and the worker-dependent checks while paused at 0."
   type        = bool
   default     = false
   nullable    = false
@@ -2058,7 +2079,7 @@ variable "n8n_queue_worker_stalled_interval" {
 }
 
 variable "n8n_graceful_shutdown_timeout" {
-  description = "Seconds n8n gives in-flight executions to finish after it receives SIGTERM, before it exits on its own. Maps to the chart's redis.worker.timeout value (N8N_GRACEFUL_SHUTDOWN_TIMEOUT on every main, worker, and webhook-processor container). Null (default) sends no override, and the chart keeps rendering its own default of 30 seconds. Set the value here: n8n_extra_env, n8n_worker_extra_env, and a worker pool's extra_env all reject this name at plan time, because the chart always renders its own entry for it and a caller duplicate would silently replace that entry. n8n_termination_grace_period is a hard ceiling. Kubernetes starts that countdown when termination begins: the preStop hook (n8n_prestop_sleep) runs inside it, and SIGTERM follows the hook. So this value plus n8n_prestop_sleep must stay strictly below n8n_termination_grace_period, or SIGKILL cuts n8n's shutdown short. An explicit value that breaks this rule fails validation. When this input is null, the same rule applied to the chart's default only raises a warning (check.graceful_shutdown_fits_grace_period), so existing configurations keep planning."
+  description = "Seconds n8n gives in-flight executions to finish after it receives SIGTERM, before it exits on its own. Maps to the chart's redis.worker.timeout value (N8N_GRACEFUL_SHUTDOWN_TIMEOUT on every main, worker, and webhook-processor container). Null (default) sends no override, and the chart keeps rendering its own default of 30 seconds. Set the value here: n8n_extra_env, n8n_worker_extra_env, and a worker pool's extra_env all reject this name at plan time, because the chart always renders its own entry for it and a caller duplicate would silently replace that entry. n8n_termination_grace_period is a hard ceiling. Kubernetes starts that countdown when termination begins: the preStop hook (n8n_prestop_sleep) runs inside it, and SIGTERM follows the hook. So this value plus n8n_prestop_sleep must stay strictly below n8n_termination_grace_period, or SIGKILL cuts n8n's shutdown short. An explicit value that breaks this rule fails validation. When this input is null, the same rule applied to the chart's default only raises a warning (check.graceful_shutdown_fits_grace_period), so existing configurations keep planning. That warning is skipped for a custom n8n_chart_repository, whose default this module cannot verify."
   type        = number
   default     = null
 
@@ -2250,15 +2271,13 @@ variable "n8n_task_runner_image_tag" {
 }
 
 variable "n8n_task_runner_image_repository" {
-  description = "Optional container image repository for the n8nio/runners task-runner sidecar, without a tag or digest. Null uses the chart default n8nio/runners. Set alongside n8n_image_repository when mirroring both images into the same private registry; the two are independent because the application and runner images can live in different repositories on the same mirror. Use n8n_task_runner_image_tag for the runner tag. Any private-registry pull access is granted the same way as n8n_image_repository, through n8n_image_pull_secrets on the module-managed ServiceAccount."
+  description = "Optional container image repository for the n8nio/runners task-runner sidecar, without a tag or digest. Null uses the chart default n8nio/runners. Set alongside n8n_image_repository when mirroring both images into the same private registry; the two are independent because the application and runner images can live in different repositories on the same mirror. Use n8n_task_runner_image_tag for the runner tag: when it is null the sidecar inherits n8n_image_tag, and a plan-time warning fires because the mirror may not carry that tag. Ignored, with a plan-time warning, when n8n_task_runners_enabled = false. Any private-registry pull access is granted the same way as n8n_image_repository, through n8n_image_pull_secrets on the module-managed ServiceAccount."
   type        = string
   default     = null
 
   validation {
-    condition = var.n8n_task_runner_image_repository == null ? true : (
-      length(var.n8n_task_runner_image_repository) <= 255 &&
-      can(regex("^(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:]+\\])(?::[0-9]+)?/)?[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*)*$", var.n8n_task_runner_image_repository))
-    )
+    # Same grammar as n8n_image_repository; see local.image_repository_regex.
+    condition     = var.n8n_task_runner_image_repository == null ? true : can(regex(local.image_repository_regex, var.n8n_task_runner_image_repository))
     error_message = "n8n_task_runner_image_repository must be a bare Docker repository reference with no scheme, whitespace, tag, digest, uppercase path component, or empty path component, such as registry.internal:5000/runners or n8nio/runners."
   }
 
@@ -2266,10 +2285,19 @@ variable "n8n_task_runner_image_repository" {
     condition     = var.n8n_task_runner_image_repository == null ? true : !can(regex(":", reverse(split("/", var.n8n_task_runner_image_repository))[0]))
     error_message = "n8n_task_runner_image_repository must not include a tag or digest because the chart appends n8n_task_runner_image_tag."
   }
+
+  validation {
+    # Same normalized-path length rule as n8n_image_repository, which explains it.
+    condition = var.n8n_task_runner_image_repository == null ? true : length(join("", [
+      can(regex("^(?:(?:docker\\.io|index\\.docker\\.io)/)?[^/]+$", var.n8n_task_runner_image_repository)) ? "library/" : "",
+      can(regex("^(?:localhost|[^/_]*[.:A-Z][^/_]*)/", var.n8n_task_runner_image_repository)) ? regex("(?s)^[^/]+/(.*)$", var.n8n_task_runner_image_repository)[0] : var.n8n_task_runner_image_repository,
+    ])) <= 255
+    error_message = "n8n_task_runner_image_repository's repository path must be 255 characters or fewer, Docker's limit. The path is measured without the registry host, and a single-component Docker Hub name counts its implicit \"library/\" prefix."
+  }
 }
 
 variable "n8n_task_runner_cpu_request" {
-  description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every worker replica when task runners are enabled, and for every main replica only when n8n_chart_version is not one of the upstream charts verified to place runners on workers alone (1.12.0, 1.13.0, and 1.14.0, n8n-hosting #179): on those, queue-mode main pods carry no sidecar because n8n offloads manual executions to workers, so the main ceiling is not multiplied by this."
+  description = "CPU request for each task-runner sidecar, such as 200m or 0.2. Included in the advisory capacity model for every worker replica when task runners are enabled, and for every main replica unless the chart comes from the default n8n_chart_repository at a version verified to place runners on workers alone (1.12.0, 1.13.0, and 1.14.0, n8n-hosting #179): on those, queue-mode main pods carry no sidecar because n8n offloads manual executions to workers, so the main ceiling is not multiplied by this."
   type        = string
   default     = "200m"
   nullable    = false

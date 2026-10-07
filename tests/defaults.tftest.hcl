@@ -4914,6 +4914,217 @@ run "image_pull_secrets_with_only_a_runner_mirror_do_not_warn" {
   variables {
     n8n_image_pull_secrets           = ["registry-creds"]
     n8n_task_runner_image_repository = "registry.example.com/runners"
+    n8n_task_runner_image_tag        = "2.35.0"
+  }
+}
+
+# A runner mirror is only an image in effect while task runners run. With
+# them off, the pull secrets are inert again and the repository itself is
+# ignored, so both warnings fire. Same pairing as terraform-aws-n8n's
+# image_pull_secrets_with_a_disabled_runner_mirror_warns.
+run "image_pull_secrets_with_a_disabled_runner_mirror_warns" {
+  command = plan
+
+  variables {
+    n8n_image_pull_secrets           = ["registry-creds"]
+    n8n_task_runner_image_repository = "registry.example.com/runners"
+    n8n_task_runners_enabled         = false
+  }
+
+  expect_failures = [
+    check.task_runner_image_repository_requires_task_runners,
+    check.image_pull_secrets_need_a_custom_image,
+  ]
+}
+
+# Without an explicit runner tag the sidecar inherits n8n_image_tag, which the
+# mirror may not carry. custom_image_tag_needs_a_task_runner_tag stays quiet
+# here even with a custom application image, because its message names the
+# public n8nio/runners image that is no longer in use.
+run "warns_when_runner_mirror_has_no_explicit_tag" {
+  command = plan
+
+  variables {
+    n8n_image_repository             = "registry.example.com/n8n"
+    n8n_task_runner_image_repository = "registry.example.com/runners"
+  }
+
+  expect_failures = [check.custom_task_runner_repository_needs_an_explicit_tag]
+}
+
+# The same warning must not depend on a custom application image.
+run "warns_when_runner_only_mirror_has_no_explicit_tag" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = "registry.example.com/runners"
+  }
+
+  expect_failures = [check.custom_task_runner_repository_needs_an_explicit_tag]
+}
+
+run "rejects_runner_repository_with_a_scheme" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = "https://registry.example.com/runners"
+  }
+
+  expect_failures = [var.n8n_task_runner_image_repository]
+}
+
+run "rejects_runner_repository_with_a_tag" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = "registry.example.com/runners:2.35.0"
+  }
+
+  expect_failures = [var.n8n_task_runner_image_repository]
+}
+
+run "rejects_runner_repository_with_a_digest" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = "registry.example.com/runners@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  expect_failures = [var.n8n_task_runner_image_repository]
+}
+
+run "rejects_runner_repository_with_an_uppercase_path" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = "registry.example.com/Runners"
+  }
+
+  expect_failures = [var.n8n_task_runner_image_repository]
+}
+
+run "rejects_runner_repository_with_a_trailing_slash" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = "registry.example.com/runners/"
+  }
+
+  expect_failures = [var.n8n_task_runner_image_repository]
+}
+
+# 248 characters pass the grammar, but Docker normalizes a single-component
+# name to "library/<name>", a 256-character path.
+run "rejects_bare_runner_repository_over_the_normalized_length" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = join("", [for i in range(248) : "a"])
+  }
+
+  expect_failures = [var.n8n_task_runner_image_repository]
+}
+
+# 247 characters plus the implicit "library/" is exactly 255, the limit.
+run "accepts_bare_runner_repository_at_the_normalized_limit" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = join("", [for i in range(247) : "a"])
+    n8n_task_runner_image_tag        = "2.35.0"
+  }
+}
+
+# docker.io/ is stripped as the host and the single remaining component still
+# gains "library/", so this normalizes to the same 256-character path.
+run "rejects_docker_hub_alias_runner_repository_over_the_normalized_length" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_repository = "docker.io/${join("", [for i in range(248) : "a"])}"
+  }
+
+  expect_failures = [var.n8n_task_runner_image_repository]
+}
+
+run "rejects_bare_application_repository_over_the_normalized_length" {
+  command = plan
+
+  variables {
+    n8n_image_repository      = join("", [for i in range(248) : "a"])
+    n8n_task_runner_image_tag = "2.35.0"
+  }
+
+  expect_failures = [var.n8n_image_repository]
+}
+
+# The registry host does not count toward Docker's 255-character path limit,
+# so a 255-character path behind a registry is valid for both repositories.
+# Both repositories must render, and taskRunners.image must carry no
+# repository key when the input is null (checked by the next run).
+run "accepts_a_255_character_repository_path_behind_a_registry" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+
+    n8n_image_repository             = "registry.example.com/${join("", [for i in range(255) : "a"])}"
+    n8n_task_runner_image_repository = "registry.example.com/${join("", [for i in range(255) : "b"])}"
+    n8n_task_runner_image_tag        = "2.35.0"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      length(yamldecode(helm_release.n8n.values[0]).image.repository) == 276 &&
+      length(yamldecode(helm_release.n8n.values[0]).taskRunners.image.repository) == 276
+    )
+    error_message = "A 255-character path behind a registry host must pass validation and render for both the application and runner images."
+  }
+}
+
+run "runner_repository_is_omitted_from_helm_values_when_null" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).taskRunners.image), "repository") &&
+      yamldecode(helm_release.n8n.values[0]).taskRunners.image.tag == var.n8n_image_tag
+    )
+    error_message = "With n8n_task_runner_image_repository null, taskRunners.image must omit repository so the chart's n8nio/runners default applies, and the tag must inherit n8n_image_tag."
   }
 }
 
@@ -5920,6 +6131,23 @@ run "allows_worker_pause_on_a_1_13_preview_chart" {
   assert {
     condition     = local.n8n_worker_keda_pause_supported
     error_message = "A 1.13.x prerelease must count as pause-capable; only the version core is compared."
+  }
+}
+
+# The version floor that warns at 1.12.0 upstream proves nothing about a
+# mirror's chart, so the check stays silent there, like the shutdown check.
+run "skips_worker_pause_chart_check_on_a_mirrored_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_repository  = "oci://mirror.example.com/n8n-helm-chart"
+    n8n_chart_version     = "1.12.0"
+    n8n_worker_keda_pause = true
+  }
+
+  assert {
+    condition     = local.n8n_worker_keda_pause_supported
+    error_message = "A custom n8n_chart_repository must not be judged by the upstream pause version floor."
   }
 }
 
@@ -7074,6 +7302,40 @@ run "rejects_malformed_n8n_chart_repository" {
   }
 
   expect_failures = [var.n8n_chart_repository]
+}
+
+# Credentials in the URL would land in plans and state.
+run "rejects_n8n_chart_repository_with_embedded_credentials" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://user:token@mirror.example.com/n8n-helm-chart"
+  }
+
+  expect_failures = [var.n8n_chart_repository]
+}
+
+run "rejects_n8n_chart_repository_without_a_host" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "https:///charts"
+  }
+
+  expect_failures = [var.n8n_chart_repository]
+}
+
+run "accepts_n8n_chart_repository_with_a_port_or_ipv6_host" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://[2001:db8::1]:5000/n8n-helm-chart"
+  }
+
+  assert {
+    condition     = helm_release.n8n.repository == "oci://[2001:db8::1]:5000/n8n-helm-chart" && !local.n8n_chart_is_upstream
+    error_message = "A bracketed IPv6 host with a port is a valid mirror URL and must count as a custom repository."
+  }
 }
 
 # ── Existing AKS contract ───────────────────────────────────────────────────
@@ -10207,6 +10469,22 @@ run "capacity_model_keeps_main_runner_on_an_older_chart" {
   assert {
     condition     = !local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 16600
     error_message = "Chart 1.11.0 still renders the main sidecar, so the model must keep 6 x 200m for main: 16600m expected, got ${local.n8n_peak_cpu_request_millis}m."
+  }
+}
+
+# A mirror can serve a rebuilt chart under a verified version number, so the
+# shortcut needs the upstream repository too. Same rule and expected total as
+# terraform-aws-n8n's custom_chart_keeps_conservative_runner_accounting.
+run "capacity_model_keeps_main_runner_on_a_mirrored_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://mirror.example.com/n8n-helm-chart"
+  }
+
+  assert {
+    condition     = var.n8n_chart_version == "1.14.0" && !local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 16600
+    error_message = "A mirrored chart at a verified version must keep the main-sidecar allowance: 16600m expected, got ${local.n8n_peak_cpu_request_millis}m."
   }
 }
 

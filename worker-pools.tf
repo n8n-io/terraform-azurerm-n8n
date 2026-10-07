@@ -32,9 +32,10 @@
 # n8n-io/n8n-hosting#191 registered a `Preview chart` GitHub Action on that
 # repo's main branch that packages preview/worker-pools and publishes an
 # official prerelease build to oci://ghcr.io/n8n-io/n8n-helm-chart (the
-# repository helm_release.n8n in n8n.tf hardcodes; this module exposes no
-# chart-repository override) once someone with write access to that repo
-# dispatches it against preview/worker-pools. See n8n_chart_version, the
+# default n8n_chart_repository) once someone with write access to that repo
+# dispatches it against preview/worker-pools. A caller who cannot wait for
+# that can push a self-built chart to a private mirror and point
+# n8n_chart_repository at it. See n8n_chart_version, the
 # precondition on helm_release.n8n, the n8n_image_tag floor validation in
 # variables.tf, and examples/worker-pools/README.md for the exact command
 # and a private-mirror fallback.

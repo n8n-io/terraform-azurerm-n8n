@@ -437,11 +437,51 @@ actually carries it. `n8n_image_repository` and
 `n8n_task_runner_image_repository` are independent so the two images can live
 in different repositories on the same mirror, and `n8n_image_pull_secrets`
 grants both images' pods registry authentication through the same Secret
-names. `check.graceful_shutdown_fits_grace_period` (n8n.tf) is skipped
-whenever `n8n_chart_repository` is not the upstream default, since this
-module cannot verify a mirror's `values.yaml` default graceful-shutdown
-timeout. Setting `n8n_graceful_shutdown_timeout` explicitly does not
-reactivate that check (its condition stays true whenever the chart
+names. Set `n8n_task_runner_image_tag` alongside
+`n8n_task_runner_image_repository`: left null, the sidecar inherits
+`n8n_image_tag`, and a plan-time warning
+(`check.custom_task_runner_repository_needs_an_explicit_tag`) reminds you
+that the mirror must carry that tag.
+
+#### Authenticating to a private chart mirror
+
+The Helm provider downloads the n8n chart on the machine that runs
+Terraform. It tries to fetch the chart during `terraform plan` too, but it
+ignores a failed download at that stage, so a clean plan does not prove the
+mirror is reachable or that authentication works. The download that matters
+happens during `terraform apply`, and a failure there fails the release. That
+machine must be able to authenticate to the mirror. The cluster's
+`n8n_image_pull_secrets` do not help here: they only authenticate image
+pulls by the cluster's nodes. For an OCI mirror such as Azure Container
+Registry, add a `registry` block to the caller's `helm` provider
+configuration, with the registry URL, a username, and a password or token.
+The provider block belongs to the calling root, not this module, so the
+credentials stay under the caller's control.
+
+Do not put credentials in `n8n_chart_repository` itself. The URL is stored in
+plans and state, and the variable's validation rejects `user:password@`
+userinfo. The module does not expose `repository_username` or
+`repository_password`, so `https://` chart repositories that require basic
+authentication are not supported. Use an OCI mirror for a private n8n chart.
+
+#### Chart checks this module skips for a mirror
+
+This module verifies some chart behavior against the upstream repository
+only. A mirror can carry a rebuilt or patched chart under the same version
+number, so any `n8n_chart_repository` value other than the exact default
+changes three diagnostics, the same way `terraform-aws-n8n` and
+`terraform-google-n8n` do:
+
+- `check.graceful_shutdown_fits_grace_period` is skipped, because the
+  mirror's `values.yaml` default shutdown timeout cannot be verified.
+- `check.worker_keda_pause_requires_a_supported_chart` is skipped, because
+  the mirror's support for `keda.worker.pause` cannot be verified.
+- The advisory AKS capacity model keeps the task-runner sidecar's CPU
+  request on every main replica, even for versions where the upstream chart
+  runs task runners on workers only.
+
+Setting `n8n_graceful_shutdown_timeout` explicitly does not
+reactivate the shutdown check (its condition stays true whenever the chart
 repository is non-default, regardless of the timeout); it does subject the
 value to `n8n_graceful_shutdown_timeout`'s own always-on validation, which
 independently rejects a timeout that leaves no margin before

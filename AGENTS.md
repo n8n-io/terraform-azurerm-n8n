@@ -626,17 +626,21 @@ task-runner sidecar, its env, and the launcher ConfigMap mount on main only
 in standalone mode; this module always runs queue mode, so only workers
 carry the sidecar, `scaling.tf`'s capacity model drops the sidecar request
 from the main ceiling only for the verified upstream charts `1.12.0`,
-`1.13.0`, and `1.14.0` (`local.n8n_chart_has_worker_only_runners`, the same version-gated
-shape as `terraform-aws-n8n` minus its repository check, since this module
-hardcodes the OCI repository; the `1.11.0`-based worker-pools preview
-chart therefore still counts the main sidecar), and the launcher-config
+`1.13.0`, and `1.14.0` served from the upstream repository
+(`local.n8n_chart_has_worker_only_runners`, the same repository- and
+version-gated shape as `terraform-aws-n8n`, keyed on
+`local.n8n_chart_is_upstream` since `n8n_chart_repository` made the
+repository configurable; the `1.11.0`-based worker-pools preview
+chart and any mirrored chart therefore still count the main sidecar), and the launcher-config
 assertions in `check-n8n-chart.sh` expect no sidecar on main. `keda.worker.pause` /
 `pausedReplicaCount` are exposed as `n8n_worker_keda_pause` /
 `n8n_worker_keda_paused_replica_count`, with
 `check.worker_keda_pause_requires_a_supported_chart` warning on any chart
 older than `1.13.0` (`local.n8n_worker_keda_pause_supported` in
 `scaling.tf`, a numeric major.minor floor on the prerelease-stripped
-version core, so the `1.11.0`-based worker-pools preview warns). AWS pairs
+version core, so the `1.11.0`-based worker-pools preview warns; a custom
+`n8n_chart_repository` counts as supported and stays silent, matching both
+siblings and the mirror skip on `check.graceful_shutdown_fits_grace_period`). AWS pairs
 it with a worker-floor-of-0 check; Azure needs none because
 `n8n_worker_keda_min_replicas >= 1` is validated. The chart's
 webhook-processor pause is intentionally not exposed because no webhook `ScaledObject` exists here

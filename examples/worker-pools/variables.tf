@@ -191,8 +191,8 @@ variable "n8n_chart_repository" {
 
   validation {
     # Keep in sync with the module root's n8n_chart_repository validation.
-    condition     = can(regex("^(https|oci)://[^[:space:]]+$", var.n8n_chart_repository))
-    error_message = "n8n_chart_repository must be an https:// or oci:// URL with no whitespace."
+    condition     = can(regex("^(https|oci)://(?:[A-Za-z0-9._~-]+|\\[[0-9A-Fa-f:.]+\\])(?::[0-9]+)?(?:/[^[:space:]]*)?$", var.n8n_chart_repository))
+    error_message = "n8n_chart_repository must be an https:// or oci:// URL with a host, an optional port, and no whitespace, such as oci://myregistry.azurecr.io/helm. It must not embed credentials (user:password@): authenticate the Terraform runner to the registry instead."
   }
 }
 

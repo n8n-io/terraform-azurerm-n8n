@@ -270,14 +270,29 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   (default null, chart default), so a caller with no egress to the public
   registries can point both at a private mirror. `docs/customer-managed-infrastructure.md`
   gained an "External artifacts and private-registry mirrors" section listing
-  every chart and image this module pulls and its override input.
-  `check.graceful_shutdown_fits_grace_period` (n8n.tf) is now skipped whenever
-  `n8n_chart_repository` is not the upstream default, since this module
-  cannot verify a mirror's `values.yaml` default shutdown timeout.
-  `check.image_pull_secrets_need_a_custom_image` now also passes when only
-  `n8n_task_runner_image_repository` is set, so a runner-only private mirror
-  no longer falsely flags `n8n_image_pull_secrets` as unused
+  every chart and image this module pulls and its override input, plus how
+  to authenticate the Terraform runner to a private OCI chart mirror.
+  `n8n_chart_repository` rejects URLs with embedded `user:password@`
+  credentials or no host. Matching `terraform-aws-n8n` and
+  `terraform-google-n8n`, any value other than the upstream default counts as
+  an unverifiable chart: `check.graceful_shutdown_fits_grace_period` and
+  `check.worker_keda_pause_requires_a_supported_chart` are skipped, and the
+  advisory capacity model keeps the task-runner sidecar request on main
+  pods. `check.image_pull_secrets_need_a_custom_image` now also passes when
+  only `n8n_task_runner_image_repository` is set with task runners enabled,
+  so a runner-only private mirror no longer falsely flags
+  `n8n_image_pull_secrets` as unused. Two new warnings cover the runner
+  mirror: `check.task_runner_image_repository_requires_task_runners` (set
+  while task runners are off) and
+  `check.custom_task_runner_repository_needs_an_explicit_tag` (no explicit
+  runner tag, so the sidecar inherits `n8n_image_tag`)
   ([#23](https://github.com/n8n-io/terraform-azurerm-n8n/issues/23)).
+- `n8n_image_repository` and `n8n_task_runner_image_repository` now apply
+  Docker's 255-character limit to the normalized repository path, as
+  `terraform-aws-n8n` does, instead of to the whole reference. A 255-character
+  path behind a registry host is now accepted, and a bare Docker Hub name
+  whose implicit `library/` prefix pushes it over the limit is now rejected
+  at plan time instead of failing with `InvalidImageName` on the pods.
 
 ### Changed
 
