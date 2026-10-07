@@ -40,11 +40,12 @@ locals {
   cluster_name = "${var.friendly_name_prefix}-aks"
 
   # true only when aks_private_dns_zone_id names a caller-owned zone (not the
-  # "System"/"None" sentinels or the default null) -- aks.tf switches the
-  # cluster's identity to a module-created UserAssigned identity in that case,
-  # since Azure requires the identity to already hold Private DNS Zone
-  # Contributor on the zone before cluster create (a SystemAssigned identity
-  # has no ID to grant a role to until after the cluster exists).
+  # "System" sentinel or the default null) -- aks.tf switches the cluster's
+  # identity to a module-created UserAssigned identity in that case, since
+  # Azure requires the identity to already hold Private DNS Zone Contributor
+  # on the zone and Network Contributor on the VNet before cluster create (a
+  # SystemAssigned identity has no ID to grant a role to until after the
+  # cluster exists). "None" is rejected by the variable's validation.
   #
   # var.aks_private_dns_zone_custom_identity overrides this inference with a
   # plan-known literal when the comparison above cannot be: a caller passing
@@ -55,8 +56,7 @@ locals {
   aks_uses_custom_private_dns_zone = (
     var.aks_private_dns_zone_custom_identity != null ? var.aks_private_dns_zone_custom_identity : (
       var.aks_private_dns_zone_id != null &&
-      var.aks_private_dns_zone_id != "System" &&
-      var.aks_private_dns_zone_id != "None"
+      var.aks_private_dns_zone_id != "System"
     )
   )
   postgres_server_name = "${var.friendly_name_prefix}-postgres"

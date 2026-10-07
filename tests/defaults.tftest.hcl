@@ -439,8 +439,8 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
-    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
-    error_message = "azurerm_role_assignment.aks_cluster_subnet_network_contributor must not exist by default."
+    condition     = length(azurerm_role_assignment.aks_cluster_vnet_network_contributor) == 0
+    error_message = "azurerm_role_assignment.aks_cluster_vnet_network_contributor must not exist by default."
   }
 }
 
@@ -743,6 +743,11 @@ run "aks_private_cluster_enabled_renders_private_cluster" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].private_dns_zone_id == "System"
+    error_message = "A private cluster with aks_private_dns_zone_id = null must send \"System\" explicitly, so clearing a caller-owned zone ID later plans as a zone change instead of silently keeping the old zone (the argument is optional+computed)."
+  }
+
+  assert {
     condition     = azurerm_kubernetes_cluster.n8n[0].identity[0].type == "SystemAssigned"
     error_message = "Identity must stay SystemAssigned when no caller-owned private DNS zone is supplied."
   }
@@ -753,8 +758,8 @@ run "aks_private_cluster_enabled_renders_private_cluster" {
   }
 
   assert {
-    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
-    error_message = "No subnet Network Contributor role assignment must be created without a caller-owned private DNS zone."
+    condition     = length(azurerm_role_assignment.aks_cluster_vnet_network_contributor) == 0
+    error_message = "No VNet Network Contributor role assignment must be created without a caller-owned private DNS zone."
   }
 }
 
@@ -782,8 +787,8 @@ run "aks_private_cluster_with_system_dns_zone_keeps_system_assigned_identity" {
   }
 
   assert {
-    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
-    error_message = "No subnet Network Contributor role assignment must be created for the \"System\" sentinel."
+    condition     = length(azurerm_role_assignment.aks_cluster_vnet_network_contributor) == 0
+    error_message = "No VNet Network Contributor role assignment must be created for the \"System\" sentinel."
   }
 }
 
@@ -821,18 +826,18 @@ run "aks_byo_private_dns_zone_switches_identity_and_grants_role" {
   }
 
   assert {
-    condition     = length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 1
-    error_message = "A caller-owned private DNS zone must create exactly one subnet Network Contributor role assignment."
+    condition     = length(azurerm_role_assignment.aks_cluster_vnet_network_contributor) == 1
+    error_message = "A caller-owned private DNS zone must create exactly one VNet Network Contributor role assignment."
   }
 
   assert {
-    condition     = azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].role_definition_name == "Network Contributor"
-    error_message = "The subnet role assignment must grant Network Contributor."
+    condition     = azurerm_role_assignment.aks_cluster_vnet_network_contributor[0].role_definition_name == "Network Contributor"
+    error_message = "The VNet role assignment must grant Network Contributor."
   }
 
   assert {
-    condition     = azurerm_role_assignment.aks_cluster_subnet_network_contributor[0].scope == var.aks_subnet_id
-    error_message = "The subnet role assignment must be scoped to var.aks_subnet_id."
+    condition     = azurerm_role_assignment.aks_cluster_vnet_network_contributor[0].scope == var.vnet_id
+    error_message = "The VNet role assignment must be scoped to var.vnet_id: AKS links the caller-owned zone to the cluster VNet, which a subnet-scoped grant does not cover."
   }
 }
 
@@ -922,6 +927,19 @@ run "rejects_aks_private_dns_zone_id_without_private_cluster" {
 
   variables {
     aks_private_dns_zone_id = "System"
+  }
+
+  expect_failures = [
+    var.aks_private_dns_zone_id,
+  ]
+}
+
+run "rejects_aks_private_dns_zone_id_none" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled = true
+    aks_private_dns_zone_id     = "None"
   }
 
   expect_failures = [
@@ -1020,6 +1038,31 @@ run "accepts_local_account_disabled_with_entra_rbac" {
   }
 }
 
+run "explicit_null_aks_hardening_inputs_fall_back_to_defaults" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled = null
+    aks_local_account_disabled  = null
+    aks_outbound_type           = null
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].private_cluster_enabled == false
+    error_message = "aks_private_cluster_enabled is nullable = false, so an explicit null must fall back to false."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].local_account_disabled == false
+    error_message = "aks_local_account_disabled is nullable = false, so an explicit null must fall back to false."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].network_profile[0].outbound_type == "loadBalancer"
+    error_message = "aks_outbound_type is nullable = false, so an explicit null must fall back to \"loadBalancer\"."
+  }
+}
+
 run "rejects_invalid_aks_outbound_type" {
   command = plan
 
@@ -1103,6 +1146,42 @@ run "warns_when_aks_hardening_inputs_are_inert_on_existing_cluster" {
     existing_aks_resource_group_name             = "shared-aks-rg"
     existing_aks_cluster_prerequisites_confirmed = true
     aks_private_cluster_enabled                  = true
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "accepts_inert_aks_private_cluster_combinations_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_private_cluster_enabled                  = true
+    aks_api_authorized_ip_ranges                 = ["203.0.113.0/24"]
+    aks_private_dns_zone_custom_identity         = true
+  }
+
+  # Only the non-failing ownership check fires: the private-cluster/authorized
+  # range conflict and the custom-identity-without-zone rule are gated on
+  # create_aks, because the module manages no cluster in this mode.
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
+run "accepts_inert_aks_private_dns_zone_without_private_cluster_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_private_dns_zone_id                      = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.eastus.azmk8s.io"
+    aks_private_dns_zone_custom_identity         = false
   }
 
   expect_failures = [check.aks_tuning_requires_module_managed_aks]

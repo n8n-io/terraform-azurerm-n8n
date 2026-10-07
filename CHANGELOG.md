@@ -11,38 +11,39 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Added
 
-- Six opt-in AKS network/identity hardening inputs, all defaulting to the
-  module's current behavior so an existing caller sees no plan diff:
-  `aks_private_cluster_enabled` and `aks_private_dns_zone_id` (the latter
-  gated on the former; private API server, where a caller-owned zone
-  switches the cluster to a module-created user-assigned identity granted
-  `Private DNS Zone Contributor`, since Azure requires that grant before
-  cluster create), `aks_entra_rbac` and `aks_local_account_disabled` (the
-  latter gated on the former; Entra ID / Azure RBAC authorization —
-  disabling local accounts requires Entra RBAC and empties
-  `aks_kube_config`'s `client_certificate`/`client_key` — see the README
-  provider-wiring section for the `kubelogin` `exec` block replacement),
-  `aks_outbound_type` (`loadBalancer` or `userDefinedRouting` egress), and
-  `aks_network_policy` (`null`, `azure`, `calico`, or `cilium`, matching
-  `network_data_plane` automatically for `cilium`)
-  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
-- `aks_outbound_type`'s description now documents a live finding against an
-  Azure Firewall deployment: Microsoft's published AKS+Firewall FQDN list
-  is incomplete for the default n8n image, both the image's actual
-  registry mirror domain and Docker Hub's blob-layer CDN redirect domain
-  need to be allow-listed in addition to Microsoft's documented list
-  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
-- `aks_private_dns_zone_custom_identity` (bool, default null): a plan-known
-  override for whether the cluster gets the module-managed `aks_cluster`
-  UserAssigned identity and its Private DNS Zone Contributor role
-  assignment. Needed when `aks_private_dns_zone_id` is supplied as a
-  value that is itself unknown at plan time (for example
-  `azurerm_private_dns_zone.foo.id` created in the same apply as this
-  module): comparing an unknown zone ID against the `"System"`/`"None"`
-  sentinels made the identity resources' count unknown at plan time,
-  which Terraform rejects. Setting the override to a literal `true` or
-  `false` selects the identity path independently of the zone ID's value
-  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
+- Seven opt-in AKS network and identity inputs, all defaulting to the
+  module's current behavior so an existing caller sees no plan diff
+  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)):
+  - `aks_private_cluster_enabled` and `aks_private_dns_zone_id`: private
+    API server. The zone is `"System"` (also what `null` sends on a private
+    cluster) or a caller-owned zone ID. `"None"` is rejected because Azure
+    does not support it while the public FQDN is disabled. A caller-owned
+    zone switches the cluster to a module-created user-assigned identity
+    granted `Private DNS Zone Contributor` on the zone and
+    `Network Contributor` on `vnet_id` before cluster create.
+    `aks_private_dns_zone_custom_identity` selects that identity path with a
+    plan-known literal when the zone ID is unknown until apply (for example
+    a zone created in the same apply). Changing `aks_private_cluster_enabled`
+    or `aks_private_dns_zone_id` later forces replacement of the AKS
+    cluster, so decide before the first apply.
+  - `aks_entra_rbac`: Entra ID integration and Azure RBAC for Kubernetes
+    authorization. Once set, `aks_kube_config` is an Entra (kubelogin
+    `exec`) kubeconfig with an empty `client_certificate` and `client_key`,
+    even while local accounts stay enabled. The README shows the `exec`
+    wiring for the `kubernetes`, `helm`, and `kubectl` providers. Entra
+    integration cannot be disabled once enabled.
+  - `aks_local_account_disabled`: requires `aks_entra_rbac`. On an existing
+    cluster it does not revoke admin certificates issued earlier, including
+    the one previously stored in state through `aks_kube_config`; rotate
+    the cluster certificates (`az aks rotate-certs`) to revoke them.
+  - `aks_outbound_type`: `loadBalancer` or `userDefinedRouting` egress. The
+    description lists two domains that Microsoft's AKS and Azure Firewall
+    FQDN list misses for the default n8n image (found in live testing).
+  - `aks_network_policy`: `null`, `azure`, `calico`, or `cilium`, with
+    `network_data_plane` set to `cilium` automatically for `cilium`.
+    Enabling an engine is one-way: setting it back to `null` keeps the
+    existing engine (or forces replacement from `cilium`).
+
 - `aks_system_pool_critical_addons_only`: opt-in bool (default false) that
   applies AzureRM's `only_critical_addons_enabled` to the system
   `default_node_pool`, tainting it `CriticalAddonsOnly=true:NoSchedule`.
@@ -292,15 +293,6 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   In a legacy access-policy vault, the principal running `terraform
   apply` now also needs the `Update` certificate permission for that
   tag update.
-- `aks_entra_rbac.admin_group_object_ids` now accepts an empty list when
-  `azure_rbac_enabled = true` (the default). The validation previously
-  rejected an empty list unconditionally, which blocked callers who grant
-  all cluster access through caller-managed `azurerm_role_assignment`
-  resources scoped to the AKS cluster instead of listing admin groups.
-  An empty list is still rejected when `azure_rbac_enabled = false`,
-  since the Kubernetes-native RBAC cluster-admin binding has no other way
-  to grant cluster-admin access
-  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)).
 - `modules/tls-letsencrypt` applies the same tags to its imported Key
   Vault certificate: `ManagedBy = terraform`, `Project = n8n`, the
   caller's `common_tags`, and `Name = <friendly_name_prefix>-n8n-tls`.
