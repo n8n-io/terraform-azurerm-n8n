@@ -144,12 +144,19 @@ jobs:
         run: terraform validate -no-color
 
   test:
-    name: terraform test (${{ matrix.target }})
+    name: terraform test (${{ matrix.target }}, ${{ matrix.terraform }})
     runs-on: ubuntu-latest
     needs: validate
     strategy:
       fail-fast: false
       matrix:
+        # TF_VERSION plus the root module's required_version floor. The
+        # floor cell is what proves the declared minimum still works: the
+        # null guards in variables.tf need 1.12's short-circuit `||`/`&&`,
+        # and a newer runtime alone never notices code that needs more.
+        # Keep the first entry equal to TF_VERSION (matrix values cannot
+        # read `env`), and the second equal to the floor in versions.tf.
+        terraform: ["1.16.4", "1.12.0"]
         target:
           [
             ".",
@@ -171,7 +178,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          terraform_version: ${{ matrix.terraform }}
 
       - name: cache terraform plugins
         uses: actions/cache@v4
@@ -179,9 +186,9 @@ jobs:
           path: |
             ~/.terraform.d/plugin-cache
             ${{ matrix.target }}/.terraform
-          key: tf-${{ runner.os }}-${{ env.TF_VERSION }}-${{ matrix.target }}-${{ hashFiles(format('{0}/versions.tf', matrix.target), format('{0}/.terraform.lock.hcl', matrix.target)) }}
+          key: tf-${{ runner.os }}-${{ matrix.terraform }}-${{ matrix.target }}-${{ hashFiles(format('{0}/versions.tf', matrix.target), format('{0}/.terraform.lock.hcl', matrix.target)) }}
           restore-keys: |
-            tf-${{ runner.os }}-${{ env.TF_VERSION }}-${{ matrix.target }}-
+            tf-${{ runner.os }}-${{ matrix.terraform }}-${{ matrix.target }}-
 
       - name: terraform init
         working-directory: ${{ matrix.target }}
