@@ -316,6 +316,20 @@ resource "kubernetes_ingress_v1" "n8n" {
       "appgw.ingress.kubernetes.io/ssl-redirect"          = "true"
       "appgw.ingress.kubernetes.io/backend-protocol"      = "http"
       "appgw.ingress.kubernetes.io/appgw-ssl-certificate" = "appgw-ssl-cert"
+      # The remaining annotations match the root module's defaults
+      # (local.appgw_ingress_default_annotations in locals.tf). AGIC's own
+      # defaults are a 30 s request timeout, no connection draining, and no
+      # affinity, which cut off long webhook, form, and MCP requests, drop
+      # in-flight requests during pod rollouts, and spread one browser's
+      # requests across main pods.
+      "appgw.ingress.kubernetes.io/request-timeout"             = "300"
+      "appgw.ingress.kubernetes.io/connection-draining"         = "true"
+      "appgw.ingress.kubernetes.io/connection-draining-timeout" = "30"
+      # n8n requires session persistence in front of multiple main
+      # processes, so each browser stays on one main pod for its editor and
+      # push connection. See
+      # https://docs.n8n.io/deploy/host-n8n/configure-n8n/scaling/enable-queue-mode#configuring-multi-main-setup
+      "appgw.ingress.kubernetes.io/cookie-based-affinity" = "true"
     }
   }
 

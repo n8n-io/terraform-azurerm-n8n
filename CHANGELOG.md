@@ -243,6 +243,27 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `--system-node-count-max` flags and checks vCPU quota per VM family
   across every planned node pool
   ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
+- New `docs/ingress-options.md` documents why the module uses Application
+  Gateway v2 with AGIC instead of Application Gateway for Containers (which
+  does not support a private frontend, checked 2026-10-07) or the
+  application routing add-on with the Gateway API. It also covers what
+  switching an existing deployment to `create_ingress = false` destroys and
+  how to cut over with minimal downtime, the gateway and Ingress settings a
+  replacement must review, and the routing contract (path-prefix ordering,
+  session affinity, `N8N_PROXY_HOPS`) a caller-owned ingress must reproduce
+  ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
+- New `n8n_proxy_hops` input (default `1`) renders `N8N_PROXY_HOPS` on every
+  n8n pod, previously hardcoded to `1`, so existing deployments see no
+  change. Count every proxy on the client's path that adds an
+  `X-Forwarded-For` entry, whatever `create_ingress` is set to: an
+  Application Gateway alone is `1`, Azure Front Door in front of it is `2`,
+  and a layer 4 Azure Load Balancer does not count. `0` is accepted for a
+  deployment with no HTTP proxy in front of n8n. A value above `1` is only
+  safe when the inner proxy accepts traffic from the outer one alone,
+  otherwise a client can forge its IP. Rejects negative or fractional
+  values at plan time. The name was already reserved, so `n8n_extra_env`,
+  `n8n_worker_extra_env`, and `n8n_worker_pools[*].extra_env` still cannot
+  set it ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
 
 ### Changed
 
@@ -332,6 +353,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
 
 ### Fixed
+
+- `examples/customer-managed-cluster`, `examples/customer-managed-everything`,
+  and `examples/split-ingress` now match the root module's Ingress defaults
+  on their caller-owned AGIC Ingress: `request-timeout = "300"` and 30 s
+  connection draining on every Ingress, and `cookie-based-affinity = "true"`
+  on every Ingress that serves the editor (not on the split-ingress public
+  webhook gateway). Before, they ran with AGIC's defaults of a 30 s request
+  timeout, no connection draining, and no affinity, so long webhook, form,
+  and MCP requests were cut off, rollouts dropped in-flight requests, and
+  multi-main deployments lacked the session persistence n8n requires
+  ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
 
 - PostgreSQL `verify-ca` / `verify-full` on the external path connected
   in plaintext. The pinned chart (`1.14.0`, and `1.13.0` before it) renders

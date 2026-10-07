@@ -126,9 +126,13 @@ run "customer_managed_cluster_plan" {
       kubernetes_ingress_v1.n8n.spec[0].ingress_class_name == "azure-application-gateway" &&
       kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/appgw-ssl-certificate"] == "appgw-ssl-cert" &&
       kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/ssl-redirect"] == "true" &&
-      kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/backend-protocol"] == "http"
+      kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/backend-protocol"] == "http" &&
+      kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/request-timeout"] == "300" &&
+      kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/connection-draining"] == "true" &&
+      kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/connection-draining-timeout"] == "30" &&
+      kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/cookie-based-affinity"] == "true"
     )
-    error_message = "The caller-owned Ingress must select AGIC and preserve the gateway TLS and HTTP-backend contract."
+    error_message = "The caller-owned Ingress must select AGIC, preserve the gateway TLS and HTTP-backend contract, and match the root module's request timeout, connection draining, and cookie-based affinity defaults."
   }
 
   assert {

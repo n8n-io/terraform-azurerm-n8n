@@ -415,7 +415,7 @@ resource "helm_release" "n8n" {
         # n8n 2.30.0 (local.n8n_needs_legacy_webhook_url_env).
         local.n8n_webhook_url_env,
         [
-          { name = "N8N_PROXY_HOPS", value = "1" },
+          { name = "N8N_PROXY_HOPS", value = tostring(var.n8n_proxy_hops) },
           { name = "DB_POSTGRESDB_POOL_SIZE", value = tostring(local.postgres_connection.pool_size) },
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
           { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = tostring(var.n8n_license_detach_floating_on_shutdown) },
