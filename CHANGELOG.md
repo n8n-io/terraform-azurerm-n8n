@@ -293,6 +293,62 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   path behind a registry host is now accepted, and a bare Docker Hub name
   whose implicit `library/` prefix pushes it over the limit is now rejected
   at plan time instead of failing with `InvalidImageName` on the pods.
+- Optional AKS Key Vault Secrets Provider add-on
+  (`aks_key_vault_secrets_provider_enabled`, `aks_key_vault_secrets_provider_secret_rotation_enabled`,
+  `aks_key_vault_secrets_provider_secret_rotation_interval`)
+  and an optional role assignment granting the add-on's identity `Key
+  Vault Secrets User` on a caller-named vault
+  (`aks_key_vault_secrets_provider_role_assignment_enabled`,
+  `aks_key_vault_secrets_provider_keyvault_id`). Lets a caller sync Key
+  Vault objects into the Kubernetes Secrets the `*_secret_ref` inputs
+  already read, without adding a static credential to Terraform state.
+  `aks_key_vault_secrets_provider_role_assignment_enabled = true` requires
+  `aks_key_vault_secrets_provider_enabled = true`, or the role assignment
+  fails planning against the add-on's not-yet-rendered identity. The grant
+  covers every secret in the vault, so use a vault that holds only the
+  secrets you sync. New outputs `aks_key_vault_secrets_provider_identity_client_id`
+  and `aks_key_vault_secrets_provider_identity_object_id` expose the
+  add-on's identity.
+- Optional AKS KMS etcd encryption (legacy AKS KMS experience) with a
+  caller-owned Key Vault key (`aks_kms_key_vault_key_id`, which must be a
+  versioned key identifier). Key vault network access is always `Public`:
+  private vault access needs API Server VNet Integration, which this module
+  does not configure. KMS needs one of two plan-known toggles, which switch
+  the cluster identity from `SystemAssigned` to the module-managed
+  `UserAssigned` `aks_cluster` identity (the same one a caller-owned private
+  DNS zone uses) and grant it `Network Contributor` on the AKS subnet:
+  `aks_kms_role_assignment_enabled` (with `aks_kms_key_vault_id`) also grants
+  `Key Vault Crypto User` on the vault and waits 120 seconds for it to
+  propagate, and `aks_kms_cluster_identity_enabled` leaves the Key Vault
+  grant to the caller. New outputs `aks_cluster_identity_principal_id` and
+  `aks_cluster_identity_client_id` expose that identity. The cluster depends
+  on the grant, but Azure RBAC can take longer to take effect, so the
+  documented procedure turns KMS on in a second apply. After turning KMS on,
+  rotating the key, or turning KMS off, rewrite every existing Secret; turn
+  KMS off by clearing only `aks_kms_key_vault_key_id` and keep the toggle,
+  the grant, and the key. **Turning KMS on cannot be undone:** setting both
+  KMS toggles back to `false`, or rolling back to a module version without
+  them, leaves the cluster `Failed` (confirmed in a live test), because AKS
+  keeps checking the key permissions of the cluster identity. See
+  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#turning-kms-on-cannot-be-undone)
+  and the matching
+  [troubleshooting entry](./docs/troubleshooting.md#terraform-apply-aks-update-fails-with-azurekeyvaultkmsvalidateidentitypermissioncustomererror-after-removing-the-kms-toggles).
+- Setting `aks_key_vault_secrets_provider_enabled`,
+  `aks_kms_key_vault_key_id`, `aks_kms_role_assignment_enabled`, or
+  `aks_kms_cluster_identity_enabled` while `create_aks = false` warns and
+  the input is ignored, like other AKS-only inputs. The other add-on inputs
+  have no effect without these, so they are ignored silently.
+- `examples/medium` now enables the Key Vault Secrets Provider add-on
+  (without a vault grant, because its vault holds the TLS certificate) and
+  prepares KMS with a key in a dedicated, purge-protected vault. Applying it
+  to an existing deployment of the example switches the cluster identity to
+  `UserAssigned` in place, adds the identity's role assignments, and creates
+  the new vault, whose purge protection Azure cannot turn off again. See
+  [`examples/medium/README.md`](./examples/medium/README.md).
+- Both add-ons are documented in
+  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault)
+  and demonstrated in [`examples/medium/`](./examples/medium/)
+  ([#29](https://github.com/n8n-io/terraform-azurerm-n8n/issues/29)).
 
 ### Changed
 

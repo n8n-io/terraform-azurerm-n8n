@@ -64,6 +64,30 @@ output "n8n_workload_uami_principal_id" {
   sensitive   = true
 }
 
+output "aks_cluster_identity_principal_id" {
+  description = "Principal (object) ID of the module-managed aks_cluster UserAssigned control-plane identity, or null when the cluster uses SystemAssigned (no BYO private DNS zone and neither KMS toggle set) or create_aks is false. Grant it Key Vault Crypto User on the KMS key vault when you manage that grant yourself (aks_kms_cluster_identity_enabled = true). Marked sensitive per the same conservative shape as `n8n_workload_uami_principal_id`."
+  value       = try(azurerm_user_assigned_identity.aks_cluster[0].principal_id, null)
+  sensitive   = true
+}
+
+output "aks_cluster_identity_client_id" {
+  description = "Client ID of the module-managed aks_cluster UserAssigned control-plane identity, or null when it does not exist (see `aks_cluster_identity_principal_id`). Marked sensitive per the same conservative shape as `n8n_workload_uami_client_id`."
+  value       = try(azurerm_user_assigned_identity.aks_cluster[0].client_id, null)
+  sensitive   = true
+}
+
+output "aks_key_vault_secrets_provider_identity_client_id" {
+  description = "Client ID of the identity the AKS Key Vault Secrets Provider add-on created, or null when the add-on is off or create_aks is false. Set it as `userAssignedIdentityID` in a SecretProviderClass that uses this identity. Marked sensitive per the same conservative shape as `n8n_workload_uami_client_id`."
+  value       = try(azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider[0].secret_identity[0].client_id, null)
+  sensitive   = true
+}
+
+output "aks_key_vault_secrets_provider_identity_object_id" {
+  description = "Object (principal) ID of the identity the AKS Key Vault Secrets Provider add-on created, or null when the add-on is off or create_aks is false. Use it to grant that identity access to a vault out-of-band. Marked sensitive per the same conservative shape as `n8n_workload_uami_principal_id`."
+  value       = try(azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider[0].secret_identity[0].object_id, null)
+  sensitive   = true
+}
+
 # ── PostgreSQL ───────────────────────────────────────────────────────────
 # Derived from `local.postgres_connection` (database.tf, section 3) rather
 # than the `azurerm_postgresql_flexible_server.n8n[0]` resource directly, so

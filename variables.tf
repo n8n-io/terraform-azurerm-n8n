@@ -3117,6 +3117,154 @@ variable "app_gateway_keyvault_role_assignment_enabled" {
   # toggle is true lives on app_gateway_keyvault_id above.
 }
 
+# ── AKS Key Vault Secrets Provider (Secrets Store CSI driver) ────────────
+# Syncs Key Vault objects into the Kubernetes Secrets the existing
+# `*_secret_ref` inputs already read (see docs/customer-managed-infrastructure.md
+# and docs/azure-key-vault-external-secrets.md for the wiring pattern). The
+# addon manages its own identity; this module only optionally grants that
+# identity read access to a caller-named vault, mirroring the App Gateway
+# certificate role-assignment pattern above.
+
+variable "aks_key_vault_secrets_provider_enabled" {
+  description = "When true and create_aks is true, enable the AKS-managed Key Vault Secrets Provider add-on (Secrets Store CSI driver) on the module-managed cluster. The add-on creates its own identity; its IDs are exposed through the aks_key_vault_secrets_provider_identity_client_id and aks_key_vault_secrets_provider_identity_object_id outputs. Default false. Ignored when create_aks is false: the aks_key_vault_secrets_provider_requires_module_managed_aks check warns, because there is no module-managed cluster resource to attach the add-on to."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check; the ignored-input
+  # warning for create_aks = false is the check block in aks.tf.
+}
+
+variable "aks_key_vault_secrets_provider_secret_rotation_enabled" {
+  description = "When true (the default), the Key Vault Secrets Provider add-on polls Key Vault every aks_key_vault_secrets_provider_secret_rotation_interval and updates mounted contents and synced Kubernetes Secrets. Set false to fetch vault objects only when a pod mounts them. Only applies when aks_key_vault_secrets_provider_enabled is true."
+  type        = bool
+  default     = true
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
+}
+
+variable "aks_key_vault_secrets_provider_secret_rotation_interval" {
+  description = "Poll interval for the Key Vault Secrets Provider add-on's autorotation (e.g. \"2m\", \"5m\", \"1h\"). Only applies when aks_key_vault_secrets_provider_enabled and aks_key_vault_secrets_provider_secret_rotation_enabled are true. Defaults to \"2m\", matching the AKS default."
+  type        = string
+  default     = "2m"
+
+  validation {
+    condition     = can(regex("^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$", var.aks_key_vault_secrets_provider_secret_rotation_interval))
+    error_message = "aks_key_vault_secrets_provider_secret_rotation_interval must be a Go duration string such as \"2m\", \"30s\", \"1h\", \"1h30m\", or \"1.5h\"."
+  }
+}
+
+variable "aks_key_vault_secrets_provider_keyvault_id" {
+  description = "Resource ID of the Key Vault on which this module grants the Key Vault Secrets Provider add-on's identity Key Vault Secrets User, when aks_key_vault_secrets_provider_role_assignment_enabled = true. This is only the scope of that role assignment: each SecretProviderClass names the vault it reads from. The grant covers every secret in the vault, so use a vault that holds only the secrets you intend to sync. Never use a vault that also holds unrelated secrets or certificates, such as the Application Gateway TLS certificate, whose private key is readable as a secret. When the toggle is false (default), the caller is responsible for granting that identity access out-of-band. May be null when the toggle is false."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.aks_key_vault_secrets_provider_keyvault_id == null || can(regex("^/subscriptions/.+/resourceGroups/.+/providers/Microsoft\\.KeyVault/vaults/.+$", var.aks_key_vault_secrets_provider_keyvault_id))
+    error_message = "aks_key_vault_secrets_provider_keyvault_id must be null or a fully qualified Azure Key Vault resource ID (e.g. /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.KeyVault/vaults/<name>)."
+  }
+
+  # Cross-variable validation (Terraform 1.9+): when the role-assignment
+  # toggle is on, the vault ID must be supplied.
+  validation {
+    condition     = !var.aks_key_vault_secrets_provider_role_assignment_enabled || var.aks_key_vault_secrets_provider_keyvault_id != null
+    error_message = "aks_key_vault_secrets_provider_keyvault_id must be set when aks_key_vault_secrets_provider_role_assignment_enabled is true."
+  }
+}
+
+variable "aks_key_vault_secrets_provider_role_assignment_enabled" {
+  description = "When true, grant the Key Vault Secrets Provider add-on's auto-created identity Key Vault Secrets User on aks_key_vault_secrets_provider_keyvault_id. This is an Azure RBAC grant: it only takes effect on a vault that uses the Azure RBAC permission model. Default false; the caller is then responsible for granting that identity access out-of-band. When set to true, aks_key_vault_secrets_provider_keyvault_id MUST also be supplied and aks_key_vault_secrets_provider_enabled MUST be true."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  # Cross-variable validation (Terraform 1.9+): the add-on must actually be
+  # enabled, or azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user
+  # (keyvault.tf) indexes into an empty key_vault_secrets_provider block and
+  # fails planning. The keyvault_id requirement lives on that variable above;
+  # the ignored-input warning for create_aks = false lives in aks.tf.
+  validation {
+    condition     = !var.aks_key_vault_secrets_provider_role_assignment_enabled || var.aks_key_vault_secrets_provider_enabled
+    error_message = "aks_key_vault_secrets_provider_enabled must be true when aks_key_vault_secrets_provider_role_assignment_enabled is true."
+  }
+}
+
+# ── AKS KMS etcd encryption ──────────────────────────────────────────────
+# Optional Key Management Service (KMS) etcd encryption with a caller-owned
+# Key Vault key, using the legacy AKS KMS experience that the provider's
+# key_management_service block configures. AKS rejects KMS on a
+# SystemAssigned cluster identity ("Azure Key Vault KMS feature does not
+# support cluster identity type SystemAssigned"), so either KMS toggle below
+# (aks_kms_role_assignment_enabled or aks_kms_cluster_identity_enabled)
+# switches the cluster to the module-managed aks_cluster UserAssigned
+# identity (locals.tf: aks_needs_user_assigned_identity), granted Network
+# Contributor on aks_subnet_id. That identity must hold Key Vault Crypto User
+# on the vault when KMS is enabled. The cluster depends on the module's grant
+# and a 120 s RBAC propagation wait, but Azure does not guarantee the grant
+# is effective by then. The documented procedure therefore uses two applies:
+# first a KMS toggle with aks_kms_key_vault_key_id = null, then, once the
+# grant has taken effect, aks_kms_key_vault_key_id. See
+# docs/customer-managed-infrastructure.md for the enable, rotation, and
+# disable procedures, including rewriting existing Secrets.
+
+variable "aks_kms_key_vault_key_id" {
+  description = "Versioned Azure Key Vault key identifier used for AKS KMS etcd encryption, for example https://<vault>.vault.azure.net/keys/<key>/<version>. The azurerm provider rejects a versionless identifier. Null (the default) leaves KMS etcd encryption disabled. When create_aks is true, requires aks_kms_role_assignment_enabled or aks_kms_cluster_identity_enabled, so the cluster identity switch is decided by a plan-known toggle rather than by this ID, which may be unknown until apply. AKS keeps using this exact key version: rotate by creating a new version, setting it here, and rewriting existing Secrets. Keep every key version the cluster has used enabled and unexpired, including after KMS is turned off. Turn KMS off by setting this back to null while keeping the KMS toggle and the key. See the sequencing note above the variable block and docs/customer-managed-infrastructure.md. Ignored when create_aks is false: the aks_kms_requires_module_managed_aks check warns."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.aks_kms_key_vault_key_id == null || can(regex("^https://[A-Za-z0-9-]{3,24}\\.vault\\.(azure\\.net|azure\\.cn|usgovcloudapi\\.net)/keys/[A-Za-z0-9-]{1,127}/[A-Za-z0-9]{32}$", var.aks_kms_key_vault_key_id))
+    error_message = "aks_kms_key_vault_key_id must be null or a versioned Key Vault key identifier, e.g. https://<vault>.vault.azure.net/keys/<key>/<32-character version>. The azurerm provider rejects versionless identifiers."
+  }
+
+  # Cross-variable validation (Terraform 1.9+): keeps the aks_cluster
+  # identity's count plan-known (locals.tf) even when this ID comes from a
+  # key created in the same apply. Skipped when create_aks is false, where
+  # the input is ignored with a warning instead.
+  validation {
+    condition     = !var.create_aks || var.aks_kms_key_vault_key_id == null || var.aks_kms_role_assignment_enabled || var.aks_kms_cluster_identity_enabled
+    error_message = "aks_kms_key_vault_key_id requires aks_kms_role_assignment_enabled = true (the module grants Key Vault Crypto User) or aks_kms_cluster_identity_enabled = true (you grant it out-of-band). Either one switches the cluster to the module-managed UserAssigned identity that KMS needs."
+  }
+}
+
+variable "aks_kms_key_vault_id" {
+  description = "Resource ID of the Key Vault holding aks_kms_key_vault_key_id. When aks_kms_role_assignment_enabled = true, this module grants the cluster's aks_cluster identity Key Vault Crypto User on the supplied vault. When the toggle is false (default), the caller is responsible for granting that identity access out-of-band. May be null when the toggle is false."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.aks_kms_key_vault_id == null || can(regex("^/subscriptions/.+/resourceGroups/.+/providers/Microsoft\\.KeyVault/vaults/.+$", var.aks_kms_key_vault_id))
+    error_message = "aks_kms_key_vault_id must be null or a fully qualified Azure Key Vault resource ID (e.g. /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.KeyVault/vaults/<name>)."
+  }
+
+  # Cross-variable validation (Terraform 1.9+): when the role-assignment
+  # toggle is on, the vault ID must be supplied.
+  validation {
+    condition     = !var.aks_kms_role_assignment_enabled || var.aks_kms_key_vault_id != null
+    error_message = "aks_kms_key_vault_id must be set when aks_kms_role_assignment_enabled is true."
+  }
+}
+
+variable "aks_kms_role_assignment_enabled" {
+  description = "When true and create_aks is true, switch the cluster to the module-managed aks_cluster UserAssigned identity and grant it Key Vault Crypto User on aks_kms_key_vault_id, followed by a 120 s RBAC propagation wait that the cluster depends on. This is an Azure RBAC grant: it only takes effect on a vault that uses the Azure RBAC permission model. When set to true, aks_kms_key_vault_id MUST also be supplied. On a first-time enable, apply this toggle before setting aks_kms_key_vault_key_id (see the sequencing note above that variable). Once KMS has been on, keep this true for the life of the cluster, including after KMS is turned off: setting the KMS toggles back to false leaves the cluster identity without key access (a new SystemAssigned identity, or the kept identity without this grant), and AKS then rejects the cluster update and leaves the cluster Failed. Default false. Ignored when create_aks is false: the aks_kms_role_assignment_requires_module_managed_aks check warns."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check; the cross-variable
+  # validation requiring aks_kms_key_vault_id lives on that variable above.
+}
+
+variable "aks_kms_cluster_identity_enabled" {
+  description = "When true and create_aks is true, switch the cluster to the module-managed aks_cluster UserAssigned identity (granted Network Contributor on aks_subnet_id) without granting it any Key Vault role. Use it when you grant the identity key access out-of-band: Key Vault Crypto User on an Azure RBAC vault, or the encrypt and decrypt key permissions in an access policy on an access-policy vault. Apply this first, read the identity's principal ID from the aks_cluster_identity_principal_id output, grant access, then set aks_kms_key_vault_key_id. Once KMS has been on, keep this true for the life of the cluster, including after KMS is turned off: without a caller-owned private DNS zone, setting the KMS toggles back to false switches the cluster to a new SystemAssigned identity that your grant does not cover, and AKS then rejects the cluster update and leaves the cluster Failed. Not needed when aks_kms_role_assignment_enabled is true. Default false. Ignored when create_aks is false: the aks_kms_role_assignment_requires_module_managed_aks check warns."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
+}
+
 variable "n8n_license_key" {
   description = "n8n Enterprise license activation key. Get one at https://n8n.io/pricing. Leave null when n8n_license_key_secret_ref selects a caller-managed Kubernetes Secret instead — exactly one of the two must be set. Marked sensitive — keep out of plan output and Git history; supply via environment variable (TF_VAR_n8n_license_key) or a secret-managed terraform.tfvars. The placeholder sentinel `REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY` is rejected by the validation block below."
   type        = string

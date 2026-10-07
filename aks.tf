@@ -19,10 +19,12 @@
 #   - Cluster identity = SystemAssigned by default — the simplest viable
 #     path; no pre-create role-assignment dance with a kubelet UAMI. Switches
 #     to the `aks_cluster` UserAssigned identity below only when
-#     var.aks_private_dns_zone_id names a caller-owned zone (issue #28):
-#     Azure requires that identity to already hold Private DNS Zone
-#     Contributor before cluster create, which a SystemAssigned identity
-#     cannot receive (it has no ID until the cluster exists).
+#     local.aks_needs_user_assigned_identity is true: a caller-owned
+#     private DNS zone (issue #28), where Azure requires that identity to
+#     already hold Private DNS Zone Contributor before cluster create, which
+#     a SystemAssigned identity cannot receive (it has no ID until the
+#     cluster exists), or KMS etcd encryption (issue #29), which AKS rejects
+#     on a SystemAssigned identity.
 #   - Kubelet identity is left to Azure (auto-created at cluster create).
 #     A future story that needs a stable kubelet identity (e.g. private-ACR
 #     image pulls via AcrPull, or CMK Disk Encryption Set wiring) adds a
@@ -47,13 +49,14 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   workload_identity_enabled = true
 
   # SystemAssigned by default. A BYO private DNS zone (aks_private_dns_zone_id
-  # set to a resource ID rather than "System") switches to the
-  # aks_cluster UserAssigned identity below, pre-granted Private DNS Zone
-  # Contributor on that zone — Azure requires the identity to already hold
-  # the role before cluster create, and a SystemAssigned identity has no ID
-  # to grant a role to that early.
+  # set to a resource ID rather than "System") or KMS etcd encryption
+  # switches to the aks_cluster UserAssigned identity below
+  # (local.aks_needs_user_assigned_identity). The BYO zone needs the
+  # identity pre-granted Private DNS Zone Contributor before cluster create,
+  # which a SystemAssigned identity has no ID for yet; AKS's KMS feature
+  # rejects SystemAssigned outright.
   dynamic "identity" {
-    for_each = local.aks_uses_custom_private_dns_zone ? [] : [1]
+    for_each = local.aks_needs_user_assigned_identity ? [] : [1]
 
     content {
       type = "SystemAssigned"
@@ -61,7 +64,7 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   }
 
   dynamic "identity" {
-    for_each = local.aks_uses_custom_private_dns_zone ? [1] : []
+    for_each = local.aks_needs_user_assigned_identity ? [1] : []
 
     content {
       type         = "UserAssigned"
@@ -171,6 +174,40 @@ resource "azurerm_kubernetes_cluster" "n8n" {
     }
   }
 
+  # Key Vault Secrets Provider add-on (Secrets Store CSI driver). The addon
+  # manages its own identity (exposed as key_vault_secrets_provider[0].secret_identity
+  # and the aks_key_vault_secrets_provider_identity_* outputs); see
+  # keyvault.tf for the optional role assignment granting that identity read
+  # access to a caller-named vault.
+  dynamic "key_vault_secrets_provider" {
+    for_each = var.aks_key_vault_secrets_provider_enabled ? [1] : []
+
+    content {
+      secret_rotation_enabled  = var.aks_key_vault_secrets_provider_secret_rotation_enabled
+      secret_rotation_interval = var.aks_key_vault_secrets_provider_secret_rotation_interval
+    }
+  }
+
+  # KMS etcd encryption (legacy AKS KMS experience). The cluster's
+  # aks_cluster identity must already hold Key Vault Crypto User on the
+  # vault when this block is enabled. depends_on below orders the module's
+  # grant and its RBAC propagation wait ahead of the cluster, but Azure does
+  # not guarantee the grant is effective by then, so the documented
+  # procedure still enables KMS in a second apply (see the sequencing note
+  # above var.aks_kms_key_vault_key_id in variables.tf).
+  #
+  # key_vault_network_access is always "Public": "Private" needs API Server
+  # VNet Integration and a private-link grant on the vault, neither of which
+  # this module configures.
+  dynamic "key_management_service" {
+    for_each = var.aks_kms_key_vault_key_id != null ? [1] : []
+
+    content {
+      key_vault_key_id         = var.aks_kms_key_vault_key_id
+      key_vault_network_access = "Public"
+    }
+  }
+
   tags = merge(local.common_tags, { Name = local.cluster_name })
 
   # The cluster autoscaler owns default_node_pool[0].node_count after
@@ -181,13 +218,19 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   # requirement and the AWS sibling's aws_eks_node_group.n8n equivalent in
   # eks.tf.
   #
-  # depends_on the private-DNS-zone and VNet role assignments: when they
-  # exist (BYO zone), the cluster must not attempt to create before the
-  # aks_cluster identity is authorized on the zone and VNet; when they
-  # don't exist (count = 0), this is a no-op dependency.
+  # depends_on every grant the aks_cluster identity needs before cluster
+  # create or update: Private DNS Zone Contributor and VNet Network
+  # Contributor for a BYO private DNS zone (issue #28), and subnet Network
+  # Contributor plus Key Vault Crypto User (with its RBAC propagation wait,
+  # keyvault.tf) for the KMS path (issue #29). Grants with count = 0 are
+  # no-op dependencies. On a later apply that removes a grant, Terraform
+  # updates the cluster before deleting the grant.
   depends_on = [
     azurerm_role_assignment.aks_private_dns_zone_contributor,
     azurerm_role_assignment.aks_cluster_vnet_network_contributor,
+    azurerm_role_assignment.aks_cluster_subnet_network_contributor,
+    azurerm_role_assignment.aks_kms_kv_crypto_user,
+    time_sleep.aks_kms_kv_crypto_user_rbac_propagation,
   ]
 
   lifecycle {
@@ -240,15 +283,16 @@ resource "azurerm_user_assigned_identity" "n8n_workload" {
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-n8n-workload" })
 }
 
-# BYO private DNS zone (issue #28): a module-created identity, granted
-# Private DNS Zone Contributor on the caller's zone, that
-# azurerm_kubernetes_cluster.n8n's identity block switches to instead of
-# SystemAssigned. count = 0 (no identity, no role assignment, no cost) unless
-# aks_private_dns_zone_id names a caller-owned zone resource ID, or
-# aks_private_dns_zone_custom_identity is explicitly set (locals.tf) because
-# the zone ID is itself unknown at plan time in the caller's apply.
+# Module-created cluster identity that azurerm_kubernetes_cluster.n8n's
+# identity block switches to instead of SystemAssigned whenever
+# local.aks_needs_user_assigned_identity is true: a BYO private DNS zone
+# (issue #28, granted Private DNS Zone Contributor below) or KMS etcd
+# encryption (issue #29: aks_kms_role_assignment_enabled, which also grants
+# Key Vault Crypto User in keyvault.tf, or aks_kms_cluster_identity_enabled
+# for a caller-managed grant).
+# count = 0 (no identity, no role assignment, no cost) otherwise.
 resource "azurerm_user_assigned_identity" "aks_cluster" {
-  count = var.create_aks && local.aks_uses_custom_private_dns_zone ? 1 : 0
+  count = var.create_aks && local.aks_needs_user_assigned_identity ? 1 : 0
 
   name                = "${var.friendly_name_prefix}-aks-cluster"
   resource_group_name = var.resource_group_name
@@ -277,6 +321,19 @@ resource "azurerm_role_assignment" "aks_cluster_vnet_network_contributor" {
   count = var.create_aks && local.aks_uses_custom_private_dns_zone ? 1 : 0
 
   scope                = var.vnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
+}
+
+# KMS cluster identity subnet access: a UserAssigned cluster identity needs
+# Network Contributor on var.aks_subnet_id before cluster create, because
+# the control plane manages subnet-backed networking (load balancers, NSG
+# rules) with it. Gated on the KMS toggles only: on the BYO private DNS zone
+# path the VNet-scoped grant above already covers the subnet.
+resource "azurerm_role_assignment" "aks_cluster_subnet_network_contributor" {
+  count = var.create_aks && local.aks_kms_identity_requested ? 1 : 0
+
+  scope                = var.aks_subnet_id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
 }
@@ -328,4 +385,32 @@ data "azurerm_kubernetes_cluster" "existing" {
 
   name                = var.existing_aks_cluster_name
   resource_group_name = var.existing_aks_resource_group_name
+}
+
+# ── Key Vault-backed add-on guards ──────────────────────────────────────
+# Every toggle below sets an argument on azurerm_kubernetes_cluster.n8n, or
+# a grant on its aks_cluster identity, which only exist when this module
+# manages the cluster. Like every other "ignored when create_aks = false"
+# input (aks_tuning_requires_module_managed_aks in scaling.tf), these warn and
+# the input is ignored; they do not fail the plan. Mirrors
+# keyvault_role_assignment_requires_module_managed_ingress in keyvault.tf.
+check "aks_key_vault_secrets_provider_requires_module_managed_aks" {
+  assert {
+    condition     = var.create_aks ? true : !var.aks_key_vault_secrets_provider_enabled
+    error_message = "aks_key_vault_secrets_provider_enabled is true while create_aks is false, so it is ignored: there is no module-managed AKS cluster to attach the Key Vault Secrets Provider add-on to. Enable the add-on on the existing cluster out-of-band, or set create_aks = true."
+  }
+}
+
+check "aks_kms_requires_module_managed_aks" {
+  assert {
+    condition     = var.create_aks ? true : var.aks_kms_key_vault_key_id == null
+    error_message = "aks_kms_key_vault_key_id is set while create_aks is false, so it is ignored: there is no module-managed AKS cluster to configure KMS etcd encryption on. Configure KMS on the existing cluster out-of-band, or set create_aks = true."
+  }
+}
+
+check "aks_kms_role_assignment_requires_module_managed_aks" {
+  assert {
+    condition     = var.create_aks ? true : !(var.aks_kms_role_assignment_enabled || var.aks_kms_cluster_identity_enabled)
+    error_message = "aks_kms_role_assignment_enabled or aks_kms_cluster_identity_enabled is true while create_aks is false, so it is ignored: there is no module-managed aks_cluster identity or AKS cluster. Manage the existing cluster's identity and its Key Vault access out-of-band, or set create_aks = true."
+  }
 }

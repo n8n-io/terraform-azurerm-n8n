@@ -443,6 +443,27 @@ rm` of the Kubernetes-provider resources can make the replacement plan
 succeed, but that is manual state surgery outside the supported path and is
 not covered by the module's tests.
 
+## `terraform apply`: AKS update fails with `AzureKeyVaultKmsValidateIdentityPermissionCustomerError` after removing the KMS toggles
+
+**Symptom:** After KMS etcd encryption was on at some point, an apply that sets both `aks_kms_role_assignment_enabled` and `aks_kms_cluster_identity_enabled` back to `false`, or that rolls back to a module version without these inputs, fails on `azurerm_kubernetes_cluster.n8n` with `AzureKeyVaultKmsValidateIdentityPermissionCustomerError: The identity does not have keys encrypt/decrypt permission on key vault`. Afterwards the cluster and its node pools show `provisioningState: Failed`, and the next `terraform plan` can fail with `Invalid index` on the AGIC role assignments, because the AGIC identity dropped out of the cluster profile. Nodes and workloads keep running.
+
+**Cause:** AKS keeps the KMS key ID in the cluster's security profile after KMS is turned off, and checks the cluster identity's key permissions on every cluster update. Without a caller-owned private DNS zone, the apply switches the cluster to a new `SystemAssigned` identity that has no access to the key, and deletes the `aks_cluster` identity and the module-managed grants. A Key Vault grant you manage yourself is not deleted, but it belongs to the deleted identity. With this module version, Terraform updates the cluster before it deletes the identity and grants; after a rollback to a module version without these inputs, it can delete them first, as in the live test. Either way, the new identity has no key access. With a caller-owned private DNS zone, the identity stays; only the module-managed Key Vault grant is deleted, and the next cluster update fails. Turning KMS on cannot be undone; see [Turning KMS on cannot be undone](./customer-managed-infrastructure.md#turning-kms-on-cannot-be-undone).
+
+**Fix:** This recovery was tested live once. It is not guaranteed; if the reconcile fails again, open an AKS support case rather than retrying.
+
+1. Find the cluster's new system-assigned principal:
+
+   ```bash
+   az aks show -g <rg> -n <cluster> --query identity.principalId -o tsv
+   ```
+
+2. Grant it `Key Vault Crypto User` on the KMS key vault and `Network Contributor` on the AKS subnet (`az role assignment create`), then wait several minutes for the grants to take effect.
+3. Reconcile the cluster without changing its configuration: `az aks update -g <rg> -n <cluster> --yes`. The cluster and node pools return to `Succeeded`, and the AGIC identity is back in the profile.
+4. Rewrite every Secret: `kubectl get secrets --all-namespaces -o json | kubectl replace -f -`.
+5. Run `terraform plan` and `terraform apply`.
+
+Keep the two grants and the key for the life of the cluster: the next cluster update needs them again. In the live test, the API server's `/readyz/kms-providers` check kept failing after this recovery, with no visible effect on workloads, and AKS offers no supported way to clear it. Only a new cluster removes that state.
+
 ## `terraform destroy` hangs on namespace finalizers or App Gateway frontend IP release
 
 See [`destroy-cleanup.md`](./destroy-cleanup.md) for the standard manual cleanup steps: removing stuck `kubernetes` finalizers from the n8n namespace, manually deleting the App Gateway frontend IP configuration if it survives the App Gateway destroy, and the safe re-apply path after a partial destroy.

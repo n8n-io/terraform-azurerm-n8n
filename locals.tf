@@ -78,6 +78,21 @@ locals {
   aks_system_node_count_min_effective = coalesce(var.aks_system_node_count_min, var.aks_node_count_min)
   aks_system_node_count_max_effective = coalesce(var.aks_system_node_count_max, var.aks_node_count_max)
 
+  # The aks_cluster UserAssigned identity (aks.tf) replaces SystemAssigned
+  # for either of two reasons: a BYO private DNS zone (above), or KMS etcd
+  # encryption, which AKS rejects on a SystemAssigned identity ("Azure Key
+  # Vault KMS feature does not support cluster identity type
+  # SystemAssigned"). Only plan-known booleans feed this: a key ID created in
+  # the same apply would otherwise make the identity's count unknown, so
+  # aks_kms_key_vault_key_id's validation requires one of the two KMS
+  # toggles whenever the key ID is set. Keeping a toggle on after clearing
+  # the key ID keeps the identity and its grants while KMS is turned off.
+  aks_kms_identity_requested = var.aks_kms_role_assignment_enabled || var.aks_kms_cluster_identity_enabled
+  aks_needs_user_assigned_identity = (
+    local.aks_uses_custom_private_dns_zone ||
+    local.aks_kms_identity_requested
+  )
+
   # Namespace names and chart-rendered service coordinates stay centralized so
   # Kubernetes resources, KEDA manifests, outputs, and caller-owned ingress can
   # share one contract.
