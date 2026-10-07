@@ -4,7 +4,7 @@ This module's default ingress (`create_ingress = true`) is an **Application Gate
 
 ## Why Application Gateway v2 with AGIC
 
-- **Maturity.** AGIC on Application Gateway v2 is Microsoft's longest-supported AKS ingress path. It has GA support for WAF policies, private (internal) frontends, TLS offload from Key Vault, and connection draining. The module's `ingress.tf` depends on all of these.
+- **Maturity.** AGIC on Application Gateway v2 is Microsoft's longest-supported AKS ingress path. It has GA support for private (internal) frontends, TLS offload from Key Vault, connection draining, and WAF policies. The module's `ingress.tf` uses TLS offload and connection draining in every configuration, and a private frontend when `appgw_frontend_mode = "internal"`. WAF is optional: with the default `appgw_sku_name = "WAF_v2"` the module attaches a WAF policy, and with `Standard_v2` it attaches none.
 - **Private-frontend support.** The module supports `appgw_frontend_mode = "internal"` for admin-only or VPN-gated deployments. Application Gateway v2 supports a fully private frontend IP today.
 - **A declarative model that fits this module.** AGIC reads a standard `kubernetes_ingress_v1` object and reconciles Application Gateway listeners and rules from it. This lets the module render ordered path rules from Terraform without an Application Gateway-specific custom resource.
 
@@ -45,7 +45,7 @@ To switch with minimal downtime:
 
 If you cannot transfer DNS ownership, treat the switch as planned downtime: the module deletes its records in step 3, and the outage lasts until you recreate them and resolver caches expire.
 
-The module's managed-ingress inputs (`appgw_*`, `ingress_annotations`, and the DNS record toggles) have no effect once `create_ingress = false`.
+Once `create_ingress = false`, the `appgw_*` inputs, `ingress_annotations`, and `app_gateway_keyvault_role_assignment_enabled` configure nothing. Restore their defaults, or Terraform warns through the `ingress_tuning_requires_module_managed_ingress` and `keyvault_role_assignment_requires_module_managed_ingress` checks. Set both DNS record toggles to `false` and their zone IDs (`public_dns_zone_id`, `private_dns_zone_id`) to `null`: a toggle left on creates no records and raises the `dns_requires_module_managed_ingress` warning, and the variable validation rejects a zone ID while its toggle is `false`.
 
 ### Settings to review when replacing ingress
 
@@ -59,7 +59,7 @@ The module's gateway and Ingress carry settings that the routing contract below 
 | HTTP to HTTPS redirect | On | Ingress annotation `ssl-redirect` |
 | TLS certificate and policy | Key Vault secret from `app_gateway_tls_cert_secret_id`, `appgw_ssl_policy` (TLS 1.2 or later) | `azurerm_application_gateway.n8n`, `ingress.tf` |
 | HTTP/2 | Off, because it intermittently resets the editor's initial asset burst | `azurerm_application_gateway.n8n`, `ingress.tf` |
-| WAF | `WAF_v2` with an OWASP 3.2 policy in `appgw_waf_mode`, or `appgw_waf_policy_id` | `ingress.tf` |
+| WAF | Optional. With `appgw_sku_name = "WAF_v2"` (the default), the module creates an OWASP 3.2 policy whose mode is `appgw_waf_mode`, or attaches `appgw_waf_policy_id`. With `Standard_v2`, no WAF policy | `ingress.tf` |
 | Source restriction | `appgw_allowed_inbound_cidrs` on the gateway subnet NSG, covering editor and webhook paths | `azurerm_network_security_group.appgw`, `ingress.tf` |
 | Frontend exposure | Public static IP or private-only frontend (`appgw_frontend_mode`) | `ingress.tf` |
 | DNS | Optional public or private A-records | `dns.tf` |

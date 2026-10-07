@@ -3549,6 +3549,7 @@ run "n8n_proxy_hops_accepts_zero" {
     postgres_external_password = "synthetic-external-postgres-password"
     create_redis               = false
     redis_external_host        = "redis.external.example.com"
+    create_ingress             = false
     n8n_proxy_hops             = 0
   }
 
