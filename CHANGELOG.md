@@ -200,9 +200,11 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   module cannot copy a write-only value into the Kubernetes Secret it would
   otherwise manage), makes the `postgres_admin_password` output `null`, and
   is fully opt-in — the default (`postgres_password_write_only = false`)
-  behavior is unchanged. `postgres_admin_password_wo` is checked against
-  the Flexible Server password rules at plan time, and
-  `postgres_password_secret_ref` must not name the module-managed
+  behavior is unchanged. `postgres_admin_password_wo` is checked at plan
+  time for the Flexible Server length (8 to 128) and character-category
+  rules. Azure's rule against a password containing the login name
+  (`pg_admin_username`) is not checked at plan time; Azure rejects such a
+  password during apply. `postgres_password_secret_ref` must not name the module-managed
   `n8n-db-secret` on this path, because the same apply destroys it. A
   rotation (`postgres_admin_password_wo_version` bump) does not restart
   n8n; restart the Deployments after the apply. See "Secrets that remain
