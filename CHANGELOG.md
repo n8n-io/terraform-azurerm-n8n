@@ -355,9 +355,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   exceed the default maximum user connections Microsoft publishes for the
   selected `pg_sku_name`. While `n8n_worker_keda_pause = true`, the worker
   term uses `n8n_worker_keda_paused_replica_count` when that is larger than
-  the worker maximum. The table covers Burstable B1ms to B4ms and the 2 to
-  16 vCore General Purpose and Memory Optimized `s_v3`, `ds_v4`, `ds_v5`,
-  and `ads_v5` SKUs. The check stays silent for other SKUs and when
+  the worker maximum. The table covers Burstable B1ms to B4ms, General
+  Purpose D2 to D16, and Memory Optimized E2 to E8, each in the `s_v3`,
+  `ds_v4`, `ds_v5`, and `ads_v5` series. The check stays silent for other SKUs and when
   `create_database = false`. It models the SKU default, not the live
   server: Azure computes `max_connections` when the server is provisioned
   and does not update it on a later SKU change, so after resizing, adjust

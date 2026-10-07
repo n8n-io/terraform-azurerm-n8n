@@ -528,7 +528,9 @@ locals {
   # While n8n_worker_keda_pause is true, KEDA holds the worker Deployment at
   # n8n_worker_keda_paused_replica_count, which may exceed
   # n8n_worker_keda_max_replicas. A null count freezes workers at their
-  # current count, which the autoscaler already kept within the maximum.
+  # current count, which the model assumes is within the maximum. That is an
+  # assumption, not a guarantee: workers held at a larger explicit count
+  # stay there if the count is cleared while the pause is still on.
   n8n_worker_modeled_max_replicas = max(
     var.n8n_worker_keda_max_replicas,
     var.n8n_worker_keda_pause ? coalesce(var.n8n_worker_keda_paused_replica_count, 0) : 0,
