@@ -84,7 +84,7 @@ The root module SHALL support optionally enabling the AKS Key Vault Secrets Prov
 
 #### Scenario: Enable the Key Vault Secrets Provider add-on
 - **WHEN** a caller enables the Key Vault Secrets Provider add-on with module-managed AKS
-- **THEN** the module SHALL configure the AKS-managed Secrets Store CSI driver add-on with autorotation and SHALL grant its auto-created identity Key Vault Secrets User on a caller-named vault only when the caller also enables that role assignment
+- **THEN** the module SHALL configure the AKS-managed Secrets Store CSI driver add-on with autorotation on by default, SHALL let the caller turn autorotation off, and SHALL grant its auto-created identity Key Vault Secrets User on a caller-named vault only when the caller also enables that role assignment
 
 #### Scenario: Enable KMS etcd encryption
 - **WHEN** a caller supplies a Key Vault key identifier for KMS etcd encryption with module-managed AKS

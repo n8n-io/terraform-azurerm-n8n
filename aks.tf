@@ -183,7 +183,7 @@ resource "azurerm_kubernetes_cluster" "n8n" {
     for_each = var.aks_key_vault_secrets_provider_enabled ? [1] : []
 
     content {
-      secret_rotation_enabled  = true
+      secret_rotation_enabled  = var.aks_key_vault_secrets_provider_secret_rotation_enabled
       secret_rotation_interval = var.aks_key_vault_secrets_provider_secret_rotation_interval
     }
   }

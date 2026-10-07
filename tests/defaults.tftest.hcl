@@ -1071,6 +1071,20 @@ run "aks_key_vault_secrets_provider_and_kms_render_when_enabled" {
   }
 }
 
+run "aks_key_vault_secrets_provider_autorotation_can_be_disabled" {
+  command = plan
+
+  variables {
+    aks_key_vault_secrets_provider_enabled                 = true
+    aks_key_vault_secrets_provider_secret_rotation_enabled = false
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider[0].secret_rotation_enabled == false
+    error_message = "aks_key_vault_secrets_provider_secret_rotation_enabled = false must turn off the add-on's autorotation."
+  }
+}
+
 run "aks_key_vault_secrets_provider_and_kms_omitted_by_default" {
   command = plan
 

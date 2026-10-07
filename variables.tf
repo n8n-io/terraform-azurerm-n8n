@@ -3135,8 +3135,17 @@ variable "aks_key_vault_secrets_provider_enabled" {
   # warning for create_aks = false is the check block in aks.tf.
 }
 
+variable "aks_key_vault_secrets_provider_secret_rotation_enabled" {
+  description = "When true (the default), the Key Vault Secrets Provider add-on polls Key Vault every aks_key_vault_secrets_provider_secret_rotation_interval and updates mounted contents and synced Kubernetes Secrets. Set false to fetch vault objects only when a pod mounts them. Only applies when aks_key_vault_secrets_provider_enabled is true."
+  type        = bool
+  default     = true
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
+}
+
 variable "aks_key_vault_secrets_provider_secret_rotation_interval" {
-  description = "Poll interval for the Key Vault Secrets Provider add-on's autorotation (e.g. \"2m\", \"5m\", \"1h\"). Only applies when aks_key_vault_secrets_provider_enabled is true. Defaults to \"2m\", matching the AKS default."
+  description = "Poll interval for the Key Vault Secrets Provider add-on's autorotation (e.g. \"2m\", \"5m\", \"1h\"). Only applies when aks_key_vault_secrets_provider_enabled and aks_key_vault_secrets_provider_secret_rotation_enabled are true. Defaults to \"2m\", matching the AKS default."
   type        = string
   default     = "2m"
 
@@ -3200,7 +3209,7 @@ variable "aks_key_vault_secrets_provider_role_assignment_enabled" {
 # disable procedures, including rewriting existing Secrets.
 
 variable "aks_kms_key_vault_key_id" {
-  description = "Versioned Azure Key Vault key identifier used for AKS KMS etcd encryption, for example https://<vault>.vault.azure.net/keys/<key>/<version>. The azurerm provider rejects a versionless identifier. Null (the default) leaves KMS etcd encryption disabled. When create_aks is true, requires aks_kms_role_assignment_enabled or aks_kms_cluster_identity_enabled, so the cluster identity switch is decided by a plan-known toggle rather than by this ID, which may be unknown until apply. AKS keeps using this exact key version: rotate by creating a new version, setting it here, and rewriting existing Secrets. Keep the current and the previous key version enabled and unexpired, and after KMS is turned off do not delete or expire the key. Turn KMS off by setting this back to null while keeping the KMS toggle and the key. See the sequencing note above the variable block and docs/customer-managed-infrastructure.md. Ignored when create_aks is false: the aks_kms_requires_module_managed_aks check warns."
+  description = "Versioned Azure Key Vault key identifier used for AKS KMS etcd encryption, for example https://<vault>.vault.azure.net/keys/<key>/<version>. The azurerm provider rejects a versionless identifier. Null (the default) leaves KMS etcd encryption disabled. When create_aks is true, requires aks_kms_role_assignment_enabled or aks_kms_cluster_identity_enabled, so the cluster identity switch is decided by a plan-known toggle rather than by this ID, which may be unknown until apply. AKS keeps using this exact key version: rotate by creating a new version, setting it here, and rewriting existing Secrets. Keep every key version the cluster has used enabled and unexpired, including after KMS is turned off. Turn KMS off by setting this back to null while keeping the KMS toggle and the key. See the sequencing note above the variable block and docs/customer-managed-infrastructure.md. Ignored when create_aks is false: the aks_kms_requires_module_managed_aks check warns."
   type        = string
   default     = null
 
