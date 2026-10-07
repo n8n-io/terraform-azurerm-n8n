@@ -7325,6 +7325,39 @@ run "rejects_n8n_chart_repository_without_a_host" {
   expect_failures = [var.n8n_chart_repository]
 }
 
+run "rejects_n8n_chart_repository_with_a_hyphen_only_host" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://-"
+  }
+
+  expect_failures = [var.n8n_chart_repository]
+}
+
+run "rejects_n8n_chart_repository_with_an_empty_host_label" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://foo..bar/n8n-helm-chart"
+  }
+
+  expect_failures = [var.n8n_chart_repository]
+}
+
+run "accepts_n8n_chart_repository_with_a_dns_host_and_port" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://registry-1.internal.example.com:5000/n8n-helm-chart"
+  }
+
+  assert {
+    condition     = helm_release.n8n.repository == "oci://registry-1.internal.example.com:5000/n8n-helm-chart"
+    error_message = "A hyphenated multi-label host with a port is a valid mirror URL."
+  }
+}
+
 run "accepts_n8n_chart_repository_with_a_port_or_ipv6_host" {
   command = plan
 
