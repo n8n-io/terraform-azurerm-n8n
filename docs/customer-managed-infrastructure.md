@@ -565,16 +565,26 @@ caller-owned Key Vault key.
 When `true` and `create_aks = true`, this module enables the AKS-managed
 Secrets Store CSI driver add-on
 (`azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider`) with
-autorotation on. The add-on creates and manages its own identity; this
-module only optionally grants that identity `Key Vault Secrets User` on a
-caller-named vault **using Azure RBAC** when both
+autorotation on. The add-on creates and manages its own identity. The
+`aks_key_vault_secrets_provider_identity_client_id` output gives its client
+ID, which a `SecretProviderClass` sets as `userAssignedIdentityID`, and
+`aks_key_vault_secrets_provider_identity_object_id` gives its object ID.
+This module only optionally grants that identity `Key Vault Secrets User`
+**using Azure RBAC** when both
 `aks_key_vault_secrets_provider_role_assignment_enabled = true` and
-`aks_key_vault_secrets_provider_keyvault_id` are set. `Key Vault Secrets
-User` only authorizes reads under Azure RBAC; on an access-policy vault this
-role assignment leaves the identity unauthorized, so grant access through an
+`aks_key_vault_secrets_provider_keyvault_id` are set. The vault ID is only
+the scope of that grant; each `SecretProviderClass` names the vault it reads
+from. The grant covers every secret in the vault, and the add-on identity is
+shared by every `SecretProviderClass` in the cluster. Grant it on a vault
+that holds only the secrets you intend to sync. Never grant it on a vault
+that also holds unrelated secrets or certificates, such as the Application
+Gateway TLS certificate: Key Vault returns a certificate's private key when
+it is read as a secret. `Key Vault Secrets User` only authorizes reads under
+Azure RBAC; on an access-policy vault this role assignment leaves the
+identity unauthorized, so give the identity the secret `get` permission in an
 access policy instead. When the toggle is `false` (default), grant that
-identity access out-of-band instead (for example a vault in RBAC mode with
-your own `azurerm_role_assignment`).
+identity access out-of-band (for example a vault in RBAC mode with your own
+`azurerm_role_assignment` on the object ID output above).
 `aks_key_vault_secrets_provider_secret_rotation_interval` controls the
 autorotation poll interval (default `2m`, matching the AKS default).
 
@@ -617,71 +627,128 @@ equally valid alternative sync mechanism; this module does not install it,
 but the same target-Secret contract applies regardless of which syncer a
 caller chooses.
 
-**KMS etcd encryption (`aks_kms_key_vault_key_id`).** Set this input (a Key
-Vault key identifier) and `create_aks = true` to enable AKS's Key Management
-Service etcd encryption
-(`azurerm_kubernetes_cluster.n8n[0].key_management_service`) using a
-caller-owned Key Vault key instead of Microsoft's platform-managed key.
-`aks_kms_key_vault_network_access` selects `"Public"` (default) or
-`"Private"` vault network access.
+**KMS etcd encryption (`aks_kms_key_vault_key_id`).** Set this input to a
+**versioned** Key Vault key identifier
+(`https://<vault>.vault.azure.net/keys/<key>/<version>`) with
+`create_aks = true` to enable AKS's Key Management Service etcd encryption
+(`azurerm_kubernetes_cluster.n8n[0].key_management_service`) with a
+caller-owned Key Vault key instead of Microsoft's platform-managed key. The
+azurerm provider rejects a versionless identifier, so the module does too.
+This is the KMS experience that the provider's `key_management_service`
+block configures, which Microsoft's documentation calls the legacy
+experience. For new clusters on Kubernetes 1.33 or later, Microsoft
+recommends its newer KMS data encryption experience; this module does not
+configure it. See [Microsoft's legacy KMS etcd encryption
+documentation](https://learn.microsoft.com/azure/aks/use-kms-etcd-encryption),
+which also lists the feature's limits (for example, at most 2,000 Secrets per
+cluster).
 
-Azure's KMS feature rejects a `SystemAssigned` cluster identity outright
-(`Azure Key Vault KMS feature does not support cluster identity type
-"SystemAssigned"`), so setting either `aks_kms_role_assignment_enabled` or
-`aks_kms_key_vault_key_id` switches the cluster's
-identity block from this module's default `SystemAssigned` to a dedicated
-`UserAssigned` identity (`azurerm_user_assigned_identity.aks_cluster`) that
-this module creates and manages for you. On an already-running cluster this
-identity-type switch is applied in place by `terraform apply` (confirmed
-live, no cluster replacement). Azure also requires that identity to already
-hold `Key Vault Crypto User` on the vault **before** KMS can be enabled —
-not `Key Vault Crypto Service Encryption User`, which only carries the
-wrap/unwrap data actions and was live-confirmed (on a brand-new cluster,
-with no identity-type switch in play) to fail AKS's own
-`AzureKeyVaultKmsValidateIdentityPermissionCustomerError` identity-
-permission validation, which checks specifically for encrypt/decrypt.
-`Key Vault Crypto User` is also the role Microsoft's own AKS KMS
-documentation grants for this scenario. This ordering hazard is not
-limited to a brand-new cluster:
-within a single
-`terraform apply`, Terraform has no way to guarantee the role assignment
-finishes before the cluster's `key_management_service` block is added,
-whether the cluster is being created for the first time or already exists
-and is only now gaining the role assignment. Enabling KMS therefore always
-takes **two applies** whenever this module manages the role assignment and
-the grant does not already exist. This also grants the role through an
-`azurerm_role_assignment`, an Azure RBAC grant that only takes effect on a
-vault using the Azure RBAC permission model, exactly like the `Key Vault
-Secrets User` grant above: on an access-policy vault, the first apply
-below silently creates a no-op role assignment, and the second apply still
-fails AKS's KMS identity-permission validation, the exact failed-state
-scenario this section steers callers away from. Grant `Key Vault Crypto
-User` through an access policy instead on an access-policy vault (see
-`examples/medium`, whose vault uses RBAC and so never exercises this
-path):
+The module always sets `key_vault_network_access = "Public"`, so the key
+vault must allow public network access **from all networks**. Microsoft's
+legacy KMS does not support a vault restricted to selected virtual networks
+and IP addresses, or one with public access disabled unless API Server VNet
+Integration is enabled. Private vault access needs API Server VNet
+Integration and a private-link grant on the vault, and this module
+configures neither. The vault must also be in the same Microsoft Entra
+tenant as the cluster, and the key must allow the `encrypt` and `decrypt`
+operations.
+
+AKS rejects KMS on a `SystemAssigned` cluster identity (`Azure Key Vault KMS
+feature does not support cluster identity type "SystemAssigned"`). KMS
+therefore needs one of two plan-known toggles, and `aks_kms_key_vault_key_id`
+is rejected without one:
+
+- `aks_kms_role_assignment_enabled = true` (with `aks_kms_key_vault_id`):
+  the module grants the identity `Key Vault Crypto User` on the vault and
+  waits 120 seconds for the grant to propagate.
+- `aks_kms_cluster_identity_enabled = true`: the module grants no Key Vault
+  role, and you grant access yourself.
+
+Either toggle switches the cluster's identity block from `SystemAssigned` to
+the module-managed `UserAssigned` identity
+(`azurerm_user_assigned_identity.aks_cluster`), granted `Network Contributor`
+on `aks_subnet_id`. Its principal ID is the `aks_cluster_identity_principal_id`
+output. On an already-running cluster this identity-type switch is applied
+in place by `terraform apply` (confirmed live, no cluster replacement). The
+same identity serves a caller-owned private DNS zone
+(`aks_private_dns_zone_id`), so both features together still create only
+one.
+
+The identity needs `Key Vault Crypto User`, not `Key Vault Crypto Service
+Encryption User`. The second role only carries the wrap/unwrap data actions
+and was live-confirmed (on a brand-new cluster, with no identity-type switch
+in play) to fail AKS's
+`AzureKeyVaultKmsValidateIdentityPermissionCustomerError` identity-permission
+validation, which checks specifically for encrypt/decrypt. `Key Vault
+Crypto User` is also the role Microsoft's AKS KMS documentation grants. The
+module's grant is an `azurerm_role_assignment`, an Azure RBAC grant that only
+takes effect on a vault that uses the Azure RBAC permission model. On an
+access-policy vault, use `aks_kms_cluster_identity_enabled = true` instead
+and give the identity the key permissions `encrypt` and `decrypt` in an
+access policy. `examples/medium` uses an RBAC vault.
+
+#### Turning KMS on
+
+AKS checks the identity's permissions on the vault when KMS is turned on.
+The cluster depends on the module's grant and its 120-second wait, so
+Terraform orders them first. Azure RBAC grants on Key Vault can still take
+several minutes to take effect, and a KMS enable that fails the permission
+check fails the apply. Turn KMS on in two applies:
 
 1. First apply: set `aks_kms_role_assignment_enabled = true` and
-   `aks_kms_key_vault_id` to the vault, but leave `aks_kms_key_vault_key_id =
-   null`. This grants the identity the role (creating the cluster too, on a
-   first-time deployment).
-2. Wait for the role assignment to propagate before the next apply. Azure
-   RBAC grants on Key Vault can take several minutes to become effective,
-   and AKS validates the identity's permissions when KMS is enabled. If the
-   grant has not propagated yet, the second apply fails with
-   `AzureKeyVaultKmsValidateIdentityPermissionCustomerError` even though the
-   assignment exists. Allow about 10 minutes, or confirm the identity can
-   use the key (for example, the assignment shows in
+   `aks_kms_key_vault_id`, but leave `aks_kms_key_vault_key_id = null`. This
+   creates the identity and grants it the role (creating the cluster too, on
+   a first-time deployment). To grant the role yourself, set
+   `aks_kms_cluster_identity_enabled = true` instead, then grant the
+   identity from the `aks_cluster_identity_principal_id` output.
+2. Wait for the grant to take effect. Allow about 10 minutes, or confirm the
+   assignment shows in
    `az role assignment list --scope <vault id> --assignee <identity principal id>`
-   and has been in place for several minutes).
+   and has been in place for several minutes.
 3. Second apply: set `aks_kms_key_vault_key_id`. AKS enables KMS as an
    update against the now-authorized identity. If it still fails with the
    permission error above, wait a few more minutes and re-run the apply.
+4. Rewrite every existing Secret so that it is stored encrypted with the new
+   key. AKS only encrypts Secrets written after KMS is on, and the module
+   writes its own Secrets (database, Redis, encryption key, task-runner
+   token, license) before the second apply:
 
-Skipping the first apply, or granting the role out-of-band before either
-apply against a pre-existing identity, also works. Setting both
-`aks_kms_role_assignment_enabled = true` and `aks_kms_key_vault_key_id`
-together in the same apply is only safe when the role assignment is already
-known, from a prior apply, to exist.
+   ```bash
+   kubectl get secrets --all-namespaces -o json | kubectl replace -f -
+   ```
+
+   Microsoft says to run this even if the apply that changed KMS failed, and
+   that the error `The object has been modified; please apply your changes
+   to the latest version and try again.` is safe to ignore.
+
+Setting a KMS toggle and `aks_kms_key_vault_key_id` together in one apply is
+only safe when the grant is already known, from a prior apply, to be in
+effect.
+
+#### Rotating the key
+
+AKS keeps using the exact key version in `aks_kms_key_vault_key_id`. A new
+key version, from Key Vault's own rotation policy or created by hand, has no
+effect until you set it in `aks_kms_key_vault_key_id` and apply. After that
+apply, confirm that AKS uses the new version
+(`az aks show --resource-group <rg> --name <cluster> --query securityProfile.azureKeyVaultKms.keyId`),
+then rewrite every Secret with the `kubectl replace` command above. AKS
+uses the previous and the current key at the same time, so keep the
+previous key version enabled and unexpired until the next rotation.
+
+#### Turning KMS off
+
+1. Set `aks_kms_key_vault_key_id = null`, but keep the KMS toggle
+   (`aks_kms_role_assignment_enabled` or `aks_kms_cluster_identity_enabled`)
+   on and keep the key. Apply. The identity and its grants stay in place.
+2. Rewrite every Secret with the `kubectl replace` command above, so that
+   none is stored encrypted with the key any more.
+
+Do not delete, disable, or let expire any key version the cluster has used,
+and do not remove the identity's access to the vault, even after KMS is off:
+Microsoft warns that doing so can stop the API server from working. This
+module offers no verified procedure for removing the identity and its grants
+afterwards. The disable path has not been qualified live with this module.
 
 ## Secrets that remain in Terraform state
 

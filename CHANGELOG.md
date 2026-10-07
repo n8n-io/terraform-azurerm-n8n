@@ -303,19 +303,39 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   already read, without adding a static credential to Terraform state.
   `aks_key_vault_secrets_provider_role_assignment_enabled = true` requires
   `aks_key_vault_secrets_provider_enabled = true`, or the role assignment
-  fails planning against the add-on's not-yet-rendered identity.
-- Optional AKS KMS etcd encryption with a caller-owned Key Vault key
-  (`aks_kms_key_vault_key_id`, `aks_kms_key_vault_network_access`) and an
-  optional role assignment granting the cluster's own identity `Key
-  Vault Crypto User` on a caller-named vault
-  (`aks_kms_role_assignment_enabled`, `aks_kms_key_vault_id`). KMS requires
-  swapping the cluster identity from `SystemAssigned` to a dedicated
-  `UserAssigned` identity, which also needs `Network Contributor` on the
-  AKS subnet (granted automatically, since a `SystemAssigned` identity
-  would otherwise receive it implicitly). Enabling KMS on a cluster this
-  module creates takes two applies — see
-  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault)
-  for the sequencing note.
+  fails planning against the add-on's not-yet-rendered identity. The grant
+  covers every secret in the vault, so use a vault that holds only the
+  secrets you sync. New outputs `aks_key_vault_secrets_provider_identity_client_id`
+  and `aks_key_vault_secrets_provider_identity_object_id` expose the
+  add-on's identity.
+- Optional AKS KMS etcd encryption (legacy AKS KMS experience) with a
+  caller-owned Key Vault key (`aks_kms_key_vault_key_id`, which must be a
+  versioned key identifier). Key vault network access is always `Public`:
+  private vault access needs API Server VNet Integration, which this module
+  does not configure. KMS needs one of two plan-known toggles, which switch
+  the cluster identity from `SystemAssigned` to the module-managed
+  `UserAssigned` `aks_cluster` identity (the same one a caller-owned private
+  DNS zone uses) and grant it `Network Contributor` on the AKS subnet:
+  `aks_kms_role_assignment_enabled` (with `aks_kms_key_vault_id`) also grants
+  `Key Vault Crypto User` on the vault and waits 120 seconds for it to
+  propagate, and `aks_kms_cluster_identity_enabled` leaves the Key Vault
+  grant to the caller. New outputs `aks_cluster_identity_principal_id` and
+  `aks_cluster_identity_client_id` expose that identity. The cluster depends
+  on the grant, but Azure RBAC can take longer to take effect, so the
+  documented procedure turns KMS on in a second apply. After turning KMS on,
+  rotating the key, or turning KMS off, rewrite every existing Secret; turn
+  KMS off by clearing only `aks_kms_key_vault_key_id` and keep the toggle,
+  the grant, and the key. See
+  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault).
+- Setting a Key Vault add-on input or KMS toggle while `create_aks = false`
+  warns and the input is ignored, like other AKS-only inputs.
+- `examples/medium` now enables the Key Vault Secrets Provider add-on
+  (without a vault grant, because its vault holds the TLS certificate) and
+  prepares KMS. Applying it to an existing deployment of the example
+  switches the cluster identity to `UserAssigned` in place, adds the
+  identity's role assignments, and turns on purge protection for the
+  example's vault, which Azure cannot turn off again. See
+  [`examples/medium/README.md`](./examples/medium/README.md).
 - Both add-ons are documented in
   [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault)
   and demonstrated in [`examples/medium/`](./examples/medium/)
