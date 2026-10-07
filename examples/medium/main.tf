@@ -129,9 +129,10 @@ resource "random_string" "key_vault_suffix" {
 }
 
 # Purge protection is on because this vault also holds the AKS KMS etcd
-# encryption key (azurerm_key_vault_key.aks_kms below): AKS requires soft
-# delete and purge protection on any vault used for KMS, since losing the
-# key would make every Secret already written to etcd unrecoverable.
+# encryption key (azurerm_key_vault_key.aks_kms below). If that key is
+# permanently deleted, AKS cannot decrypt Secrets already written to etcd,
+# so a deleted key or vault must stay recoverable during soft-delete
+# retention. Purge protection cannot be turned off again.
 resource "azurerm_key_vault" "tls" {
   name                       = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
   resource_group_name        = azurerm_resource_group.network.name
@@ -166,7 +167,17 @@ module "tls_self_signed" {
   depends_on = [time_sleep.key_vault_rbac]
 }
 
+# KMS etcd encryption key. AKS uses the exact version passed as
+# aks_kms_key_vault_key_id, so no rotation_policy here: a rotated version is
+# only used once you pass it to the module and rewrite existing Secrets (see
+# docs/customer-managed-infrastructure.md). No prevent_destroy either, so the
+# example can still be torn down; the module's depends_on below makes
+# terraform destroy remove the cluster before this key. In a long-lived deployment, protect the key: AKS cannot
+# read etcd Secrets once a key version it used is deleted, disabled, or
+# expired.
 resource "azurerm_key_vault_key" "aks_kms" {
+  # checkov:skip=CKV_AZURE_40:No expiration date on purpose. AKS keeps using this key version, and an expired KMS key makes the API server unable to read existing Secrets.
+  # checkov:skip=CKV_AZURE_112:The example vault uses the standard SKU, which cannot hold HSM-backed keys. Use an RSA-HSM key in a premium vault in production if your policy requires it.
   name         = "${var.friendly_name_prefix}-aks-etcd-kms"
   key_vault_id = azurerm_key_vault.tls.id
   key_type     = "RSA"
@@ -244,17 +255,20 @@ module "n8n" {
   app_gateway_keyvault_id                      = azurerm_key_vault.tls.id
   app_gateway_keyvault_role_assignment_enabled = true
 
-  aks_key_vault_secrets_provider_enabled                 = true
-  aks_key_vault_secrets_provider_keyvault_id             = azurerm_key_vault.tls.id
-  aks_key_vault_secrets_provider_role_assignment_enabled = true
+  # Key Vault Secrets Provider add-on only. No role assignment here: this
+  # vault holds the gateway's TLS certificate, whose private key the add-on
+  # identity could read as a secret. Grant that identity Key Vault Secrets
+  # User on a separate vault that holds only the secrets you sync (output
+  # aks_key_vault_secrets_provider_identity_object_id).
+  aks_key_vault_secrets_provider_enabled = true
 
-  # KMS etcd encryption: this apply only grants the cluster's identity
-  # access to the vault. aks_kms_key_vault_key_id stays null here because
-  # that identity does not exist until the cluster itself is created in
-  # this same apply — see the two-apply sequencing note in
+  # KMS etcd encryption, first of two applies: this apply creates the
+  # cluster's UserAssigned identity and grants it Key Vault Crypto User on
+  # the vault. The module orders the grant and a 120 s propagation wait
+  # before the cluster, but Azure RBAC can take longer to take effect, so KMS
+  # is turned on in a second apply. Once the grant has taken effect, set
+  # aks_kms_key_vault_key_id = azurerm_key_vault_key.aks_kms.id. See
   # docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault.
-  # Set aks_kms_key_vault_key_id = azurerm_key_vault_key.aks_kms.id on the
-  # next apply to turn KMS on.
   aks_kms_role_assignment_enabled = true
   aks_kms_key_vault_id            = azurerm_key_vault.tls.id
 
@@ -263,8 +277,13 @@ module "n8n" {
 
   n8n_license_key = var.n8n_license_key
 
+  # azurerm_key_vault_key.aks_kms is listed explicitly so terraform destroy
+  # always removes the cluster before the KMS key, even after KMS was turned
+  # off by setting aks_kms_key_vault_key_id back to null (which removes the
+  # implicit reference).
   depends_on = [
     time_sleep.storage_rbac,
+    azurerm_key_vault_key.aks_kms,
     azurerm_subnet.aks,
     azurerm_subnet.appgw,
     azurerm_subnet.postgres,

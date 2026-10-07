@@ -23,7 +23,13 @@ Copy `terraform.tfvars.example` to `terraform.tfvars`, replace the placeholders,
 
 The included Key Vault certificate is self-signed. Replace it with the Let's Encrypt helper or a certificate from your public key infrastructure before production.
 
-This example also enables the AKS Key Vault Secrets Provider add-on and grants it read access to the shared `azurerm_key_vault.tls` vault, and grants the cluster's own identity access to a caller-owned KMS key (`azurerm_key_vault_key.aks_kms`) in that same vault without turning KMS on yet. See [Delivering secrets from Azure Key Vault](../../docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault) for the `SecretProviderClass` pattern and the two-apply sequence that turns KMS on.
+This example also enables the AKS Key Vault Secrets Provider add-on, without granting it access to any vault: the shared `azurerm_key_vault.tls` vault holds the gateway's TLS certificate, whose private key the add-on identity could read as a secret. Grant that identity `Key Vault Secrets User` on a separate vault that holds only the secrets you sync. The example also prepares KMS etcd encryption: it creates a KMS key (`azurerm_key_vault_key.aks_kms`) in the shared vault and grants the cluster's own identity access to it, without turning KMS on yet. See [Delivering secrets from Azure Key Vault](../../docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault) for the `SecretProviderClass` pattern and the two-apply sequence that turns KMS on.
+
+**Upgrading an existing deployment of this example.** The next apply changes a running deployment in three ways. Review the plan before you apply:
+
+- The AKS cluster identity switches from `SystemAssigned` to the module-managed `aks_cluster` UserAssigned identity. This is an in-place update, not a cluster replacement. The identity also gets `Network Contributor` on the AKS subnet and `Key Vault Crypto User` on the shared vault.
+- Purge protection turns on for the shared vault. Azure cannot turn it off again. After a `terraform destroy`, the vault name stays reserved until the 7-day soft-delete retention ends.
+- The Key Vault Secrets Provider add-on is installed on the cluster.
 
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
 
