@@ -100,8 +100,10 @@ For a single-shot end-to-end check that exercises every layer (AKS API, namespac
 | `appgw_fqdn`               | Azure-assigned `<prefix>-n8n.<region>.cloudapp.azure.com` — useful as a CNAME target.                 |
 | `aks_cluster_name`         | Pass to `az aks get-credentials --name <this> --resource-group <your resource group>`.                |
 | `aks_resource_group`       | Sizing-example output (`azurerm_resource_group.n8n.name`) — this module itself takes a caller-supplied `resource_group_name` rather than creating one. |
-| `aks_kube_config`          | Sensitive local-account kubeconfig block — `terraform output -json aks_kube_config` for ad-hoc `kubectl` without `az aks get-credentials`. |
+| `aks_kube_config`          | Sensitive cluster-user connection block (host, CA, and, without Entra ID, a client certificate). It is not a kubeconfig file; use `az aks get-credentials` for ad-hoc `kubectl`. |
 | `n8n_namespace`            | Always `n8n` — useful for templating `kubectl -n <this>` invocations.                                  |
 | `n8n_encryption_key`       | The n8n encryption key — back up to a password manager.                                               |
 | `postgres_fqdn`            | Private Postgres FQDN — resolves only from inside the linked VNet.                                    |
 | `redis_hostname`           | Redis hostname (TLS port only — non-TLS is disabled).                                                 |
+
+For a module-managed cluster (`create_aks = true`), `aks_kube_config` carries a local-account client certificate only while `var.aks_entra_rbac` stays null (the default). Once `aks_entra_rbac` is set, `client_certificate` and `client_key` come back empty, even while local accounts stay enabled. Authenticate with `az aks get-credentials` (non-admin) plus `kubelogin` instead, for example `kubelogin convert-kubeconfig -l azurecli`. With `aks_local_account_disabled = true`, `az aks get-credentials --admin` is also rejected. On an existing cluster, disabling local accounts does not revoke admin certificates issued earlier; rotate the cluster certificates (`az aks rotate-certs`) to revoke them. See the [README provider-wiring section](../README.md#usage).

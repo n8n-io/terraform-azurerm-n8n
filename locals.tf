@@ -37,7 +37,28 @@ locals {
     var.common_tags,
   )
 
-  cluster_name         = "${var.friendly_name_prefix}-aks"
+  cluster_name = "${var.friendly_name_prefix}-aks"
+
+  # true only when aks_private_dns_zone_id names a caller-owned zone (not the
+  # "System" sentinel or the default null) -- aks.tf switches the cluster's
+  # identity to a module-created UserAssigned identity in that case, since
+  # Azure requires the identity to already hold Private DNS Zone Contributor
+  # on the zone and Network Contributor on the VNet before cluster create (a
+  # SystemAssigned identity has no ID to grant a role to until after the
+  # cluster exists). "None" is rejected by the variable's validation.
+  #
+  # var.aks_private_dns_zone_custom_identity overrides this inference with a
+  # plan-known literal when the comparison above cannot be: a caller passing
+  # a same-apply-created zone ID (e.g. azurerm_private_dns_zone.foo.id) hands
+  # this local an unknown string, and an unknown value feeding `count` below
+  # makes Terraform reject the plan. Setting the override explicitly decouples
+  # the identity-path decision from the zone ID's actual value.
+  aks_uses_custom_private_dns_zone = (
+    var.aks_private_dns_zone_custom_identity != null ? var.aks_private_dns_zone_custom_identity : (
+      var.aks_private_dns_zone_id != null &&
+      var.aks_private_dns_zone_id != "System"
+    )
+  )
   postgres_server_name = "${var.friendly_name_prefix}-postgres"
   redis_name           = "${var.friendly_name_prefix}-redis"
   storage_account_name = substr("${var.friendly_name_prefix}n8nfiles", 0, 24)

@@ -11,6 +11,39 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Added
 
+- Seven opt-in AKS network and identity inputs, all defaulting to the
+  module's current behavior so an existing caller sees no plan diff
+  ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)):
+  - `aks_private_cluster_enabled` and `aks_private_dns_zone_id`: private
+    API server. The zone is `"System"` (also what `null` sends on a private
+    cluster) or a caller-owned zone ID. `"None"` is rejected because Azure
+    does not support it while the public FQDN is disabled. A caller-owned
+    zone switches the cluster to a module-created user-assigned identity
+    granted `Private DNS Zone Contributor` on the zone and
+    `Network Contributor` on `vnet_id` before cluster create.
+    `aks_private_dns_zone_custom_identity` selects that identity path with a
+    plan-known literal when the zone ID is unknown until apply (for example
+    a zone created in the same apply). Changing `aks_private_cluster_enabled`
+    or `aks_private_dns_zone_id` later forces replacement of the AKS
+    cluster, so decide before the first apply.
+  - `aks_entra_rbac`: Entra ID integration and Azure RBAC for Kubernetes
+    authorization. Once set, `aks_kube_config` is an Entra (kubelogin
+    `exec`) kubeconfig with an empty `client_certificate` and `client_key`,
+    even while local accounts stay enabled. The README shows the `exec`
+    wiring for the `kubernetes`, `helm`, and `kubectl` providers. Entra
+    integration cannot be disabled once enabled.
+  - `aks_local_account_disabled`: requires `aks_entra_rbac`. On an existing
+    cluster it does not revoke admin certificates issued earlier, including
+    the one previously stored in state through `aks_kube_config`; rotate
+    the cluster certificates (`az aks rotate-certs`) to revoke them.
+  - `aks_outbound_type`: `loadBalancer` or `userDefinedRouting` egress. The
+    description lists two domains that Microsoft's AKS and Azure Firewall
+    FQDN list misses for the default n8n image (found in live testing).
+  - `aks_network_policy`: `null`, `azure`, `calico`, or `cilium`, with
+    `network_data_plane` set to `cilium` automatically for `cilium`.
+    Enabling an engine is one-way: setting it back to `null` keeps the
+    existing engine (or forces replacement from `cilium`).
+
 - `aks_system_pool_critical_addons_only`: opt-in bool (default false) that
   applies AzureRM's `only_critical_addons_enabled` to the system
   `default_node_pool`, tainting it `CriticalAddonsOnly=true:NoSchedule`.

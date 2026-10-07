@@ -16,8 +16,13 @@
 # caller-owned ingress creates no controller identity or Azure integration.
 #
 # Identity shape:
-#   - Cluster identity = SystemAssigned — the simplest viable path; no
-#     pre-create role-assignment dance with a kubelet UAMI.
+#   - Cluster identity = SystemAssigned by default — the simplest viable
+#     path; no pre-create role-assignment dance with a kubelet UAMI. Switches
+#     to the `aks_cluster` UserAssigned identity below only when
+#     var.aks_private_dns_zone_id names a caller-owned zone (issue #28):
+#     Azure requires that identity to already hold Private DNS Zone
+#     Contributor before cluster create, which a SystemAssigned identity
+#     cannot receive (it has no ID until the cluster exists).
 #   - Kubelet identity is left to Azure (auto-created at cluster create).
 #     A future story that needs a stable kubelet identity (e.g. private-ACR
 #     image pulls via AcrPull, or CMK Disk Encryption Set wiring) adds a
@@ -41,8 +46,27 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
-  identity {
-    type = "SystemAssigned"
+  # SystemAssigned by default. A BYO private DNS zone (aks_private_dns_zone_id
+  # set to a resource ID rather than "System") switches to the
+  # aks_cluster UserAssigned identity below, pre-granted Private DNS Zone
+  # Contributor on that zone — Azure requires the identity to already hold
+  # the role before cluster create, and a SystemAssigned identity has no ID
+  # to grant a role to that early.
+  dynamic "identity" {
+    for_each = local.aks_uses_custom_private_dns_zone ? [] : [1]
+
+    content {
+      type = "SystemAssigned"
+    }
+  }
+
+  dynamic "identity" {
+    for_each = local.aks_uses_custom_private_dns_zone ? [1] : []
+
+    content {
+      type         = "UserAssigned"
+      identity_ids = [azurerm_user_assigned_identity.aks_cluster[0].id]
+    }
   }
 
   default_node_pool {
@@ -75,12 +99,39 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   # Azure CNI. service_cidr is set to 172.16.0.0/16 so the cluster Service
   # range will not collide with the common 10.0.0.0/16 enterprise VNet
   # space (the Azure default of 10.0.0.0/16 frequently overlaps).
+  # outbound_type defaults to "loadBalancer" (current behavior); switching to
+  # "userDefinedRouting" (var.aks_outbound_type) requires a route table
+  # already attached to var.aks_subnet_id — see the variable's description.
+  # network_data_plane must be "cilium" whenever network_policy is "cilium"
+  # (Azure requirement) and otherwise stays "azure", matching the provider's
+  # own default so the block below is a no-op diff for existing callers.
   network_profile {
-    network_plugin    = "azure"
-    service_cidr      = "172.16.0.0/16"
-    dns_service_ip    = "172.16.0.10"
-    load_balancer_sku = "standard"
+    network_plugin     = "azure"
+    service_cidr       = "172.16.0.0/16"
+    dns_service_ip     = "172.16.0.10"
+    load_balancer_sku  = "standard"
+    outbound_type      = var.aks_outbound_type
+    network_policy     = var.aks_network_policy
+    network_data_plane = var.aks_network_policy == "cilium" ? "cilium" : "azure"
   }
+
+  # Private API server (issue #28). Azure rejects combining this with
+  # api_server_access_profile.authorized_ip_ranges — enforced by
+  # aks_private_cluster_enabled's own validation, so the two never collide
+  # here.
+  #
+  # private_dns_zone_id is Optional+Computed in the provider, so a null
+  # argument would silently keep whatever zone the cluster already has. A
+  # private cluster therefore always sends an explicit value: null maps to
+  # "System" (the zone Azure picks when the argument is omitted at create
+  # time, so existing private clusters see no diff). Clearing a caller-owned
+  # zone ID back to null then shows up as a zone change (cluster replacement)
+  # in the plan instead of silently removing the aks_cluster identity and its
+  # role grants below while the cluster keeps using that zone. "None" is
+  # rejected by the variable's validation: Azure does not support it while
+  # the public FQDN is disabled, which is this module's only configuration.
+  private_cluster_enabled = var.aks_private_cluster_enabled
+  private_dns_zone_id     = var.aks_private_cluster_enabled ? coalesce(var.aks_private_dns_zone_id, "System") : null
 
   # API authorized ranges (HVD-inspired addition — see design.md decision
   # 2 and the autoscaling-and-capacity spec's "Restrict the control plane"
@@ -96,6 +147,21 @@ resource "azurerm_kubernetes_cluster" "n8n" {
       authorized_ip_ranges = var.aks_api_authorized_ip_ranges
     }
   }
+
+  # Entra ID (Azure AD) integration and Azure RBAC authorization (issue #28).
+  # Omitted (null block list) by default, matching current local-account-only
+  # behavior. local_account_disabled is validated to require this block set.
+  dynamic "azure_active_directory_role_based_access_control" {
+    for_each = var.aks_entra_rbac != null ? [var.aks_entra_rbac] : []
+
+    content {
+      tenant_id              = azure_active_directory_role_based_access_control.value.tenant_id
+      admin_group_object_ids = azure_active_directory_role_based_access_control.value.admin_group_object_ids
+      azure_rbac_enabled     = azure_active_directory_role_based_access_control.value.azure_rbac_enabled
+    }
+  }
+
+  local_account_disabled = var.aks_local_account_disabled
 
   dynamic "ingress_application_gateway" {
     for_each = var.create_ingress ? [1] : []
@@ -114,6 +180,16 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   # the autoscaling-and-capacity spec's "Autoscaler-owned node count"
   # requirement and the AWS sibling's aws_eks_node_group.n8n equivalent in
   # eks.tf.
+  #
+  # depends_on the private-DNS-zone and VNet role assignments: when they
+  # exist (BYO zone), the cluster must not attempt to create before the
+  # aks_cluster identity is authorized on the zone and VNet; when they
+  # don't exist (count = 0), this is a no-op dependency.
+  depends_on = [
+    azurerm_role_assignment.aks_private_dns_zone_contributor,
+    azurerm_role_assignment.aks_cluster_vnet_network_contributor,
+  ]
+
   lifecycle {
     ignore_changes = [default_node_pool[0].node_count]
   }
@@ -162,6 +238,47 @@ resource "azurerm_user_assigned_identity" "n8n_workload" {
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-n8n-workload" })
 }
 
+# BYO private DNS zone (issue #28): a module-created identity, granted
+# Private DNS Zone Contributor on the caller's zone, that
+# azurerm_kubernetes_cluster.n8n's identity block switches to instead of
+# SystemAssigned. count = 0 (no identity, no role assignment, no cost) unless
+# aks_private_dns_zone_id names a caller-owned zone resource ID, or
+# aks_private_dns_zone_custom_identity is explicitly set (locals.tf) because
+# the zone ID is itself unknown at plan time in the caller's apply.
+resource "azurerm_user_assigned_identity" "aks_cluster" {
+  count = var.create_aks && local.aks_uses_custom_private_dns_zone ? 1 : 0
+
+  name                = "${var.friendly_name_prefix}-aks-cluster"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-aks-cluster" })
+}
+
+resource "azurerm_role_assignment" "aks_private_dns_zone_contributor" {
+  count = var.create_aks && local.aks_uses_custom_private_dns_zone ? 1 : 0
+
+  scope                = var.aks_private_dns_zone_id
+  role_definition_name = "Private DNS Zone Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
+}
+
+# BYO-zone cluster identity network access (issue #28 review follow-up):
+# when the aks_cluster identity above replaces SystemAssigned, Azure requires
+# it to hold Network Contributor on the cluster's VNet before cluster create.
+# A subnet-scoped grant is not enough: AKS links the caller's private DNS
+# zone to the cluster VNet (a VNet-level operation, even when the zone is
+# already linked to a hub VNet) besides managing subnet-backed networking.
+# See https://learn.microsoft.com/azure/aks/private-clusters ("Hub and spoke
+# with custom DNS" and the custom zone configuration table).
+resource "azurerm_role_assignment" "aks_cluster_vnet_network_contributor" {
+  count = var.create_aks && local.aks_uses_custom_private_dns_zone ? 1 : 0
+
+  scope                = var.vnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
+}
+
 # ── AKS API warm-up gate ──────────────────────────────────────────────────
 # Azure reports the AKS resource as `Succeeded` before `/healthz` is
 # consistently green; the kubernetes and helm providers fire 503s (`EOF`,
@@ -174,7 +291,8 @@ resource "azurerm_user_assigned_identity" "n8n_workload" {
 #      transient burst of 503s after the gate is left to:
 #   2. The kubernetes/helm providers' built-in retry on transient API
 #      errors (configured via certificate-based provider auth in the
-#      caller's providers.tf — no kubelogin/exec dependency).
+#      caller's providers.tf, or a kubelogin exec block once
+#      var.aks_entra_rbac is set).
 #
 # Every downstream Kubernetes-/Helm-provider resource this module creates
 # (controllers.tf, keda.tf, n8n.tf — sections 6+) must depend on this gate,

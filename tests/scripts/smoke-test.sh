@@ -405,9 +405,25 @@ check_main_leader_logs() {
   done <<< "$leader_pods"
 }
 
+# ── Entra kubeconfig conversion ─────────────────────────────────────────────
+# `az aks get-credentials` (non-admin) against an Entra ID (AAD RBAC) cluster
+# (issue #28's aks_entra_rbac) writes an exec-plugin kubeconfig referencing
+# kubelogin, defaulting to its interactive devicecode login mode, which hangs
+# forever non-interactively. Convert it to azurecli mode so kubelogin reuses
+# the operator's already-authenticated `az login` session. A non-Entra
+# cluster yields a plain client-certificate kubeconfig with no exec plugin, so
+# the call is skipped there. Returns 0 when no conversion is needed or the
+# conversion succeeded, 1 when it failed. Defined here for the same self-test
+# reason as detect_topology() above.
+convert_entra_kubeconfig() {
+  local kubeconfig_file="$1"
+  grep -q 'command: kubelogin' "$kubeconfig_file" 2>/dev/null || return 0
+  KUBECONFIG="$kubeconfig_file" kubelogin convert-kubeconfig -l azurecli &>/dev/null
+}
+
 # ── Self-test (offline, no Azure credentials) ─────────────────────────────────
-# `SMOKE_TEST_SELF_TEST=1 ./smoke-test.sh` exercises detect_topology() and
-# check_deployment() against recorded/synthetic kubectl fixtures for
+# `SMOKE_TEST_SELF_TEST=1 ./smoke-test.sh` exercises detect_topology(),
+# check_deployment(), and convert_entra_kubeconfig() against recorded/synthetic kubectl fixtures for
 # single-main, healthy multi-main, degraded multi-main (one ready pod of
 # two desired), and invalid HPA/strategy/PDB combinations, proving the logic offline,
 # without az login, terraform state, or a live cluster. Runs and exits before
@@ -605,6 +621,35 @@ paused at two|true|2|true/2/false
 stray held count without pause|false|0|false//false
 PAUSE_FIXTURES
 
+  echo ""
+  echo "== Self-test: Entra kubeconfig conversion =="
+  # Records each call; any call other than `convert-kubeconfig -l azurecli`
+  # against the fixture file counts as a failure, so a wrong login mode or a
+  # wrong KUBECONFIG target cannot pass.
+  kubelogin() {
+    KUBELOGIN_CALLS=$((KUBELOGIN_CALLS + 1))
+    if [[ "$*" != "convert-kubeconfig -l azurecli" || "${KUBECONFIG:-}" != "$kubeconfig_fixture" ]]; then
+      fail "kubelogin called as '$*' with KUBECONFIG='${KUBECONFIG:-}'"
+      self_test_failures=$((self_test_failures + 1))
+      return 1
+    fi
+    [[ "$KUBELOGIN_FIXTURE" == "fails" ]] && return 1
+    return 0
+  }
+  kubeconfig_fixture=$(mktemp)
+  while IFS='|' read -r fixture_name KUBELOGIN_FIXTURE fixture_body expected; do
+    KUBELOGIN_CALLS=0
+    printf '%b' "$fixture_body" > "$kubeconfig_fixture"
+    if convert_entra_kubeconfig "$kubeconfig_fixture"; then rc=0; else rc=1; fi
+    assert_eq "$fixture_name (rc/kubelogin calls)" "$expected" "$rc/$KUBELOGIN_CALLS"
+  done <<'KUBECONFIG_FIXTURES'
+client certificate|ok|users:\n- user:\n    client-certificate-data: abc\n|0/0
+entra exec converted|ok|users:\n- user:\n    exec:\n      command: kubelogin\n|0/1
+entra exec conversion fails|fails|users:\n- user:\n    exec:\n      command: kubelogin\n|1/1
+KUBECONFIG_FIXTURES
+  rm -f "$kubeconfig_fixture"
+  unset -f kubelogin
+
   echo "Self-test summary: $PASS passed, $FAIL failed (includes expected failures), $WARN warned"
   if [[ "$self_test_failures" -gt 0 ]]; then
     echo "SELF-TEST RESULT: FAIL"
@@ -716,6 +761,11 @@ else
     fail "az aks get-credentials failed for $AKS_CLUSTER_NAME / $AKS_RESOURCE_GROUP"
     exit 1
   fi
+fi
+
+if ! convert_entra_kubeconfig "$KUBECONFIG_TMP"; then
+  fail "kubelogin convert-kubeconfig failed — Entra kubeconfig is still in interactive devicecode mode and 'kubectl cluster-info' will hang; install/upgrade kubelogin and rerun"
+  exit 1
 fi
 pass "kubeconfig populated for $AKS_CLUSTER_NAME"
 
