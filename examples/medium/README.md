@@ -23,12 +23,12 @@ Copy `terraform.tfvars.example` to `terraform.tfvars`, replace the placeholders,
 
 The included Key Vault certificate is self-signed. Replace it with the Let's Encrypt helper or a certificate from your public key infrastructure before production.
 
-This example also enables the AKS Key Vault Secrets Provider add-on, without granting it access to any vault: the shared `azurerm_key_vault.tls` vault holds the gateway's TLS certificate, whose private key the add-on identity could read as a secret. Grant that identity `Key Vault Secrets User` on a separate vault that holds only the secrets you sync. The example also prepares KMS etcd encryption: it creates a KMS key (`azurerm_key_vault_key.aks_kms`) in the shared vault and grants the cluster's own identity access to it, without turning KMS on yet. See [Delivering secrets from Azure Key Vault](../../docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault) for the `SecretProviderClass` pattern and the two-apply sequence that turns KMS on.
+This example also enables the AKS Key Vault Secrets Provider add-on, without granting it access to any vault: the shared `azurerm_key_vault.tls` vault holds the gateway's TLS certificate, whose private key the add-on identity could read as a secret. Grant that identity `Key Vault Secrets User` on a separate vault that holds only the secrets you sync. The example also prepares KMS etcd encryption: it creates a dedicated vault with purge protection (`azurerm_key_vault.kms`) and a KMS key in it (`azurerm_key_vault_key.aks_kms`), and grants the cluster's own identity access to that vault, without turning KMS on yet. The KMS key has its own vault because the grant covers the whole vault, and in the TLS vault it would also cover the gateway certificate's key. See [Delivering secrets from Azure Key Vault](../../docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault) for the `SecretProviderClass` pattern and the two-apply sequence that turns KMS on.
 
 **Upgrading an existing deployment of this example.** The next apply changes a running deployment in three ways. Review the plan before you apply:
 
-- The AKS cluster identity switches from `SystemAssigned` to the module-managed `aks_cluster` UserAssigned identity. This is an in-place update, not a cluster replacement. The identity also gets `Network Contributor` on the AKS subnet and `Key Vault Crypto User` on the shared vault.
-- Purge protection turns on for the shared vault. Azure cannot turn it off again. After a `terraform destroy`, the vault name stays reserved until the 7-day soft-delete retention ends.
+- The AKS cluster identity switches from `SystemAssigned` to the module-managed `aks_cluster` UserAssigned identity. This is an in-place update, not a cluster replacement. The identity also gets `Network Contributor` on the AKS subnet and `Key Vault Crypto User` on the new KMS vault.
+- A new Key Vault (`azurerm_key_vault.kms`) with purge protection is created. Azure cannot turn purge protection off again, so after a `terraform destroy` this vault cannot be purged and its name stays reserved until the 7-day soft-delete retention ends.
 - The Key Vault Secrets Provider add-on is installed on the cluster.
 
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
@@ -84,11 +84,13 @@ See [the tier comparison](../README.md).
 | Name | Type |
 | ---- | ---- |
 | [azurerm_dns_zone.public](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/dns_zone) | resource |
+| [azurerm_key_vault.kms](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/key_vault) | resource |
 | [azurerm_key_vault.tls](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/key_vault) | resource |
 | [azurerm_key_vault_key.aks_kms](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/key_vault_key) | resource |
 | [azurerm_resource_group.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
 | [azurerm_resource_group.network](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
 | [azurerm_role_assignment.key_vault_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.kms_key_vault_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.terraform_blob_data_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_subnet.aks](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
 | [azurerm_subnet.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |

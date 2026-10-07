@@ -128,13 +128,30 @@ resource "random_string" "key_vault_suffix" {
   special = false
 }
 
-# Purge protection is on because this vault also holds the AKS KMS etcd
-# encryption key (azurerm_key_vault_key.aks_kms below). If that key is
-# permanently deleted, AKS cannot decrypt Secrets already written to etcd,
-# so a deleted key or vault must stay recoverable during soft-delete
-# retention. Purge protection cannot be turned off again.
 resource "azurerm_key_vault" "tls" {
   name                       = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
+  resource_group_name        = azurerm_resource_group.network.name
+  location                   = azurerm_resource_group.network.location
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "standard"
+  soft_delete_retention_days = 7
+  purge_protection_enabled   = false
+  rbac_authorization_enabled = true
+  tags                       = local.common_tags
+}
+
+# Dedicated vault for the AKS KMS etcd encryption key. Kept apart from the
+# TLS vault because the module grants the cluster identity Key Vault Crypto
+# User on the whole vault: in the TLS vault, that would also let it use the
+# gateway certificate's key. Purge protection is on because AKS cannot
+# decrypt Secrets already written to etcd once the key is permanently
+# deleted, so a deleted key or vault must stay recoverable during
+# soft-delete retention. Purge protection cannot be turned off again.
+resource "azurerm_key_vault" "kms" {
+  # checkov:skip=CKV_AZURE_109:Legacy AKS KMS with Public key vault network access does not support a firewall restricted to selected networks; the vault must allow public access from all networks.
+  # checkov:skip=CKV_AZURE_189:Same requirement as CKV_AZURE_109: the module sets key_vault_network_access = "Public", and Private access needs API Server VNet Integration, which the module does not configure.
+  # checkov:skip=CKV2_AZURE_32:A private endpoint only helps with Private key vault network access, which the module does not support (see CKV_AZURE_189).
+  name                       = substr("${var.friendly_name_prefix}-kms-${random_string.key_vault_suffix.result}", 0, 24)
   resource_group_name        = azurerm_resource_group.network.name
   location                   = azurerm_resource_group.network.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id
@@ -151,8 +168,17 @@ resource "azurerm_role_assignment" "key_vault_operator" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
+resource "azurerm_role_assignment" "kms_key_vault_operator" {
+  scope                = azurerm_key_vault.kms.id
+  role_definition_name = "Key Vault Administrator"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
 resource "time_sleep" "key_vault_rbac" {
-  depends_on      = [azurerm_role_assignment.key_vault_operator]
+  depends_on = [
+    azurerm_role_assignment.key_vault_operator,
+    azurerm_role_assignment.kms_key_vault_operator,
+  ]
   create_duration = "60s"
 }
 
@@ -172,14 +198,14 @@ module "tls_self_signed" {
 # only used once you pass it to the module and rewrite existing Secrets (see
 # docs/customer-managed-infrastructure.md). No prevent_destroy either, so the
 # example can still be torn down; the module's depends_on below makes
-# terraform destroy remove the cluster before this key. In a long-lived deployment, protect the key: AKS cannot
-# read etcd Secrets once a key version it used is deleted, disabled, or
-# expired.
+# terraform destroy remove the cluster before this key. In a long-lived
+# deployment, protect the key: AKS cannot read etcd Secrets once a key
+# version it used is deleted, disabled, or expired.
 resource "azurerm_key_vault_key" "aks_kms" {
   # checkov:skip=CKV_AZURE_40:No expiration date on purpose. AKS keeps using this key version, and an expired KMS key makes the API server unable to read existing Secrets.
   # checkov:skip=CKV_AZURE_112:The example vault uses the standard SKU, which cannot hold HSM-backed keys. Use an RSA-HSM key in a premium vault in production if your policy requires it.
   name         = "${var.friendly_name_prefix}-aks-etcd-kms"
-  key_vault_id = azurerm_key_vault.tls.id
+  key_vault_id = azurerm_key_vault.kms.id
   key_type     = "RSA"
   key_size     = 2048
   key_opts     = ["decrypt", "encrypt", "sign", "verify", "wrapKey", "unwrapKey"]
@@ -264,13 +290,13 @@ module "n8n" {
 
   # KMS etcd encryption, first of two applies: this apply creates the
   # cluster's UserAssigned identity and grants it Key Vault Crypto User on
-  # the vault. The module orders the grant and a 120 s propagation wait
+  # the dedicated KMS vault. The module orders the grant and a 120 s propagation wait
   # before the cluster, but Azure RBAC can take longer to take effect, so KMS
   # is turned on in a second apply. Once the grant has taken effect, set
   # aks_kms_key_vault_key_id = azurerm_key_vault_key.aks_kms.id. See
   # docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault.
   aks_kms_role_assignment_enabled = true
-  aks_kms_key_vault_id            = azurerm_key_vault.tls.id
+  aks_kms_key_vault_id            = azurerm_key_vault.kms.id
 
   create_public_dns_record = true
   public_dns_zone_id       = azurerm_dns_zone.public.id
