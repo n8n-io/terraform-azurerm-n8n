@@ -1112,6 +1112,18 @@ variable "ingress_annotations" {
   }
 }
 
+variable "n8n_proxy_hops" {
+  description = "Number of trusted reverse-proxy hops in front of n8n, rendered as N8N_PROXY_HOPS on every n8n pod (main, worker, webhook processor) via config.extraEnv. n8n passes it to Express's trust proxy setting, which uses it to pick the client IP out of X-Forwarded-For; any value of 1 or more also makes n8n honor X-Forwarded-Proto. Count every proxy on the client's path that adds an X-Forwarded-For entry (HTTP proxies such as Application Gateway, Application Gateway for Containers, Azure Front Door, or an in-cluster ingress controller do; a layer 4 Azure Load Balancer does not), whatever create_ingress is set to: an Application Gateway alone (the module's own, or a caller-owned one) is 1, so the default fits it; Azure Front Door in front of the Application Gateway is 2. Too low a value attributes every request to the nearest extra proxy's IP. A value above 1 is only safe when the inner proxy accepts traffic from the outer one alone (e.g. an Application Gateway restricted to Front Door): otherwise a client that reaches the inner proxy directly can forge its IP through X-Forwarded-For. At any value of 1 or more, the same holds for anything that bypasses the declared proxy chain, such as an in-cluster caller reaching the n8n Services directly. Set 0 only when nothing proxies HTTP traffic to n8n. Reserved in n8n_managed_env_names, so n8n_extra_env, n8n_worker_extra_env and n8n_worker_pools[*].extra_env cannot set it. See docs/ingress-options.md."
+  type        = number
+  default     = 1
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_proxy_hops >= 0 && var.n8n_proxy_hops == floor(var.n8n_proxy_hops)
+    error_message = "n8n_proxy_hops must be a whole number of at least 0. Count only proxies that add an X-Forwarded-For entry; see docs/ingress-options.md."
+  }
+}
+
 # ── Application DNS ──────────────────────────────────────────────────────
 # Supply at most one Azure DNS zone ID. The selected zone must match the
 # Application Gateway frontend type and contain the canonical and additional
@@ -2191,18 +2203,6 @@ variable "n8n_termination_grace_period" {
   validation {
     condition     = var.n8n_termination_grace_period >= 60 && var.n8n_termination_grace_period == floor(var.n8n_termination_grace_period)
     error_message = "n8n_termination_grace_period must be a whole number of at least 60 seconds."
-  }
-}
-
-variable "n8n_proxy_hops" {
-  description = "Number of trusted reverse-proxy hops in front of n8n, rendered as N8N_PROXY_HOPS. The module's own Application Gateway is one hop, so the default of 1 is correct for create_ingress = true. Raise this when a caller-owned ingress (create_ingress = false) adds extra hops (e.g. an Application Gateway for Containers ALB plus a second load balancer) in front of the cluster, otherwise n8n derives client IPs and TLS state from the wrong hop."
-  type        = number
-  default     = 1
-  nullable    = false
-
-  validation {
-    condition     = var.n8n_proxy_hops >= 1 && var.n8n_proxy_hops == floor(var.n8n_proxy_hops)
-    error_message = "n8n_proxy_hops must be a whole number of at least 1."
   }
 }
 

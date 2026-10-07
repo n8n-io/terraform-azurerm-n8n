@@ -175,7 +175,23 @@ run "split_ingress_plan" {
 
   assert {
     condition     = kubernetes_ingress_v1.admin_internal.metadata[0].annotations["appgw.ingress.kubernetes.io/cookie-based-affinity"] == "true"
-    error_message = "The admin Ingress must pin multi-main sessions with cookie-based affinity like the root module, or the default 2-replica main topology sees intermittent auth failures."
+    error_message = "The admin Ingress must set cookie-based affinity like the root module: n8n requires session persistence in front of the default two main pods."
+  }
+
+  assert {
+    condition     = !contains(keys(kubernetes_ingress_v1.webhook_public.metadata[0].annotations), "appgw.ingress.kubernetes.io/cookie-based-affinity")
+    error_message = "The public webhook Ingress must not set session affinity: webhook processors do not need it."
+  }
+
+  assert {
+    condition = alltrue([
+      for ingress in [kubernetes_ingress_v1.webhook_public, kubernetes_ingress_v1.admin_internal] : (
+        ingress.metadata[0].annotations["appgw.ingress.kubernetes.io/request-timeout"] == "300" &&
+        ingress.metadata[0].annotations["appgw.ingress.kubernetes.io/connection-draining"] == "true" &&
+        ingress.metadata[0].annotations["appgw.ingress.kubernetes.io/connection-draining-timeout"] == "30"
+      )
+    ])
+    error_message = "Both Ingress objects must match the root module's 300 s request timeout and 30 s connection draining instead of AGIC's 30 s timeout and no draining."
   }
 
   # Each AGIC identity is scoped to only its own Application Gateway.

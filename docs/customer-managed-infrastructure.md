@@ -81,10 +81,13 @@ instead. Declare the test-mode prefixes (main Service) before the production
 webhook prefixes (webhook processors): Application Gateway matches string
 prefixes in declared order, so `/webhook*` would otherwise capture
 `/webhook-test`. Also configure session affinity to the main Service
-(`appgw.ingress.kubernetes.io/cookie-based-affinity` on AGIC) and set
-`n8n_proxy_hops` to match the caller's ingress topology's hop count — see
-[`docs/ingress-options.md`](../docs/ingress-options.md) for the full routing
-contract and the alternatives to Application Gateway v2 with AGIC. See
+(`appgw.ingress.kubernetes.io/cookie-based-affinity` on AGIC), match the
+module's 300 s request timeout and 30 s connection draining (AGIC defaults to
+30 s and no draining), and set `n8n_proxy_hops` to the number of proxies on
+the client's path that add an `X-Forwarded-For` entry. See
+[`docs/ingress-options.md`](./ingress-options.md) for the full routing
+contract, the settings to review, and the alternatives to Application
+Gateway v2 with AGIC. See
 [`examples/customer-managed-cluster`](../examples/customer-managed-cluster/)
 for a caller-installed AGIC on the same cluster used as the AKS stand-in.
 

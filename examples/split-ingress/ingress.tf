@@ -588,6 +588,14 @@ resource "kubernetes_ingress_v1" "webhook_public" {
 
     annotations = {
       "kubernetes.io/ingress.class" = local.webhook_ingress_class
+      # Match the root module's timeout and draining defaults
+      # (local.appgw_ingress_default_annotations in locals.tf). AGIC's own
+      # defaults are a 30 s request timeout and no connection draining. No
+      # cookie-based affinity: webhook senders are machines, and webhook
+      # processors do not need session persistence.
+      "appgw.ingress.kubernetes.io/request-timeout"             = "300"
+      "appgw.ingress.kubernetes.io/connection-draining"         = "true"
+      "appgw.ingress.kubernetes.io/connection-draining-timeout" = "30"
     }
   }
 
@@ -635,12 +643,17 @@ resource "kubernetes_ingress_v1" "admin_internal" {
 
     annotations = {
       "kubernetes.io/ingress.class" = local.admin_ingress_class
-      # Matches the root module's default annotation (locals.tf): pins each
-      # multi-main client to one main pod so its session state stays on the
-      # same backend. n8n_main_hpa_min_replicas defaults to 2 in this example,
-      # so without this, Application Gateway load-balances across mains per
-      # request and users see intermittent 401s as auth state diverges
-      # between mains.
+      # Match the root module's defaults (local.appgw_ingress_default_annotations
+      # in locals.tf). AGIC's own defaults are a 30 s request timeout and no
+      # connection draining.
+      "appgw.ingress.kubernetes.io/request-timeout"             = "300"
+      "appgw.ingress.kubernetes.io/connection-draining"         = "true"
+      "appgw.ingress.kubernetes.io/connection-draining-timeout" = "30"
+      # n8n requires session persistence in front of multiple main
+      # processes, and n8n_main_hpa_min_replicas defaults to 2 in this
+      # example, so each browser must stay on one main pod for its editor and
+      # push connection. See
+      # https://docs.n8n.io/deploy/host-n8n/configure-n8n/scaling/enable-queue-mode#configuring-multi-main-setup
       "appgw.ingress.kubernetes.io/cookie-based-affinity" = "true"
     }
   }
