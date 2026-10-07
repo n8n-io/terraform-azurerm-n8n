@@ -300,7 +300,7 @@ header "Pool count (the check nothing at plan time can make)"
 if [[ "$RENDERED_COUNT" -eq 0 ]]; then
   fail "expected $EXPECTED_COUNT pool Deployment(s), found none with label app.kubernetes.io/component=worker-group"
   info "This is what a chart that predates queueMode.workerGroups looks like after a clean apply:"
-  info "the key was accepted and ignored. Check n8n_chart_version (this module hardcodes the chart repository), then:"
+  info "the key was accepted and ignored. Check n8n_chart_version and n8n_chart_repository, then:"
   info "  helm -n $NAMESPACE get values $RELEASE_NAME | grep -A2 workerGroups"
   info "  helm -n $NAMESPACE get manifest $RELEASE_NAME | grep -c 'component: worker-group'"
   summarize_and_exit

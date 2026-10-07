@@ -74,6 +74,9 @@ ALLOW=$(cat <<'EOF_ALLOW'
 +n8n_chart_version|worker-pools
 +n8n_worker_pools_chart_verified|worker-pools
 +n8n_image_tag|worker-pools
+# The preview chart is often pulled from a private mirror, so worker-pools
+# also exposes the chart repository next to the version.
++n8n_chart_repository|worker-pools
 # It also sizes the chart's own unlabelled worker deployment, which runs
 # beside the pools as the control group for everything not pinned to one.
 +n8n_worker_keda_min_replicas|worker-pools

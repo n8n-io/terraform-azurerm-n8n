@@ -193,7 +193,7 @@ resource "kubernetes_secret" "n8n_task_runners" {
 # former workload tier.
 resource "helm_release" "n8n" {
   name            = "n8n"
-  repository      = "oci://ghcr.io/n8n-io/n8n-helm-chart"
+  repository      = var.n8n_chart_repository
   chart           = "n8n"
   version         = var.n8n_chart_version
   namespace       = local.n8n_namespace
@@ -595,9 +595,13 @@ resource "helm_release" "n8n" {
       enabled            = var.n8n_task_runners_enabled
       mode               = "external"
       nativePythonRunner = var.n8n_task_runner_python_enabled
-      image = {
-        tag = coalesce(var.n8n_task_runner_image_tag, var.n8n_image_tag)
-      }
+      # repository is merged in only when set, mirroring the top-level
+      # image block above, so the chart's default n8nio/runners repository
+      # stays the default for every caller who has not mirrored it.
+      image = merge(
+        { tag = coalesce(var.n8n_task_runner_image_tag, var.n8n_image_tag) },
+        var.n8n_task_runner_image_repository == null ? {} : { repository = var.n8n_task_runner_image_repository },
+      )
       authToken = {
         existingSecret    = kubernetes_secret.n8n_task_runners.metadata[0].name
         existingSecretKey = "N8N_RUNNERS_AUTH_TOKEN"
@@ -738,12 +742,31 @@ check "log_streaming_destinations_require_managed_by_env" {
 # of rejecting the configuration. Hard failures remain in variable validation
 # for paths, volume references, image references, and environment collisions.
 
+# Only covers the public runner repository. With n8n_task_runner_image_repository
+# set, the sidecar no longer pulls n8nio/runners, so this message would name the
+# wrong image; custom_task_runner_repository_needs_an_explicit_tag covers that
+# case instead, and the two never fire together. Same split as
+# terraform-aws-n8n.
 check "custom_image_tag_needs_a_task_runner_tag" {
   assert {
     condition = var.n8n_image_repository != null ? (
+      var.n8n_task_runners_enabled ? (
+        var.n8n_task_runner_image_repository == null ? var.n8n_task_runner_image_tag != null : true
+      ) : true
+    ) : true
+    error_message = "n8n_image_repository is set with task runners enabled and the default runner repository, but n8n_task_runner_image_tag is null. Set the runner tag to the underlying n8n version used by the custom application image so n8nio/runners resolves to an existing, protocol-compatible image."
+  }
+}
+
+# A runner mirror with no explicit tag inherits n8n_image_tag. That is fine
+# when the mirror publishes that tag, so this is a warning, not a validation:
+# a hard rule would reject a valid mirror that carries the inherited tag.
+check "custom_task_runner_repository_needs_an_explicit_tag" {
+  assert {
+    condition = var.n8n_task_runner_image_repository != null ? (
       var.n8n_task_runners_enabled ? var.n8n_task_runner_image_tag != null : true
     ) : true
-    error_message = "n8n_image_repository is set with task runners enabled, but n8n_task_runner_image_tag is null. Set the runner tag to the underlying n8n version used by the custom application image so n8nio/runners resolves to an existing, protocol-compatible image."
+    error_message = "n8n_task_runner_image_repository is set but n8n_task_runner_image_tag is null, so the runner sidecar's tag falls back to n8n_image_tag (${var.n8n_image_tag}). If that tag does not exist in ${coalesce(var.n8n_task_runner_image_repository, "the runner repository")}, every pod carrying a runner sidecar fails with ImagePullBackOff and the Helm release rolls back. Set n8n_task_runner_image_tag to a tag that exists in this repository. Ignore this warning only if the repository publishes the inherited tag."
   }
 }
 
@@ -763,6 +786,13 @@ check "task_runner_image_tag_requires_task_runners" {
   }
 }
 
+check "task_runner_image_repository_requires_task_runners" {
+  assert {
+    condition     = var.n8n_task_runner_image_repository != null ? var.n8n_task_runners_enabled : true
+    error_message = "n8n_task_runner_image_repository is set while n8n_task_runners_enabled is false, so no runner sidecar is deployed and the repository is inert. Enable task runners or clear the repository."
+  }
+}
+
 check "worker_keda_paused_replica_count_requires_pause" {
   assert {
     condition     = var.n8n_worker_keda_paused_replica_count != null ? var.n8n_worker_keda_pause : true
@@ -776,13 +806,14 @@ check "worker_keda_paused_replica_count_requires_pause" {
 # silently never takes effect and workers keep consuming jobs. Chart 1.12.0
 # reads it but still renders the worker's spec.replicas on every upgrade, so
 # any later apply that changes the release while paused writes the floor back
-# over KEDA's held count. No companion worker-floor check is needed (unlike
+# over KEDA's held count. Silent for a custom n8n_chart_repository, whose chart
+# this module cannot verify. No companion worker-floor check is needed (unlike
 # terraform-aws-n8n): n8n_worker_keda_min_replicas is validated to >= 1, so the
 # worker ScaledObject always renders.
 check "worker_keda_pause_requires_a_supported_chart" {
   assert {
     condition     = (var.n8n_worker_keda_pause || var.n8n_worker_keda_paused_replica_count != null) ? local.n8n_worker_keda_pause_supported : true
-    error_message = "n8n_worker_keda_pause or n8n_worker_keda_paused_replica_count is set, but n8n_chart_version predates 1.13.0. Charts older than 1.12.0 (including the 1.11.0-based worker-pools preview) do not read keda.worker.pause at all, so workers keep consuming jobs. Chart 1.12.0 reads it but still sets the worker Deployment's spec.replicas on every Helm upgrade, so a later apply while paused can write the replica floor back over the held count. Use n8n_chart_version 1.13.0 or newer, or clear these inputs."
+    error_message = "n8n_worker_keda_pause or n8n_worker_keda_paused_replica_count is set, but n8n_chart_version on the upstream n8n_chart_repository predates 1.13.0. Charts older than 1.12.0 (including the 1.11.0-based worker-pools preview) do not read keda.worker.pause at all, so workers keep consuming jobs. Chart 1.12.0 reads it but still sets the worker Deployment's spec.replicas on every Helm upgrade, so a later apply while paused can write the replica floor back over the held count. Use n8n_chart_version 1.13.0 or newer, or clear these inputs."
   }
 }
 
@@ -790,12 +821,12 @@ check "worker_keda_pause_requires_a_supported_chart" {
 # n8n_graceful_shutdown_timeout that does not fit is a hard validation error on
 # that variable. Left null, the chart still renders its own default, which must
 # fit the same way, but this was never checked before that input existed, so a
-# hard error here would break configurations that already plan. The chart
-# repository is hardcoded to the upstream OCI registry, so unlike
-# terraform-aws-n8n no custom-repository gate is needed.
+# hard error here would break configurations that already plan. Skipped
+# entirely for a custom n8n_chart_repository (local.n8n_graceful_shutdown_default_applies),
+# whose values.yaml default this module cannot verify.
 check "graceful_shutdown_fits_grace_period" {
   assert {
-    condition     = var.n8n_graceful_shutdown_timeout != null || local.n8n_chart_default_graceful_shutdown_timeout + var.n8n_prestop_sleep < var.n8n_termination_grace_period
+    condition     = local.n8n_graceful_shutdown_default_applies ? local.n8n_chart_default_graceful_shutdown_timeout + var.n8n_prestop_sleep < var.n8n_termination_grace_period : true
     error_message = "n8n_graceful_shutdown_timeout is unset, so n8n uses the chart's default shutdown timeout of ${local.n8n_chart_default_graceful_shutdown_timeout}s. That plus n8n_prestop_sleep (${var.n8n_prestop_sleep}s) does not stay below n8n_termination_grace_period (${var.n8n_termination_grace_period}s), so Kubernetes can SIGKILL a pod before n8n finishes shutting down and interrupt running executions. Set n8n_graceful_shutdown_timeout to a value that fits, lower n8n_prestop_sleep, or raise n8n_termination_grace_period."
   }
 }
@@ -824,8 +855,8 @@ check "extra_volumes_should_be_mounted" {
 
 check "image_pull_secrets_need_a_custom_image" {
   assert {
-    condition     = length(var.n8n_image_pull_secrets) > 0 ? var.n8n_image_repository != null : true
-    error_message = "n8n_image_pull_secrets is set while n8n_image_repository is null, so registry Secrets are attached to the ServiceAccount but the public chart image remains in use. Set the private custom repository or clear the inert Secret names."
+    condition     = length(var.n8n_image_pull_secrets) > 0 ? var.n8n_image_repository != null || (var.n8n_task_runner_image_repository != null && var.n8n_task_runners_enabled) : true
+    error_message = "n8n_image_pull_secrets is set while no custom image is in effect: n8n_image_repository is null, and n8n_task_runner_image_repository is either null or ignored because n8n_task_runners_enabled is false. Registry Secrets are attached to the ServiceAccount but every pod still uses its public chart image. Set one of the private custom repositories or clear the inert Secret names."
   }
 }
 

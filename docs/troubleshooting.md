@@ -197,7 +197,7 @@ open /Users/<you>/Library/Caches/helm/repository/kedacore-index.yaml: no such fi
 
 The `hashicorp/helm` Terraform provider (v2.x) embeds Helm SDK v3 and reuses the local Helm CLI's repository cache (`$HELM_REPOSITORY_CACHE`). When the system Helm CLI is **Helm 4** (released 2025) the cache layout differs slightly from the v3 SDK's expectations, so the SDK fails to find the index file even though the chart URL is hard-coded on `helm_release.keda`. This is environmental, not a module bug — but anyone running Helm 4 on macOS will see it.
 
-The n8n chart (`oci://ghcr.io/n8n-io/n8n-helm-chart`) is OCI-pulled and is not affected — only the KEDA release, which uses a classic HTTPS Helm repo, is.
+The n8n chart is OCI-pulled and not affected only when `n8n_chart_repository` stays at its default, `oci://ghcr.io/n8n-io/n8n-helm-chart`, or another `oci://` mirror. An `n8n_chart_repository` pointed at an `https://` mirror instead uses the same classic Helm repository path as `helm_release.keda` and can hit this same cache issue.
 
 **Fix**
 

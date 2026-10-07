@@ -244,15 +244,19 @@ locals {
   # worker/webhook-processor replica ownership; 1.14.0 only renames the
   # chart's WEBHOOK_URL key, drops an S3-only env var, and aggregates
   # validation errors; deployment-main.yaml's runner placement is untouched).
-  # Previews, older or future releases and any chart this list has not been
-  # checked against keep the conservative main-sidecar allowance until their
-  # topology is verified.
+  # Previews, older or future releases, any chart this list has not been
+  # checked against, and any chart served from a custom n8n_chart_repository
+  # (local.n8n_chart_is_upstream, locals.tf), which need not share upstream's
+  # topology at the same version number, keep the conservative main-sidecar
+  # allowance until their topology is verified.
   # Same shape as terraform-aws-n8n's n8n_chart_has_worker_only_runners, minus
-  # its repository check (helm_release.n8n hardcodes the upstream OCI
-  # repository here) and its build-metadata strip (n8n_chart_version's
-  # validation never admits a "+build" suffix).
-  n8n_chart_has_worker_only_runners = contains(["1.12.0", "1.13.0", "1.14.0"], var.n8n_chart_version)
-  n8n_main_task_runner_cpu_millis   = local.n8n_chart_has_worker_only_runners ? 0 : local.n8n_cpu_request_millis.task_runner
+  # its build-metadata strip (n8n_chart_version's validation never admits a
+  # "+build" suffix).
+  n8n_chart_has_worker_only_runners = (
+    local.n8n_chart_is_upstream &&
+    contains(["1.12.0", "1.13.0", "1.14.0"], var.n8n_chart_version)
+  )
+  n8n_main_task_runner_cpu_millis = local.n8n_chart_has_worker_only_runners ? 0 : local.n8n_cpu_request_millis.task_runner
 
   # keda.worker.pause/pausedReplicaCount shipped in chart 1.12.0
   # (n8n-hosting #177), but 1.12.0 still renders the worker's spec.replicas on
@@ -263,11 +267,15 @@ locals {
   # feature-presence check with nothing to re-verify per release. The
   # prerelease suffix is stripped and major.minor compared as numbers, so a
   # preview off an older line (examples/worker-pools'
-  # "1.11.0-preview.workerpools.1") does not pass. Same shape as
-  # terraform-aws-n8n's local of the same name, minus its repository check and
-  # build-metadata strip (see n8n_chart_has_worker_only_runners above).
+  # "1.11.0-preview.workerpools.1") does not pass. A custom
+  # n8n_chart_repository counts as supported: this module cannot verify what a
+  # mirror's chart renders, so check.worker_keda_pause_requires_a_supported_chart
+  # stays quiet there rather than warn on a version number it cannot trust,
+  # the same stance as check.graceful_shutdown_fits_grace_period. Same shape as
+  # terraform-aws-n8n's local of the same name, minus its build-metadata strip
+  # (see n8n_chart_has_worker_only_runners above).
   n8n_worker_keda_pause_chart_version_core = split(".", split("-", var.n8n_chart_version)[0])
-  n8n_worker_keda_pause_supported = (
+  n8n_worker_keda_pause_supported = !local.n8n_chart_is_upstream ? true : (
     tonumber(local.n8n_worker_keda_pause_chart_version_core[0]) > 1 ||
     (
       tonumber(local.n8n_worker_keda_pause_chart_version_core[0]) == 1 &&
