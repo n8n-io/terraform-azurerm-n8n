@@ -18,7 +18,7 @@ constraints exist, but they belong to whoever manages that resource.
 
 The provider behavior on this page was checked against the
 `hashicorp/azurerm` provider source at `v4.81.0`, the version in this
-module's lock file. The module's constraint (`~> 4.0`) allows other 4.x
+module's lock file. The module's constraint (`>= 4.39.0, < 5.0.0`) allows other 4.x
 releases, which can behave differently. Always read `terraform plan` before
 you apply a change to a live deployment. A replacement shows as `must be
 replaced`.
