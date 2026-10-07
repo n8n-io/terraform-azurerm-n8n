@@ -28,8 +28,8 @@ region or subscription gaps rather than module bugs:
 
 | Failure | Check |
 |---|---|
-| AKS `AvailabilityZoneNotSupported` | `az vm list-skus` for the planned `aks_node_vm_size`: SKU offered, no location-level subscription restriction, every planned zone in the SKU's zone list (zone-level restrictions are subtracted first) |
-| `helm_release.n8n` times out; AKS autoscaler stuck in `Backoff` on `OperationNotAllowed` | `az vm list-usage` for the planned `aks_node_vm_size`'s VM family and the aggregate `cores` cap, against worst-case demand: the planned `max_count` of every node pool of that VM size, summed (the module's system and user pools each scale `aks_node_count_min..aks_node_count_max`, so `2 x aks_node_count_max` nodes). Fails when every AKS cluster and node pool change in the plan is a pure create. Warns otherwise (existing cluster, replace, new pool on an existing cluster), since `currentValue` may already count those nodes |
+| AKS `AvailabilityZoneNotSupported` | `az vm list-skus` for each distinct planned VM size (the user pool's `aks_node_vm_size`, and the system pool's effective size when `aks_system_node_vm_size` overrides it): SKU offered, no location-level subscription restriction, every planned zone in the SKU's zone list (zone-level restrictions are subtracted first) |
+| `helm_release.n8n` times out; AKS autoscaler stuck in `Backoff` on `OperationNotAllowed` | `az vm list-usage` for each distinct planned VM size's family and the aggregate `cores` cap, against worst-case demand: the planned `max_count` (or `node_count` for a fixed-size pool) of every node pool of that size in every module instance, summed per VM family (the module's user pool scales `aks_node_count_min..aks_node_count_max` of `aks_node_vm_size`; the system pool scales the same range of the same size unless `aks_system_node_vm_size`/`_count_min`/`_count_max` overrides it). Fails when every AKS cluster and node pool change in the plan is a pure create. Warns otherwise (existing cluster, replace, new pool on an existing cluster), since `currentValue` may already count those nodes. `--node-count-max` and `--vm-size` override both pools, like the shared module inputs, unless `--system-node-count-max` or `--system-vm-size` overrides the system pool |
 | PostgreSQL Flexible Server `ParameterOutOfRange: 'Version' should be in: []` | `az postgres flexible-server list-skus`: at least one version offered, the planned `pg_version` among them, the planned `pg_sku_name` under its edition |
 | Azure Managed Redis `InsufficientCapacity` | Opt-in `--probe-redis` only: creates a throwaway cluster of the planned `redis_sku_name` in a tagged `n8n-preflight-*` resource group and deletes it. Azure has no capacity API, so the answer is valid only for the moment it runs |
 
@@ -62,17 +62,22 @@ terraform init
 ```
 
 With no flags it runs `terraform plan -refresh=false` in the current
-directory and reads the location, VM size, node pool `max_count` values,
+directory and reads the location, VM size, node pool `max_count` (or fixed `node_count`) values,
 zones, PostgreSQL version/SKU, and Redis SKU from the planned resources, so the check matches what apply
 would request rather than the module defaults. A resource the
 configuration does not create (`create_aks`, `create_database`,
 `create_redis` = `false`) is absent from the plan and its check is skipped.
 
 Every value can be overridden (`--dir`, `--region`, `--vm-size`,
-`--node-count-max`, `--zones`, `--pg-version`, `--pg-sku`, `--redis-sku`).
-`--node-count-max N` is the per-pool ceiling (`aks_node_count_max`) and must
-be an integer from 1 to 1000 (the AKS per-pool limit); the quota check then
-assumes `2 x N` nodes. Without a
+`--node-count-max`, `--system-vm-size`, `--system-node-count-max`,
+`--zones`, `--pg-version`, `--pg-sku`, `--redis-sku`). `--vm-size` and
+`--node-count-max N` size the user pool and, like the shared module inputs,
+the system pool too unless `--system-vm-size` or `--system-node-count-max`
+overrides it. They apply to every module instance in the plan; other node
+pools keep their planned size and count (`node_count` for a fixed-size
+pool). Count flags must be integers from 1 to 1000 (the AKS per-pool limit).
+The quota check sums every pool per VM family, and the zone check tests each
+VM size against the union of its pools' zones. Without a
 plan (`--region`), the script cannot tell whether the cluster already
 exists, so a quota shortfall is always reported as a failure, with a note
 that it can be a false positive for an existing cluster. `--region` alone skips the plan
@@ -80,16 +85,18 @@ and checks the root module's defaults plus your flags, not the current
 root's `terraform.tfvars`; the script prints a note when it takes that
 path. `--help` lists the options.
 
-Pass `--zones ''` to check a zone-less region explicitly; an omitted flag
-falls back to the plan (or the root default `1,2,3` with `--region`). If the
+Pass `--zones ''` to check a zone-less region explicitly; `--zones`
+replaces every pool's zones, and an omitted flag falls back to each pool's
+planned zones (or the root default `1,2,3` with `--region`). If the
 plan contains managed resources in more than one region the script stops and
 asks for `--region`; data sources such as `data.azurerm_kubernetes_cluster.existing`
 are ignored when detecting the region.
 
 Exit code `0` when every check passes, warns, or is skipped (the result
 line says `PASS with warnings` when any `!` item printed), `1` on any
-failure, `2` on a usage error such as a `--node-count-max` or planned
-`max_count` that is not an integer from 1 to 1000. After the probe, deletion of the `n8n-preflight-*`
+failure, `2` on a usage error such as a `--node-count-max` that is not an
+integer from 1 to 1000, or a planned pool count that is not an integer from
+0 to 1000. After the probe, deletion of the `n8n-preflight-*`
 resource group is *submitted* (`--no-wait`) and Azure completes it in the
 background; the script prints the submission result and fails with the
 manual `az group delete` command if the submission itself is rejected, so a
@@ -103,9 +110,11 @@ PREFLIGHT_SELF_TEST=1 tests/scripts/preflight-region-check.sh
 ```
 
 This runs the bounded-integer validation, the plan readers
-(`plan_pool_maxes`, `plan_quota_mode`), and the quota evaluation
-(`check_quota`) against synthetic fixtures. The plan fixtures cover pool
-summing across child modules, an unknown `max_count`, and the create,
+(`plan_pool_records`, `plan_quota_mode`), the flag resolution and pool
+aggregation (`apply_overrides`, `size_peaks`, `family_totals`,
+`quota_hint`), and the quota evaluation (`check_quota`) against synthetic
+fixtures. The plan fixtures cover pool records across child modules, two
+module instances in one root, an unknown `max_count`, and the create,
 no-op, update, replace, new-pool, multi-cluster, and deposed-object cases.
 The `az vm list-usage` fixtures cover within the limit, exactly at the
 limit, over the limit for a new cluster (failure) and an existing one

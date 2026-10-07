@@ -66,6 +66,18 @@ locals {
   appgw_pip_name       = "${var.friendly_name_prefix}-appgw-pip"
   appgw_nsg_name       = "${var.friendly_name_prefix}-appgw-nsg"
 
+  # ── AKS per-pool sizing overrides ─────────────────────────────────────────
+  # aks_system_node_vm_size/_count_min/_count_max (variables.tf) let a caller
+  # size the system (default) node pool independently of the n8n-facing user
+  # (n8nuser) pool. Each override defaults to null, which falls back to the
+  # matching shared aks_node_* value — the pre-existing shared-sizing behavior
+  # every release before this input existed, so a caller who never sets these
+  # sees no plan change. Consumed by aks.tf (the default_node_pool block) and
+  # scaling.tf (the advisory capacity model).
+  aks_system_node_vm_size_effective   = coalesce(var.aks_system_node_vm_size, var.aks_node_vm_size)
+  aks_system_node_count_min_effective = coalesce(var.aks_system_node_count_min, var.aks_node_count_min)
+  aks_system_node_count_max_effective = coalesce(var.aks_system_node_count_max, var.aks_node_count_max)
+
   # Namespace names and chart-rendered service coordinates stay centralized so
   # Kubernetes resources, KEDA manifests, outputs, and caller-owned ingress can
   # share one contract.

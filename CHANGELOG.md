@@ -226,6 +226,24 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   reverse
   ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
 
+- `aks_system_node_vm_size`, `aks_system_node_count_min`, and
+  `aks_system_node_count_max` let the system (default) AKS node pool be
+  sized independently of the n8n-facing user (`n8nuser`) pool. Each
+  defaults to `null`, falling back to the matching shared `aks_node_vm_size`
+  / `aks_node_count_min` / `aks_node_count_max` value, so every existing
+  caller's plan is unchanged. The advisory CPU capacity check
+  (`autoscaling_maxima_fit_aks_capacity`) models each pool's effective VM
+  size and ceiling separately, and still counts only the user pool when
+  `aks_system_pool_critical_addons_only = true` taints the system pool.
+  A smaller system pool is safest with that taint, since n8n pods
+  otherwise also schedule on the system pool. Changing the system pool's
+  VM size on an existing cluster rotates it through
+  `temporary_name_for_rotation` without a cordon or drain.
+  `tests/scripts/preflight-region-check.sh` gains `--system-vm-size` and
+  `--system-node-count-max` flags and checks vCPU quota per VM family
+  across every planned node pool
+  ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
+
 ### Changed
 
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by
@@ -307,6 +325,11 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   constraints. Upgrade the Terraform CLI and let
   the `azurerm` provider resolve within the new range before applying
   ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
+
+- `aks_node_count_min`'s description now states that it sizes both the
+  system and user AKS node pools (matching `aks_node_count_max`'s
+  description), not just "the AKS default node pool"
+  ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
 
 ### Fixed
 

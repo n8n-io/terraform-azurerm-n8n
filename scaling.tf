@@ -86,7 +86,7 @@ check "webhook_hpa_tuning_requires_module_managed_webhook_hpa" {
 # ── Advisory AKS CPU capacity model ──────────────────────────────────────────
 # Workload autoscaler ceilings and AKS node-pool ceilings are independent. If
 # all pod families can request more CPU than the cluster can ever schedule,
-# pods remain Pending after both node pools reach aks_node_count_max.
+# pods remain Pending after both node pools reach their maximum node counts.
 #
 # The model uses a reviewed, explicit VM SKU map rather than an Azure data
 # source. A data source can remain unknown during planning, which would turn an
@@ -126,6 +126,11 @@ locals {
   aks_node_vcpus_derived = lookup(local.aks_vm_sku_vcpus, var.aks_node_vm_size, null)
   aks_node_vcpus         = coalesce(local.aks_node_vcpus_derived, 0)
 
+  # The system pool's effective VM size (locals.tf) is looked up the same
+  # way, and stays independently silent when only its SKU is unmapped.
+  aks_system_node_vcpus_derived = lookup(local.aks_vm_sku_vcpus, local.aks_system_node_vm_size_effective, null)
+  aks_system_node_vcpus         = coalesce(local.aks_system_node_vcpus_derived, 0)
+
   # Microsoft documents these AKS kube-reserved CPU values in millicores. The
   # 48 and 96 vCPU entries continue the documented 10m-per-core increment above
   # 4 vCPU. These reservations are unavailable to pods before any DaemonSet or
@@ -146,10 +151,16 @@ locals {
     tostring(local.aks_node_vcpus),
     0,
   )
+  aks_system_node_kube_reserved_cpu_millis = lookup(
+    local.aks_kube_reserved_cpu_by_vcpu,
+    tostring(local.aks_system_node_vcpus),
+    0,
+  )
 
   # Fixed request allowances for node-local AKS agents. They cover Azure CNI,
   # kube-proxy, and the Azure Disk or Files CSI node containers. Exact requests
   # can move with AKS and add-on versions, so this remains an advisory model.
+  # The same fixed allowance applies to both pools regardless of VM size.
   aks_node_daemon_cpu_requests_millis = {
     azure_network_agents = 100
     kube_proxy           = 100
@@ -184,20 +195,29 @@ locals {
     sum(values(local.aks_cluster_control_cpu_requests_millis))
   )
 
-  # The root creates one system pool and one untainted user pool. n8n pods may
-  # schedule on either by default, so both count toward capacity. When
-  # aks_system_pool_critical_addons_only taints the system pool
+  # The root creates one system pool and one user pool, each modeled at its
+  # own effective maximum and VM size (locals.tf): identical by default, and
+  # only different when aks_system_node_* overrides the system pool. n8n pods
+  # may schedule on either pool by default, so both count toward capacity.
+  # When aks_system_pool_critical_addons_only taints the system pool
   # CriticalAddonsOnly=true:NoSchedule, n8n, KEDA, and the Redis exporter (none
-  # of which set a toleration) can only land on the user pool, so only its
-  # maximum counts.
-  aks_modeled_node_count = var.aks_system_pool_critical_addons_only ? var.aks_node_count_max : var.aks_node_count_max * 2
+  # of which set a toleration) can only land on the user pool, so the system
+  # pool contributes nothing.
+  aks_modeled_user_node_count   = var.aks_node_count_max
+  aks_modeled_system_node_count = var.aks_system_pool_critical_addons_only ? 0 : local.aks_system_node_count_max_effective
 
   aks_node_schedulable_cpu_millis = max(
     local.aks_node_vcpus * 1000 - local.aks_node_kube_reserved_cpu_millis - local.aks_node_daemon_cpu_millis,
     0,
   )
+  aks_system_node_schedulable_cpu_millis = max(
+    local.aks_system_node_vcpus * 1000 - local.aks_system_node_kube_reserved_cpu_millis - local.aks_node_daemon_cpu_millis,
+    0,
+  )
   n8n_schedulable_cpu_millis = max(
-    local.aks_modeled_node_count * local.aks_node_schedulable_cpu_millis - local.aks_cluster_control_cpu_millis,
+    local.aks_modeled_user_node_count * local.aks_node_schedulable_cpu_millis +
+    local.aks_modeled_system_node_count * local.aks_system_node_schedulable_cpu_millis -
+    local.aks_cluster_control_cpu_millis,
     0,
   )
 
@@ -296,8 +316,15 @@ locals {
   # The capacity model assumes it owns both AKS node pools and their maximum
   # counts (design.md decision 8). That assumption is only true when
   # create_aks = true; an existing cluster's capacity is the caller's to size
-  # and monitor, so the diagnostic below stays silent in that mode.
-  n8n_capacity_model_readable = var.create_aks && local.aks_node_vcpus_derived != null
+  # and monitor, so the diagnostic below stays silent in that mode. Either
+  # pool's VM size being outside the reviewed SKU map also keeps it silent,
+  # since a guessed vCPU count for either pool would make the model no
+  # better than a coin flip. The system pool's SKU only matters while it
+  # counts: a tainted system pool contributes nothing, so an unmapped system
+  # SKU does not silence the user-pool-only model.
+  n8n_capacity_model_readable = var.create_aks && local.aks_node_vcpus_derived != null && (
+    var.aks_system_pool_critical_addons_only || local.aks_system_node_vcpus_derived != null
+  )
 }
 
 # A check emits a warning without blocking plan or apply. The model is
@@ -320,11 +347,18 @@ check "autoscaling_maxima_fit_aks_capacity" {
         ", plus worker pools ${local.n8n_pool_peak_cpu_request_millis}m across ",
         "${length(var.n8n_worker_pools)} pool(s) at their ceilings",
       ]) : "",
-      ". Supply models ${var.aks_system_pool_critical_addons_only ? "one pool (n8nuser; the tainted system pool no longer counts)" : "two pools"} at ",
-      "aks_node_count_max=${var.aks_node_count_max}, VM size ${var.aks_node_vm_size} (${local.aks_node_vcpus} vCPU per node), ",
-      "less ${local.aks_node_kube_reserved_cpu_millis}m AKS reservation and ${local.aks_node_daemon_cpu_millis}m daemon requests per node, ",
+      ". Supply models the user pool at ",
+      "aks_node_count_max=${var.aks_node_count_max}, VM size ${var.aks_node_vm_size} (${local.aks_node_vcpus} vCPU per node, ",
+      "less ${local.aks_node_kube_reserved_cpu_millis}m AKS reservation per node), ",
+      var.aks_system_pool_critical_addons_only ? "and not the tainted system pool, which no longer counts, " : join("", [
+        "and the system pool at effective aks_system_node_count_max=${local.aks_system_node_count_max_effective}, ",
+        "VM size ${local.aks_system_node_vm_size_effective} (${local.aks_system_node_vcpus} vCPU per node, ",
+        "less ${local.aks_system_node_kube_reserved_cpu_millis}m AKS reservation per node), ",
+      ]),
+      "less ${local.aks_node_daemon_cpu_millis}m daemon requests per node, ",
       "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima (including any n8n_worker_pools max_replicas) or CPU requests, or raise ",
-      "aks_node_count_max or aks_node_vm_size. This diagnostic is advisory and does not fail the plan.",
+      var.aks_system_pool_critical_addons_only ? "aks_node_count_max or aks_node_vm_size (the tainted system pool's size adds no n8n capacity)" : "aks_node_count_max, aks_node_vm_size, aks_system_node_count_max, or aks_system_node_vm_size",
+      ". This diagnostic is advisory and does not fail the plan.",
     ])
   }
 }
@@ -343,6 +377,9 @@ check "aks_tuning_requires_module_managed_aks" {
       var.aks_node_vm_size == "Standard_D4s_v4" &&
       var.aks_node_count_min == 2 &&
       var.aks_node_count_max == 6 &&
+      var.aks_system_node_vm_size == null &&
+      var.aks_system_node_count_min == null &&
+      var.aks_system_node_count_max == null &&
       var.aks_availability_zones == tolist(["1", "2", "3"]) &&
       length(var.aks_api_authorized_ip_ranges) == 0 &&
       var.aks_node_upgrade_max_surge == "10%" &&
@@ -360,6 +397,7 @@ check "aks_tuning_requires_module_managed_aks" {
     )
     error_message = join("", [
       "An aks_kubernetes_version, aks_node_vm_size, aks_node_count_min, aks_node_count_max, ",
+      "aks_system_node_vm_size, aks_system_node_count_min, aks_system_node_count_max, ",
       "aks_availability_zones, aks_api_authorized_ip_ranges, aks_node_upgrade_max_surge, ",
       "aks_api_warmup_seconds, aks_node_os_disk_size_gb, aks_system_pool_critical_addons_only, aks_sku_tier, ",
       "aks_private_cluster_enabled, aks_private_dns_zone_id, aks_private_dns_zone_custom_identity, aks_entra_rbac, ",

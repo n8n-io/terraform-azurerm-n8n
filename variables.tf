@@ -114,7 +114,7 @@ variable "aks_sku_tier" {
 }
 
 variable "aks_node_vm_size" {
-  description = "Azure VM SKU for both AKS node pools (for example Standard_D4s_v7 or Standard_D8s_v5). The capacity diagnostic models reviewed Dsv4, Dsv5, and Dsv7 SKUs and stays silent for valid SKUs outside that map. Standard_D4s_v7 provides 4 vCPU and 16 GB per node."
+  description = "Azure VM SKU for the user (n8nuser) AKS node pool, and for the system (default) node pool too unless aks_system_node_vm_size overrides it (for example Standard_D4s_v7 or Standard_D8s_v5). The capacity diagnostic models reviewed Dsv4, Dsv5, and Dsv7 SKUs and stays silent for valid SKUs outside that map. Standard_D4s_v7 provides 4 vCPU and 16 GB per node."
   type        = string
   default     = "Standard_D4s_v4"
   nullable    = false
@@ -125,8 +125,19 @@ variable "aks_node_vm_size" {
   }
 }
 
+variable "aks_system_node_vm_size" {
+  description = "Azure VM SKU override for only the system (default) AKS node pool. Null (the default) uses aks_node_vm_size for the system pool too, which is the shared-sizing behavior of every release before this input existed. The system pool always runs AKS add-ons such as CoreDNS, konnectivity, and metrics-server. n8n, KEDA, and the Redis exporter pods can also schedule on it unless aks_system_pool_critical_addons_only = true taints it, so a smaller system SKU is safest together with that taint. The advisory capacity check models this SKU separately and stays silent when it is outside the reviewed Dsv4, Dsv5, and Dsv7 map while the system pool counts toward capacity. Changing this on an existing cluster cycles the system pool through AzureRM's rotation mechanism (temporary_name_for_rotation = systemtemp), which does not cordon or drain workloads automatically: plan a maintenance window and confirm node, subnet IP, and vCPU quota headroom for the temporary pool first. Has no effect when create_aks = false."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.aks_system_node_vm_size == null ? true : can(regex("^Standard_[A-Z][A-Za-z0-9_]+$", var.aks_system_node_vm_size))
+    error_message = "aks_system_node_vm_size must be null or a valid Azure VM SKU name (e.g. Standard_D4s_v4, Standard_D8s_v4)."
+  }
+}
+
 variable "aks_node_count_min" {
-  description = "Minimum number of nodes in the AKS default node pool. The cluster autoscaler will not scale below this, and Terraform sets this as the pool's initial node count at creation only — see `aks_node_count_max`'s ignore_changes note. Floor of 2 keeps the multi-main topology (≥2 main pods, ≥1 worker, ≥2 webhook processors) schedulable across single-node failures."
+  description = "Minimum nodes in the user (n8nuser) AKS node pool, and in the system node pool too unless aks_system_node_count_min overrides it. The cluster autoscaler will not scale either pool below this, and Terraform sets this as each pool's initial node count at creation only; see `aks_node_count_max`'s ignore_changes note. Floor of 2 keeps the multi-main topology (≥2 main pods, ≥1 worker, ≥2 webhook processors) schedulable across single-node failures."
   type        = number
   default     = 2
 
@@ -136,8 +147,21 @@ variable "aks_node_count_min" {
   }
 }
 
+variable "aks_system_node_count_min" {
+  description = "Minimum node-count override for only the system AKS node pool. Null (the default) uses aks_node_count_min for the system pool too. Terraform sets the effective value as the system pool's initial node count at creation only, like aks_node_count_min. Has no effect when create_aks = false."
+  type        = number
+  default     = null
+
+  validation {
+    # A ternary, not `== null || (...)`: Terraform only short-circuits `||`
+    # from 1.12, and below that floor(null) errors on the default value.
+    condition     = var.aks_system_node_count_min == null ? true : (var.aks_system_node_count_min >= 1 && var.aks_system_node_count_min == floor(var.aks_system_node_count_min))
+    error_message = "aks_system_node_count_min must be null or a whole number of at least 1."
+  }
+}
+
 variable "aks_node_count_max" {
-  description = "Maximum nodes in each of the system and user AKS node pools. The cluster autoscaler will not scale either pool above this value. The advisory capacity model counts both pools, or only the user pool when `aks_system_pool_critical_addons_only = true` taints the system pool against n8n pods, then subtracts AKS reservations and system workload requests. Terraform ignores each pool's live node count after creation so plans do not revert autoscaler-owned scale-out."
+  description = "Maximum nodes in the user (n8nuser) AKS node pool, and in the system node pool too unless aks_system_node_count_max overrides it. The cluster autoscaler will not scale either pool above its effective value. The advisory capacity model counts both pools at their own effective maximum and VM size, or only the user pool when `aks_system_pool_critical_addons_only = true` taints the system pool against n8n pods, then subtracts AKS reservations and system workload requests. Terraform ignores each pool's live node count after creation so plans do not revert autoscaler-owned scale-out."
   type        = number
   default     = 6
   nullable    = false
@@ -145,6 +169,23 @@ variable "aks_node_count_max" {
   validation {
     condition     = var.aks_node_count_max >= 1
     error_message = "aks_node_count_max must be at least 1."
+  }
+}
+
+variable "aks_system_node_count_max" {
+  description = "Maximum node-count override for only the system AKS node pool. Null (the default) uses aks_node_count_max for the system pool too. The effective value must be at least the effective system minimum (aks_system_node_count_min, or aks_node_count_min when unset). Has no effect when create_aks = false."
+  type        = number
+  default     = null
+
+  validation {
+    # A ternary for the same Terraform < 1.12 reason as aks_system_node_count_min.
+    condition     = var.aks_system_node_count_max == null ? true : (var.aks_system_node_count_max >= 1 && var.aks_system_node_count_max == floor(var.aks_system_node_count_max))
+    error_message = "aks_system_node_count_max must be null or a whole number of at least 1."
+  }
+
+  validation {
+    condition     = coalesce(var.aks_system_node_count_max, var.aks_node_count_max) >= coalesce(var.aks_system_node_count_min, var.aks_node_count_min)
+    error_message = "The effective aks_system_node_count_max (this override, or aks_node_count_max when unset) must be >= the effective aks_system_node_count_min (aks_system_node_count_min, or aks_node_count_min when unset)."
   }
 }
 
@@ -204,7 +245,7 @@ variable "aks_node_os_disk_size_gb" {
 }
 
 variable "aks_system_pool_critical_addons_only" {
-  description = "When true, sets `only_critical_addons_enabled = true` on the system default_node_pool, applying the CriticalAddonsOnly=true:NoSchedule taint. Default false preserves today's behavior where n8n, KEDA, and the Redis exporter can schedule on the system pool alongside CoreDNS, konnectivity, and metrics-server. Nothing this module installs (n8n, KEDA, the Redis exporter) sets a nodeSelector or toleration, so turning this on moves all of it onto the n8nuser pool, and the advisory capacity check then counts only that pool. AKS-managed add-ons (CoreDNS, metrics-server, the CSI controllers, and the AGIC add-on used when create_ingress = true) carry their own CriticalAddonsOnly toleration, so module-managed ingress stays supported. Changing this on an existing cluster rotates the system pool through its temporary_name_for_rotation (systemtemp); nodes are recreated, not updated in place. Before changing it, size aks_node_count_min/aks_node_count_max (which apply to both pools) so n8nuser alone can hold the workload, in a separate apply, and confirm subnet IP and vCPU quota headroom for the temporary pool and the user-pool scale-out. Has no effect when create_aks = false; the existing cluster's system-pool taint is unmanaged by this module."
+  description = "When true, sets `only_critical_addons_enabled = true` on the system default_node_pool, applying the CriticalAddonsOnly=true:NoSchedule taint. Default false preserves today's behavior where n8n, KEDA, and the Redis exporter can schedule on the system pool alongside CoreDNS, konnectivity, and metrics-server. Nothing this module installs (n8n, KEDA, the Redis exporter) sets a nodeSelector or toleration, so turning this on moves all of it onto the n8nuser pool, and the advisory capacity check then counts only that pool. AKS-managed add-ons (CoreDNS, metrics-server, the CSI controllers, and the AGIC add-on used when create_ingress = true) carry their own CriticalAddonsOnly toleration, so module-managed ingress stays supported. Changing this on an existing cluster rotates the system pool through its temporary_name_for_rotation (systemtemp); nodes are recreated, not updated in place. Before changing it, size aks_node_count_min/aks_node_count_max (which size the n8nuser pool, and the system pool too unless the aks_system_node_* overrides are set) so n8nuser alone can hold the workload, in a separate apply, and confirm subnet IP and vCPU quota headroom for the temporary pool and the user-pool scale-out. Has no effect when create_aks = false; the existing cluster's system-pool taint is unmanaged by this module."
   type        = bool
   default     = false
   nullable    = false
