@@ -955,8 +955,10 @@ run "rejects_aks_key_vault_secrets_provider_role_assignment_without_addon_enable
 run "rejects_malformed_aks_kms_key_vault_key_id" {
   command = plan
 
+  # A KMS toggle is set so the format rule is the only validation that fails.
   variables {
-    aks_kms_key_vault_key_id = "https://example.com/not-a-key"
+    aks_kms_cluster_identity_enabled = true
+    aks_kms_key_vault_key_id         = "https://example.com/not-a-key"
   }
 
   expect_failures = [
@@ -968,7 +970,8 @@ run "rejects_aks_kms_key_vault_key_id_with_disallowed_key_name_characters" {
   command = plan
 
   variables {
-    aks_kms_key_vault_key_id = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n?aks=etcd"
+    aks_kms_cluster_identity_enabled = true
+    aks_kms_key_vault_key_id         = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n?aks=etcd"
   }
 
   expect_failures = [
@@ -976,16 +979,45 @@ run "rejects_aks_kms_key_vault_key_id_with_disallowed_key_name_characters" {
   ]
 }
 
-run "rejects_malformed_aks_kms_key_vault_network_access" {
+run "rejects_versionless_aks_kms_key_vault_key_id" {
   command = plan
 
   variables {
-    aks_kms_key_vault_network_access = "Everywhere"
+    aks_kms_cluster_identity_enabled = true
+    aks_kms_key_vault_key_id         = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd"
+  }
+
+  # azurerm 4.81.0 rejects a versionless key_vault_key_id at plan time
+  # ("expected a versioned ID"), so the module rejects it first.
+  expect_failures = [
+    var.aks_kms_key_vault_key_id,
+  ]
+}
+
+run "rejects_aks_kms_key_vault_key_id_without_a_kms_toggle" {
+  command = plan
+
+  variables {
+    aks_kms_key_vault_key_id = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd/0123456789abcdef0123456789abcdef"
   }
 
   expect_failures = [
-    var.aks_kms_key_vault_network_access,
+    var.aks_kms_key_vault_key_id,
   ]
+}
+
+run "accepts_sovereign_cloud_aks_kms_key_vault_key_id" {
+  command = plan
+
+  variables {
+    aks_kms_cluster_identity_enabled = true
+    aks_kms_key_vault_key_id         = "https://N8nTest-Gov-KV.vault.usgovcloudapi.net/keys/n8n-aks-etcd/0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].key_management_service[0].key_vault_key_id == var.aks_kms_key_vault_key_id
+    error_message = "A versioned key ID on a sovereign-cloud vault suffix must be accepted and rendered."
+  }
 }
 
 run "rejects_malformed_aks_kms_key_vault_id" {
@@ -1018,8 +1050,8 @@ run "aks_key_vault_secrets_provider_and_kms_render_when_enabled" {
   variables {
     aks_key_vault_secrets_provider_enabled                  = true
     aks_key_vault_secrets_provider_secret_rotation_interval = "5m"
-    aks_kms_key_vault_key_id                                = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd/abc123"
-    aks_kms_key_vault_network_access                        = "Private"
+    aks_kms_cluster_identity_enabled                        = true
+    aks_kms_key_vault_key_id                                = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd/0123456789abcdef0123456789abcdef"
   }
 
   assert {
@@ -1033,9 +1065,9 @@ run "aks_key_vault_secrets_provider_and_kms_render_when_enabled" {
   assert {
     condition = (
       azurerm_kubernetes_cluster.n8n[0].key_management_service[0].key_vault_key_id == var.aks_kms_key_vault_key_id &&
-      azurerm_kubernetes_cluster.n8n[0].key_management_service[0].key_vault_network_access == "Private"
+      azurerm_kubernetes_cluster.n8n[0].key_management_service[0].key_vault_network_access == "Public"
     )
-    error_message = "key_management_service must render with the caller-supplied key ID and network access when aks_kms_key_vault_key_id is set."
+    error_message = "key_management_service must render with the caller-supplied key ID and Public network access (Private is not supported) when aks_kms_key_vault_key_id is set."
   }
 }
 
@@ -1047,9 +1079,21 @@ run "aks_key_vault_secrets_provider_and_kms_omitted_by_default" {
       length(azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider) == 0 &&
       length(azurerm_kubernetes_cluster.n8n[0].key_management_service) == 0 &&
       length(azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user) == 0 &&
-      length(azurerm_role_assignment.aks_kms_kv_crypto_user) == 0
+      length(azurerm_role_assignment.aks_kms_kv_crypto_user) == 0 &&
+      length(time_sleep.aks_kms_kv_crypto_user_rbac_propagation) == 0 &&
+      length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 0
     )
-    error_message = "Neither the Key Vault Secrets Provider add-on, KMS etcd encryption, nor their role assignments must render by default."
+    error_message = "Neither the Key Vault Secrets Provider add-on, KMS etcd encryption, nor their role assignments and propagation wait must render by default."
+  }
+
+  assert {
+    condition = (
+      output.aks_cluster_identity_principal_id == null &&
+      output.aks_cluster_identity_client_id == null &&
+      output.aks_key_vault_secrets_provider_identity_client_id == null &&
+      output.aks_key_vault_secrets_provider_identity_object_id == null
+    )
+    error_message = "The cluster-identity and Secrets Provider identity outputs must be null when neither feature is enabled."
   }
 }
 
@@ -1070,6 +1114,7 @@ run "aks_key_vault_secrets_provider_role_uses_minimum_scope" {
       id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ContainerService/managedClusters/n8ntest-aks"
       key_vault_secrets_provider = {
         secret_identity = [{
+          client_id = "66666666-6666-6666-6666-666666666666"
           object_id = "77777777-7777-7777-7777-777777777777"
         }]
       }
@@ -1084,6 +1129,14 @@ run "aks_key_vault_secrets_provider_role_uses_minimum_scope" {
       azurerm_role_assignment.aks_key_vault_secrets_provider_kv_secrets_user[0].principal_id == "77777777-7777-7777-7777-777777777777"
     )
     error_message = "The Key Vault Secrets Provider add-on's identity must receive only Key Vault Secrets User at the supplied vault scope."
+  }
+
+  assert {
+    condition = (
+      output.aks_key_vault_secrets_provider_identity_object_id == "77777777-7777-7777-7777-777777777777" &&
+      output.aks_key_vault_secrets_provider_identity_client_id == "66666666-6666-6666-6666-666666666666"
+    )
+    error_message = "The aks_key_vault_secrets_provider_identity_* outputs must expose the add-on identity's object and client IDs."
   }
 }
 
@@ -1102,6 +1155,7 @@ run "aks_kms_role_uses_minimum_scope" {
     values = {
       id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-aks-cluster"
       principal_id = "88888888-8888-8888-8888-888888888888"
+      client_id    = "99999999-9999-9999-9999-999999999999"
     }
   }
 
@@ -1113,6 +1167,23 @@ run "aks_kms_role_uses_minimum_scope" {
       azurerm_role_assignment.aks_kms_kv_crypto_user[0].principal_id == "88888888-8888-8888-8888-888888888888"
     )
     error_message = "The cluster identity must receive only Key Vault Crypto User at the supplied vault scope."
+  }
+
+  assert {
+    condition = (
+      length(time_sleep.aks_kms_kv_crypto_user_rbac_propagation) == 1 &&
+      time_sleep.aks_kms_kv_crypto_user_rbac_propagation[0].create_duration == "120s" &&
+      contains(keys(time_sleep.aks_kms_kv_crypto_user_rbac_propagation[0].triggers), "role_assignment_id")
+    )
+    error_message = "The Key Vault Crypto User grant must be followed by a 120 s RBAC propagation wait that the cluster depends on."
+  }
+
+  assert {
+    condition = (
+      output.aks_cluster_identity_principal_id == "88888888-8888-8888-8888-888888888888" &&
+      output.aks_cluster_identity_client_id == "99999999-9999-9999-9999-999999999999"
+    )
+    error_message = "The aks_cluster_identity_* outputs must expose the aks_cluster identity's principal and client IDs."
   }
 }
 
@@ -1163,6 +1234,76 @@ run "aks_kms_switches_cluster_identity_to_user_assigned" {
     condition     = length(azurerm_user_assigned_identity.aks_cluster) == 1
     error_message = "A dedicated aks_cluster UserAssigned identity must be created when KMS is requested."
   }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n[0].key_management_service) == 0
+    error_message = "The grant-only apply (first step of enabling KMS, and the shape after turning KMS off) must keep the identity and grant without rendering key_management_service."
+  }
+
+  assert {
+    condition = (
+      length(azurerm_role_assignment.aks_private_dns_zone_contributor) == 0 &&
+      length(azurerm_role_assignment.aks_cluster_vnet_network_contributor) == 0
+    )
+    error_message = "The KMS-only path must not create the BYO private DNS zone grants."
+  }
+}
+
+run "aks_kms_cluster_identity_enabled_creates_identity_without_key_vault_grant" {
+  command = plan
+
+  variables {
+    aks_kms_cluster_identity_enabled = true
+  }
+
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster.n8n[0].identity[0].type == "UserAssigned" &&
+      length(azurerm_user_assigned_identity.aks_cluster) == 1 &&
+      length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 1
+    )
+    error_message = "aks_kms_cluster_identity_enabled must switch the cluster to the aks_cluster identity and grant it subnet Network Contributor."
+  }
+
+  assert {
+    condition = (
+      length(azurerm_role_assignment.aks_kms_kv_crypto_user) == 0 &&
+      length(time_sleep.aks_kms_kv_crypto_user_rbac_propagation) == 0 &&
+      length(azurerm_kubernetes_cluster.n8n[0].key_management_service) == 0
+    )
+    error_message = "aks_kms_cluster_identity_enabled alone must not grant any Key Vault role or turn KMS on: the caller grants access out-of-band."
+  }
+}
+
+run "aks_byo_private_dns_zone_and_kms_share_one_cluster_identity" {
+  command = plan
+
+  variables {
+    aks_private_cluster_enabled     = true
+    aks_private_dns_zone_id         = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/privateDnsZones/privatelink.westeurope.azmk8s.io"
+    aks_kms_role_assignment_enabled = true
+    aks_kms_key_vault_id            = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-shared-rg/providers/Microsoft.KeyVault/vaults/n8ntest-shared-kv"
+    aks_kms_key_vault_key_id        = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd/0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster.n8n[0].identity[0].type == "UserAssigned" &&
+      length(azurerm_user_assigned_identity.aks_cluster) == 1
+    )
+    error_message = "A BYO private DNS zone together with KMS must use exactly one aks_cluster UserAssigned identity."
+  }
+
+  assert {
+    condition = (
+      length(azurerm_role_assignment.aks_private_dns_zone_contributor) == 1 &&
+      length(azurerm_role_assignment.aks_cluster_vnet_network_contributor) == 1 &&
+      length(azurerm_role_assignment.aks_cluster_subnet_network_contributor) == 1 &&
+      length(azurerm_role_assignment.aks_kms_kv_crypto_user) == 1 &&
+      length(azurerm_kubernetes_cluster.n8n[0].key_management_service) == 1
+    )
+    error_message = "Both paths' grants must be created against the one identity, and KMS must render."
+  }
 }
 
 run "aks_default_cluster_identity_stays_system_assigned_without_kms" {
@@ -1174,7 +1315,7 @@ run "aks_default_cluster_identity_stays_system_assigned_without_kms" {
   }
 }
 
-run "rejects_aks_key_vault_secrets_provider_on_existing_cluster" {
+run "warns_aks_key_vault_secrets_provider_on_existing_cluster" {
   command = plan
 
   variables {
@@ -1191,7 +1332,7 @@ run "rejects_aks_key_vault_secrets_provider_on_existing_cluster" {
   ]
 }
 
-run "rejects_aks_kms_on_existing_cluster" {
+run "warns_aks_kms_on_existing_cluster" {
   command = plan
 
   variables {
@@ -1200,7 +1341,7 @@ run "rejects_aks_kms_on_existing_cluster" {
     existing_aks_cluster_name                    = "shared-aks"
     existing_aks_resource_group_name             = "shared-aks-rg"
     existing_aks_cluster_prerequisites_confirmed = true
-    aks_kms_key_vault_key_id                     = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd/abc123"
+    aks_kms_key_vault_key_id                     = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd/0123456789abcdef0123456789abcdef"
   }
 
   expect_failures = [
@@ -1208,7 +1349,7 @@ run "rejects_aks_kms_on_existing_cluster" {
   ]
 }
 
-run "rejects_aks_kms_role_assignment_on_existing_cluster" {
+run "warns_aks_kms_role_assignment_on_existing_cluster" {
   command = plan
 
   variables {
@@ -1221,6 +1362,25 @@ run "rejects_aks_kms_role_assignment_on_existing_cluster" {
     aks_kms_key_vault_id                         = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-shared-rg/providers/Microsoft.KeyVault/vaults/n8ntest-shared-kv"
   }
 
+  expect_failures = [
+    check.aks_kms_role_assignment_requires_module_managed_aks,
+  ]
+}
+
+run "warns_aks_kms_cluster_identity_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_kms_cluster_identity_enabled             = true
+  }
+
+  # check blocks warn rather than fail the plan; expect_failures records the
+  # warning. The input is ignored: no identity is created.
   expect_failures = [
     check.aks_kms_role_assignment_requires_module_managed_aks,
   ]

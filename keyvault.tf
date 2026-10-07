@@ -50,31 +50,50 @@ resource "azurerm_role_assignment" "aks_key_vault_secrets_provider_kv_secrets_us
 }
 
 # ── AKS KMS etcd encryption access ──────────────────────────────────────────
-# Azure requires the cluster's own identity to already hold this role on the
-# key vault before key_management_service (aks.tf) can be enabled — see the
-# two-apply sequencing note above var.aks_kms_key_vault_key_id in
-# variables.tf. The cluster's identity is always the UserAssigned
-# aks_cluster identity here (local.aks_needs_user_assigned_identity in
-# locals.tf is true whenever this role assignment is requested), since
-# AKS's KMS feature rejects a SystemAssigned identity outright.
+# Azure requires the cluster's aks_cluster identity to hold this role on the
+# key vault before key_management_service (aks.tf) can be enabled. The
+# cluster depends on this grant and on the propagation wait below, so
+# Terraform orders them first, but Azure RBAC can take longer than the wait
+# to reach the Key Vault data plane. The documented procedure therefore
+# enables KMS in a second apply; see the sequencing note above
+# var.aks_kms_key_vault_key_id in variables.tf. local.aks_needs_user_assigned_identity
+# (locals.tf) is true whenever this grant is requested, so the identity it
+# targets always exists here.
 #
-# Role choice: "Key Vault Crypto Service Encryption User" (the role this
-# resource granted before this fix) only carries the wrap/unwrap data
-# actions — it does NOT include keys/encrypt/action or keys/decrypt/action.
+# Role choice: "Key Vault Crypto Service Encryption User" only carries the
+# wrap/unwrap data actions, not keys/encrypt/action or keys/decrypt/action.
 # AKS's KMS identity-permission validation checks specifically for
-# encrypt/decrypt, so every apply enabling aks_kms_key_vault_key_id under
-# that role failed with
+# encrypt/decrypt, so enabling KMS under that role fails with
 # AzureKeyVaultKmsValidateIdentityPermissionCustomerError ("The identity
 # does not have keys encrypt/decrypt permission on key vault ..."), live-
-# reproduced on a brand-new cluster with no identity-type switch involved,
-# confirming the failure is this wrong role, not RBAC propagation lag.
-# "Key Vault Crypto User" carries encrypt/decrypt
-# (plus wrap/unwrap/sign/verify), matching the role Microsoft's own AKS KMS
-# documentation grants for this exact scenario.
+# reproduced on a brand-new cluster with no identity-type switch involved.
+# "Key Vault Crypto User" carries encrypt/decrypt (plus wrap/unwrap/sign/
+# verify), matching the role Microsoft's AKS KMS documentation grants for
+# this scenario.
+#
+# To turn KMS off, keep this grant (and the key) in place: clear only
+# aks_kms_key_vault_key_id. Deleting the grant in the same apply would leave
+# AKS without access to a key it may still need; see
+# docs/customer-managed-infrastructure.md.
 resource "azurerm_role_assignment" "aks_kms_kv_crypto_user" {
   count = var.create_aks && var.aks_kms_role_assignment_enabled ? 1 : 0
 
   scope                = var.aks_kms_key_vault_id
   role_definition_name = "Key Vault Crypto User"
   principal_id         = azurerm_user_assigned_identity.aks_cluster[0].principal_id
+}
+
+# Same propagation wait as appgw_kv_secrets_user_rbac_propagation above. It
+# narrows the window between the grant and AKS's KMS permission check; it
+# does not guarantee the grant is effective. The trigger recreates the wait
+# whenever the grant itself is recreated (for example a new vault scope), so
+# a new grant always gets a fresh wait.
+resource "time_sleep" "aks_kms_kv_crypto_user_rbac_propagation" {
+  count = var.create_aks && var.aks_kms_role_assignment_enabled ? 1 : 0
+
+  create_duration = "120s"
+
+  triggers = {
+    role_assignment_id = azurerm_role_assignment.aks_kms_kv_crypto_user[0].id
+  }
 }

@@ -90,9 +90,13 @@ The root module SHALL support optionally enabling the AKS Key Vault Secrets Prov
 - **WHEN** a caller supplies a Key Vault key identifier for KMS etcd encryption with module-managed AKS
 - **THEN** the module SHALL configure AKS KMS etcd encryption using that key and SHALL grant the cluster's own identity Key Vault Crypto User on a caller-named vault only when the caller also enables that role assignment
 
-#### Scenario: Reject Key Vault add-ons without module-managed AKS
-- **WHEN** either Key Vault-backed add-on is enabled while AKS creation is disabled
-- **THEN** Terraform planning SHALL fail because there is no module-managed cluster resource to attach the add-on to
+#### Scenario: Ignore Key Vault add-ons without module-managed AKS
+- **WHEN** either Key Vault-backed add-on, or a KMS identity toggle, is enabled while AKS creation is disabled
+- **THEN** the module SHALL ignore the input, create no add-on, identity, or role assignment, and SHALL emit a non-failing warning, matching every other ignored AKS-only input
+
+#### Scenario: Keep the KMS identity decision plan-known
+- **WHEN** a caller sets a KMS key identifier with module-managed AKS
+- **THEN** the module SHALL require a plan-known KMS toggle (module-managed role assignment or caller-managed grant), SHALL require a versioned key identifier, and SHALL order its own Key Vault Crypto User grant and RBAC propagation wait before the cluster
 
 ### Requirement: Pre-release state boundary
 The modularity change SHALL NOT promise Terraform state compatibility for resources whose addresses change because of ownership gates or controller extraction.
