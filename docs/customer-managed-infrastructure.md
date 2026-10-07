@@ -750,11 +750,31 @@ rotation; if you are not sure, keep it.
 2. Rewrite every Secret with the `kubectl replace` command above, so that
    none is stored encrypted with the key any more.
 
+Turning KMS off this way was qualified live: an in-place update with no
+disruption.
+
+#### Turning KMS on cannot be undone
+
+Once KMS has been on, keep the KMS toggle, the `aks_cluster` identity, its
+grants, and the key for the whole life of the cluster, including after KMS
+is turned off. AKS keeps the key ID in the cluster's security profile after
+KMS is turned off, and it checks the cluster identity's key permissions on
+every later cluster update.
+
+Do not set both KMS toggles back to `false`, and do not roll back to a
+module version without these inputs. Either one deletes the identity and its
+grants, and Terraform deletes them **before** it updates the cluster back to
+`SystemAssigned`. A live test showed the result: AKS rejected the update with
+`AzureKeyVaultKmsValidateIdentityPermissionCustomerError`, the cluster and its
+node pools were left in the `Failed` state, and the AGIC identity dropped out
+of the cluster profile. The tested recovery is in
+[Troubleshooting](./troubleshooting.md#terraform-apply-aks-update-fails-with-azurekeyvaultkmsvalidateidentitypermissioncustomererror-after-removing-the-kms-toggles). Even after that recovery, the API server's
+`/readyz/kms-providers` check kept failing, and AKS offers no supported way to
+clear the old KMS settings. Only a new cluster removes the dependency.
+
 Do not delete, disable, or let expire any key version the cluster has used,
-and do not remove the identity's access to the vault, even after KMS is off:
-Microsoft warns that doing so can stop the API server from working. This
-module offers no verified procedure for removing the identity and its grants
-afterwards. The disable path has not been qualified live with this module.
+and do not remove the identity's access to the vault: Microsoft warns that
+doing so can stop the API server from working.
 
 ## Secrets that remain in Terraform state
 

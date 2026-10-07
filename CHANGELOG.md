@@ -326,8 +326,13 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   documented procedure turns KMS on in a second apply. After turning KMS on,
   rotating the key, or turning KMS off, rewrite every existing Secret; turn
   KMS off by clearing only `aks_kms_key_vault_key_id` and keep the toggle,
-  the grant, and the key. See
-  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault).
+  the grant, and the key. **Turning KMS on cannot be undone:** setting both
+  KMS toggles back to `false`, or rolling back to a module version without
+  them, leaves the cluster `Failed` (confirmed in a live test), because AKS
+  keeps checking the key permissions of the cluster identity. See
+  [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#turning-kms-on-cannot-be-undone)
+  and the matching
+  [troubleshooting entry](./docs/troubleshooting.md#terraform-apply-aks-update-fails-with-azurekeyvaultkmsvalidateidentitypermissioncustomererror-after-removing-the-kms-toggles).
 - Setting `aks_key_vault_secrets_provider_enabled`,
   `aks_kms_key_vault_key_id`, `aks_kms_role_assignment_enabled`, or
   `aks_kms_cluster_identity_enabled` while `create_aks = false` warns and
