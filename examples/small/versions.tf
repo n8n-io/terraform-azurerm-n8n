@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: MIT
 
 terraform {
-  required_version = ">= 1.9"
+  required_version = ">= 1.11"
 
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      version = ">= 4.39.0, < 5.0.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"

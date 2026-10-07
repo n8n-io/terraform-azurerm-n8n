@@ -24,8 +24,9 @@
 #     older provider releases (<4.60ish) reject it with `expected
 #     default_database.0.clustering_policy to be one of ["EnterpriseCluster"
 #     "OSSCluster"]` — hashicorp/terraform-provider-azurerm#30940). The
-#     `~> 4.0` constraint in versions.tf allows any 4.x release; a caller
-#     pinned to an older 4.x patch before NoCluster shipped will see that
+#     `>= 4.39.0, < 5.0.0` constraint in versions.tf allows 4.x releases
+#     older than that; a caller pinned to a 4.x release before NoCluster
+#     shipped will see that
 #     same plan-time rejection from the provider itself.
 #   - `client_protocol = "Encrypted"` — TLS-only, matching the legacy Redis
 #     Cache's hardcoded `non_ssl_port_enabled = false`.

@@ -572,7 +572,7 @@ variable "postgres_external_username" {
 }
 
 variable "postgres_external_password" {
-  description = "Password for the external PostgreSQL endpoint specified by `postgres_external_host`. Required when `create_database = false`, unless `postgres_password_secret_ref` is set instead. Ignored when `create_database = true` (the module generates a random password for its managed Flexible Server)."
+  description = "Password for the external PostgreSQL endpoint specified by `postgres_external_host`. Required when `create_database = false`, unless `postgres_password_secret_ref` is set instead. Ignored when `create_database = true` (the module generates a random password for its managed Flexible Server, unless `postgres_password_write_only = true`, in which case the password instead comes from `postgres_admin_password_wo`)."
   type        = string
   default     = null
   sensitive   = true
@@ -3316,7 +3316,7 @@ variable "n8n_encryption_key_secret_ref" {
 }
 
 variable "postgres_password_secret_ref" {
-  description = "Existing Kubernetes Secret name and key holding the external PostgreSQL password, for callers who manage this credential outside Terraform. Applies only to the external database path (create_database = false) — the module-managed PostgreSQL Flexible Server always generates and manages its own password. Mutually exclusive with postgres_external_password; exactly one must be set when create_database = false. The module does not read the Secret's value."
+  description = "Existing Kubernetes Secret name and key holding the PostgreSQL password, for callers who manage this credential outside Terraform. Required on two paths: the external database path (create_database = false, as the counterpart to postgres_external_password), and the module-managed write-only path (create_database = true with postgres_password_write_only = true), since the module cannot copy a write-only value into a Kubernetes Secret it manages. Ignored when create_database = true and postgres_password_write_only = false; the module manages its own Secret in that case. The module does not read the Secret's value on either required path."
   type = object({
     name = string
     key  = string
@@ -3329,8 +3329,89 @@ variable "postgres_password_secret_ref" {
   }
 
   validation {
-    condition     = var.create_database ? var.postgres_password_secret_ref == null : true
-    error_message = "postgres_password_secret_ref is ignored when create_database = true; the module always generates and manages the PostgreSQL password for its own server."
+    condition     = (var.create_database && !var.postgres_password_write_only) ? var.postgres_password_secret_ref == null : true
+    error_message = "postgres_password_secret_ref is ignored when create_database = true and postgres_password_write_only = false; the module always generates and manages the PostgreSQL password for its own server. Set postgres_password_write_only = true to supply the password through your own Secret instead."
+  }
+
+  validation {
+    condition     = (var.create_database && var.postgres_password_write_only) ? var.postgres_password_secret_ref != null : true
+    error_message = "postgres_password_secret_ref is required when postgres_password_write_only = true: the module cannot write a write-only value into a Kubernetes Secret, so you must supply your own Secret already populated with the same password."
+  }
+
+  # Reusing the module-managed Secret's name on the write-only path would make
+  # the same apply destroy kubernetes_secret.n8n_db (its count drops to 0)
+  # while the chart keeps pointing at that name, so the caller's populated
+  # Secret disappears and no pod rolls. The external path is not affected:
+  # the module never creates n8n-db-secret there, so a caller-owned Secret
+  # with that name is legitimate.
+  validation {
+    condition     = (var.create_database && var.postgres_password_write_only && var.postgres_password_secret_ref != null) ? var.postgres_password_secret_ref.name != "n8n-db-secret" : true
+    error_message = "postgres_password_secret_ref.name must not be \"n8n-db-secret\" when postgres_password_write_only = true: that is the module-managed Secret, which the same apply destroys. Create your own Secret under a different name."
+  }
+}
+
+variable "postgres_password_write_only" {
+  description = "When true, the module writes the PostgreSQL administrator password through azurerm_postgresql_flexible_server's write-only administrator_password_wo argument (sourced from postgres_admin_password_wo) instead of generating a password with random_password.postgres_admin and storing it in plain text in Terraform state. Requires postgres_admin_password_wo to be set and postgres_password_secret_ref to reference a Kubernetes Secret you populate yourself (for example, synced from Azure Key Vault) — the module cannot copy a write-only value into kubernetes_secret.n8n_db, so it creates no managed Secret and the postgres_admin_password output is null on this path. Rejected (plan fails) when create_database = false; the module never manages a password for an external PostgreSQL endpoint. See docs/customer-managed-infrastructure.md for the full contract."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = var.postgres_password_write_only ? var.create_database : true
+    error_message = "postgres_password_write_only is only valid when create_database = true; it cannot be set to true when create_database = false, since the module never manages a password for an external PostgreSQL endpoint."
+  }
+}
+
+variable "postgres_admin_password_wo" {
+  description = "PostgreSQL administrator password, accepted as an ephemeral, write-only value so this module never persists it in plan or state files. That holds end to end only if the calling root passes an ephemeral value too: a non-ephemeral root input variable is saved in the caller's plan file, and a `data \"azurerm_key_vault_secret\"` read or a Terraform-managed Kubernetes Secret in the calling root stores the value in that root's state. Feed this from an `ephemeral \"azurerm_key_vault_secret\"` block or an ephemeral input variable in the calling root. Required when postgres_password_write_only = true; must stay null otherwise, because the module generates its own password in that mode. Must meet the Azure Database for PostgreSQL Flexible Server password rules: 8 to 128 characters, from at least three of uppercase letters, lowercase letters, digits, and non-alphanumeric characters. The plan-time validation checks only those two rules; Azure also rejects a password that contains the login name (pg_admin_username), which fails during apply instead. Keep the Kubernetes Secret referenced by postgres_password_secret_ref in sync with the same value: Terraform never copies one into the other. Bump postgres_admin_password_wo_version whenever you rotate this value; Terraform cannot detect a write-only value change on its own."
+  type        = string
+  ephemeral   = true
+  sensitive   = true
+  default     = null
+
+  validation {
+    condition     = var.postgres_password_write_only ? var.postgres_admin_password_wo != null : true
+    error_message = "postgres_admin_password_wo is required when postgres_password_write_only = true."
+  }
+
+  validation {
+    condition     = var.postgres_password_write_only ? true : var.postgres_admin_password_wo == null
+    error_message = "postgres_admin_password_wo has no effect when postgres_password_write_only = false; the module generates and manages its own password in that mode."
+  }
+
+  # Azure Database for PostgreSQL Flexible Server admin password rules
+  # (https://learn.microsoft.com/en-us/cli/azure/postgres/flexible-server):
+  # 8 to 128 characters, from three of the four categories below. The
+  # provider only rejects an empty string; anything else would fail late,
+  # against the Azure API, during apply. The error message never echoes the
+  # value: the variable is ephemeral and sensitive.
+  validation {
+    condition = var.postgres_admin_password_wo == null ? true : (
+      length(var.postgres_admin_password_wo) >= 8 &&
+      length(var.postgres_admin_password_wo) <= 128 &&
+      length([
+        for re in ["[A-Z]", "[a-z]", "[0-9]", "[^A-Za-z0-9]"] : re
+        if can(regex(re, var.postgres_admin_password_wo))
+      ]) >= 3
+    )
+    error_message = "postgres_admin_password_wo must be 8 to 128 characters and contain characters from at least three of these categories: uppercase letters, lowercase letters, digits, non-alphanumeric characters (Azure Database for PostgreSQL Flexible Server password rules)."
+  }
+}
+
+variable "postgres_admin_password_wo_version" {
+  description = "Version marker for postgres_admin_password_wo, forwarded to azurerm_postgresql_flexible_server's administrator_password_wo_version. Increment this value whenever you rotate postgres_admin_password_wo — Terraform only re-applies a write-only value when its version number changes. A version bump changes no Helm values, so it does not restart n8n: the pods read the password from an environment variable at startup. Restart the n8n Deployments after the apply (see docs/customer-managed-infrastructure.md, \"Rotating the password\"). Ignored when postgres_password_write_only = false."
+  type        = number
+  default     = 1
+  nullable    = false
+
+  validation {
+    condition     = var.postgres_admin_password_wo_version >= 1
+    error_message = "postgres_admin_password_wo_version must be a positive integer (start at 1, increment on each rotation)."
+  }
+
+  validation {
+    condition     = floor(var.postgres_admin_password_wo_version) == var.postgres_admin_password_wo_version
+    error_message = "postgres_admin_password_wo_version must be a positive integer (start at 1, increment on each rotation); fractional values are not allowed."
   }
 }
 
