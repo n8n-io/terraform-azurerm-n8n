@@ -2,10 +2,12 @@
 
 Filled-in copy of [`manual-azure-qualification.md`](../manual-azure-qualification.md)
 scoped to the live validation of a batch of 17 issues across 15 draft/open
-PRs in this round (issues #16 and #18 to #33). 16 of the 17 issues were
-qualified; #24 (PR #51) was excluded by the maintainer and stays in draft,
-pending an offline licence certificate and procedure to be supplied
-separately (see the results table below). It records what was observed
+PRs in this round (issues #16 and #18 to #33). 10 issues have targeted
+live results. 6 issues (#21, #23, #30 to #33) were only observed in the
+combined deployments, not validated live as standalone features. #24
+(PR #51) was excluded by the maintainer and stays in draft, pending an
+offline licence certificate and procedure to be supplied separately (see
+the results table below). It records what was observed
 across several disposable deployments. It is not a release guarantee, and
 no result below transfers to other regions, SKUs, or n8n versions.
 
@@ -17,9 +19,20 @@ Environment:     disposable subscription, swedencentral. Several
                  toggles enabled; B1; B2), each torn down before or shortly
                  after the next began. The in-place-on-upgrade results
                  (#18, #26) were observed during phase A.
-Module version:  per-PR fix/issue-* branches, merged progressively into a
+Module version:  baseline main at 7ce8ba7 (phase A), then per-PR
+                 fix/issue-* branches, merged progressively into a
                  combined live/combined integration branch across phases.
+                 The commit SHA deployed in phases A2, B1, and B2 was not
+                 recorded.
 AKS version:     1.35.7
+n8n image tag:   2.35.0 (module default at 7ce8ba7); per-phase overrides
+                 not recorded
+Chart version:   1.13.0 (module default at 7ce8ba7; the 1.14.0 bump in
+                 #52 merged after this run); per-phase overrides not
+                 recorded
+Providers:       not fully recorded per phase (#35 reports azurerm
+                 4.81.0 for its evidence carried over from #17)
+Backend:         not recorded
 VM SKU:          Standard_D2s_v5 (node pools and the B2 jumpbox)
 Terraform:       1.13.3
 Date:            2026-09-30
@@ -33,14 +46,20 @@ This run is organized by issue/PR, not strictly by the numbered cases in
 independent opt-in inputs rather than a single feature. Where a case number
 applies it is noted. **PASS** means the expected outcome in the linked PR's
 "Live validation" section was observed; **FAIL** or **INCONCLUSIVE** mean it
-was not, with the reason given.
+was not, with the reason given. Each result records the observation made
+during this round against the PR as it stood then. It does not qualify
+later revisions of a PR or its merged implementation. Some PR descriptions
+were updated after this round (for example #41 with chart 1.14.0 tests,
+and #43 with a later retest), and those later results are not part of
+this record. Notes such as "merged later in #44" were added after the run
+and only identify where a change ended up.
 
 ## Results by issue
 
 | Issue | PR | Result |
 |---|---|---|
 | #16 (Key Vault cert tags) | #35 | PASS |
-| #20 (system-pool taint) | #36 | PASS (module's own AGIC-under-taint advisory does not reproduce against the AKS-managed add-on; recommended softening the check text) |
+| #20 (system-pool taint) | #36 | PASS (the module's AGIC-under-taint advisory did not hold for the AKS-managed add-on, so the check was removed in `0ede977`) |
 | #19 (AKS SKU tier) | #38 | PASS |
 | #27 (PostgreSQL autogrow + drift guard) | #39 | PASS |
 | #18 (Redis NoEviction) | #40 | PASS, in place on upgrade |
@@ -57,23 +76,27 @@ was not, with the reason given.
 - **#20 / PR #36:** the module's `check.aks_critical_addons_only_conflicts_with_managed_ingress`
   warning text describing AGIC as failing to start under
   `CriticalAddonsOnly=true:NoSchedule` does not hold for the current
-  AKS-managed AGIC add-on (it carries its own toleration). The two GitHub
-  issues the check's corroborating text cites describe the upstream,
+  AKS-managed AGIC add-on (it carries its own toleration). The check cited
+  the AzureRM `kubernetes_cluster` documentation. The two GitHub issues
+  found as corroboration during an earlier session describe the upstream,
   self-hosted `application-gateway-kubernetes-ingress` Helm chart, not this
   module's own code path. The check and its test were removed outright
-  (commit `0ede977`) rather than reworded, since live evidence disproved
-  the advisory's premise entirely.
+  (commit `0ede977`, merged in #36 as `d90e42c`) rather than reworded,
+  since live evidence disproved the advisory's premise entirely.
 - **#28 / PR #44:** `admin_group_object_ids` alone grants no cluster access
-  under Azure RBAC mode (the module's default). A separate Azure role
+  under Azure RBAC mode (the default once `aks_entra_rbac` is set;
+  `aks_entra_rbac` itself defaults to null). A separate Azure role
   assignment (one of the built-in "Azure Kubernetes Service RBAC *" roles)
   scoped to the cluster is caller responsibility, not a module bug.
-- **#28 / PR #44 (egress):** Microsoft's published AKS+Firewall FQDN list is
-  incomplete for the default n8n image. The image's actual registry mirror
+- **#28 / PR #44 (egress):** in this run's firewall allow-list, Microsoft's
+  published AKS+Firewall FQDN list was not enough to pull the default n8n
+  image. The image's actual registry mirror
   domain (not `docker.io`) is not covered by any Microsoft or Docker Hub FQDN
   list, and Docker Hub's blob-layer CDN redirect lands on a
   `*.cloudfront.docker.com` domain, not the `*.cloudflare.docker.com` domain
   shown in Microsoft's published example. Documented on `fix/issue-28`
-  (commit local to this round, pending push).
+  (commit local to this round, pending push at the time of the run;
+  merged later in #44 as `c4d9f7c`).
 - **#29 / PR #49:** the role originally granted for AKS KMS etcd encryption
   (`Key Vault Crypto Service Encryption User`) lacks the `keys/encrypt/action`
   and `keys/decrypt/action` data actions AKS's KMS identity-permission
@@ -83,29 +106,47 @@ was not, with the reason given.
   for this scenario.
 - **Smoke-test harness gap:** `tests/scripts/smoke-test.sh` never converted
   the kubeconfig from `az aks get-credentials`'s default interactive
-  devicecode `kubelogin` mode to azurecli mode, so it hung indefinitely
-  non-interactively against any Entra RBAC-enabled cluster. Fixed on
-  `fix/issue-28` (local commit, pending push), confirmed as a no-op against a
+  devicecode `kubelogin` mode to azurecli mode. In a non-interactive run
+  against the Entra RBAC-enabled cluster in this round, it waited for a
+  device-code sign-in that never came and did not finish. Fixed on
+  `fix/issue-28` (local commit, pending push at the time of the run;
+  merged later in #44 as `c4d9f7c`), confirmed as a no-op against a
   plain client-certificate kubeconfig from a non-AAD cluster.
 
 ## Terraform `<1.12` `||` short-circuit evaluation note
 
-Several of this round's new `variables.tf` validations follow the repo's
-existing `var.x == null || (<expression reading var.x>)` idiom (for example
-the new `aks_private_dns_zone_id`, `pg_storage_drift_guard_enabled`-adjacent,
-and `*_private_dns_zone_id` validations added in this round, alongside the
-many pre-existing validations of the same shape). Terraform versions before
-**1.12** do not reliably short-circuit `&&`/`||` in all evaluation paths:
-both operands can be evaluated even when the left-hand `== null` check would
-otherwise make the right-hand expression unreachable, which can surface as a
-spurious evaluation error (for example indexing into a null value) instead of
-the intended validation failure message. This round's live sessions all ran
-Terraform **1.13.3** (already `>= 1.12`), so this was not encountered live,
-but it is not re-verified against an older Terraform binary. Any caller
-pinned below Terraform 1.12 should confirm their own version's `||`
-short-circuit behavior against these validation blocks before relying on the
-error messages they produce; `versions.tf`'s `required_version` floor does
-not currently enforce `>= 1.12` on this basis.
+Terraform only short-circuits `&&` and `||` from 1.12.0. Before that, it
+always evaluates both operands. A `var.x == null || <expression reading
+var.x>` guard therefore does not protect the right-hand side on Terraform
+1.9 to 1.11. If that side fails on null (attribute access, arithmetic,
+`length()`), the plan fails with an evaluation error, even when the caller
+leaves the input at its null default.
+
+`variables.tf` mostly uses the null-safe `var.x == null ? true : (...)`
+form already (see the comment on `aks_system_node_count_min`). A few
+validations still use `||` with a right-hand side that fails on null. One
+example is the `n8n_dns_config` validations, where
+`var.n8n_dns_config == null || var.n8n_dns_config.nameservers == null`
+reads an attribute of a variable that defaults to null. On Terraform below
+1.12, this can stop a default configuration from planning, not only change
+an error message. Not every `||` guard is affected: a right-hand side
+wrapped in `can(...)`, or one that only reads other variables, stays safe.
+
+This round's live sessions all ran Terraform **1.13.3**, so this was not
+encountered live and was not reproduced on an older binary. The conclusion
+comes from the Terraform 1.12.0 changelog ("Logical binary operators can
+now short-circuit"). At the time of the run, `versions.tf` declared
+`required_version = ">= 1.9"`. #45, merged after the run, raised it to
+`>= 1.11` for write-only arguments. That is still below 1.12, so the
+problem remains. CI pins Terraform 1.16.4, so it never tests the declared
+floor.
+
+Both sibling modules provide precedents for the ternary form.
+`terraform-google-n8n` requires it in its `AGENTS.md` and pins CI to its
+1.9.x floor. `terraform-aws-n8n` uses it and declares `>= 1.11`, but its CI
+runs a newer version, so its floor is not tested either. The follow-up for
+this module is to rewrite the remaining unsafe guards as ternaries and to
+add CI coverage at the declared floor, not to raise the floor to 1.12.
 
 ## Not qualified in this round
 
