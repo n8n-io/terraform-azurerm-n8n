@@ -450,3 +450,123 @@ check "postgres_ssl_ca_requires_verify_mode" {
     ])
   }
 }
+
+# ── Diagnostics: PostgreSQL connection budget vs. known SKU limits ────────
+# The postgres_pool_size description asks callers to budget connections by
+# hand. This check does that arithmetic at plan time: pool_size times the
+# modeled pod ceiling (effective main, worker, webhook-processor, and any
+# n8n_worker_pools, mirroring the AGENTS.md worker-pools section's
+# connection-budget note) against the table below. An unrecognized
+# pg_sku_name stays silent rather than warn from a guessed limit, following
+# the aks_node_vcpus_derived / n8n_capacity_model_readable pattern in
+# scaling.tf.
+#
+# The table holds Microsoft's published DEFAULT "maximum user connections"
+# per SKU (max_connections minus the 15 slots Azure reserves for replication
+# and monitoring), not the live server value. Three gaps follow, so a silent
+# check does not prove the ceilings fit:
+#   - Azure computes the default max_connections once, when the server is
+#     provisioned. A later pg_sku_name change does not update it; Microsoft
+#     recommends adjusting the max_connections server parameter after every
+#     SKU change, which needs a server restart. A server created on
+#     B_Standard_B1ms and resized to GP_Standard_D2s_v3 still allows 35 user
+#     connections, while this check compares against 844.
+#   - The module never sets max_connections (its only server parameter is
+#     azure.extensions), so a value a caller set outside Terraform is
+#     invisible here.
+#   - Microsoft notes the 15 reserved slots can change; the live budget is
+#     max_connections - (reserved_connections + superuser_reserved_connections),
+#     shared with every other client of the server.
+# https://learn.microsoft.com/azure/postgresql/flexible-server/concepts-limits
+#
+# The Dds_v4, Dds_v5, Dads_v5, Eds_v4, Eds_v5 and Eads_v5 entries share a
+# row with the s_v3 SKU of the same size on that page, so they reuse its
+# value. Larger SKUs (32 vCores and up) stay out of the table on purpose;
+# tests/defaults.tftest.hcl uses GP_Standard_D32s_v3 as the unknown-SKU
+# fixture.
+locals {
+  pg_max_user_connections_by_sku = {
+    B_Standard_B1ms       = 35
+    B_Standard_B2s        = 414
+    B_Standard_B2ms       = 844
+    B_Standard_B4ms       = 1703
+    GP_Standard_D2s_v3    = 844
+    GP_Standard_D2ds_v4   = 844
+    GP_Standard_D2ds_v5   = 844
+    GP_Standard_D2ads_v5  = 844
+    GP_Standard_D4s_v3    = 1703
+    GP_Standard_D4ds_v4   = 1703
+    GP_Standard_D4ds_v5   = 1703
+    GP_Standard_D4ads_v5  = 1703
+    GP_Standard_D8s_v3    = 3422
+    GP_Standard_D8ds_v4   = 3422
+    GP_Standard_D8ds_v5   = 3422
+    GP_Standard_D8ads_v5  = 3422
+    GP_Standard_D16s_v3   = 4985
+    GP_Standard_D16ds_v4  = 4985
+    GP_Standard_D16ds_v5  = 4985
+    GP_Standard_D16ads_v5 = 4985
+    MO_Standard_E2s_v3    = 1703
+    MO_Standard_E2ds_v4   = 1703
+    MO_Standard_E2ds_v5   = 1703
+    MO_Standard_E2ads_v5  = 1703
+    MO_Standard_E4s_v3    = 3422
+    MO_Standard_E4ds_v4   = 3422
+    MO_Standard_E4ds_v5   = 3422
+    MO_Standard_E4ads_v5  = 3422
+    MO_Standard_E8s_v3    = 4985
+    MO_Standard_E8ds_v4   = 4985
+    MO_Standard_E8ds_v5   = 4985
+    MO_Standard_E8ads_v5  = 4985
+  }
+  pg_max_user_connections_known = lookup(local.pg_max_user_connections_by_sku, var.pg_sku_name, null)
+
+  # sum()'s [0] seed keeps the no-pools default at 0 rather than erroring on
+  # an empty list.
+  n8n_pool_max_replicas_sum = sum(concat([0], [for p in var.n8n_worker_pools : p.max_replicas]))
+
+  # While n8n_worker_keda_pause is true, KEDA holds the worker Deployment at
+  # n8n_worker_keda_paused_replica_count, which may exceed
+  # n8n_worker_keda_max_replicas. A null count freezes workers at their
+  # current count, which the model assumes is within the maximum. That is an
+  # assumption, not a guarantee: workers held at a larger explicit count
+  # stay there if the count is cleared while the pause is still on.
+  n8n_worker_modeled_max_replicas = max(
+    var.n8n_worker_keda_max_replicas,
+    var.n8n_worker_keda_pause ? coalesce(var.n8n_worker_keda_paused_replica_count, 0) : 0,
+  )
+
+  # n8n_webhook_hpa_max_replicas is counted even when n8n_webhook_hpa_enabled
+  # = false. That input lets a caller bring their own webhook autoscaler,
+  # whose ceiling the module cannot see, so the module's own maximum is the
+  # budgeting stand-in, not a guaranteed upper bound. These are configured
+  # steady-state ceilings: pods added during a rolling update are not
+  # counted, so leave headroom.
+  n8n_pg_peak_connections = var.postgres_pool_size * (
+    local.n8n_main_hpa_effective_max_replicas +
+    local.n8n_worker_modeled_max_replicas +
+    var.n8n_webhook_hpa_max_replicas +
+    local.n8n_pool_max_replicas_sum
+  )
+}
+
+check "postgres_pool_size_fits_known_max_connections" {
+  assert {
+    condition = (var.create_database && local.pg_max_user_connections_known != null) ? (
+      local.n8n_pg_peak_connections <= local.pg_max_user_connections_known
+    ) : true
+    error_message = join("", [
+      "postgres_pool_size (${var.postgres_pool_size}) times the modeled pod ceiling (main ",
+      "${local.n8n_main_hpa_effective_max_replicas} + worker ${local.n8n_worker_modeled_max_replicas} + webhook ",
+      tostring(var.n8n_webhook_hpa_max_replicas),
+      local.n8n_pool_max_replicas_sum > 0 ? " + worker pools ${local.n8n_pool_max_replicas_sum}" : "",
+      ") requests up to ${local.n8n_pg_peak_connections} connections, more than the ",
+      "${coalesce(local.pg_max_user_connections_known, 0)} user connections Microsoft publishes as the default for ",
+      "pg_sku_name = \"${var.pg_sku_name}\". Lower postgres_pool_size or the autoscaler maxima, or choose a larger ",
+      "pg_sku_name for a new server. On an existing server a SKU change does not raise the limit: Azure keeps the ",
+      "max_connections it computed at provisioning until you change that server parameter and restart. Confirm ",
+      "the live budget with SHOW max_connections, minus reserved_connections and superuser_reserved_connections, ",
+      "and count other clients (see docs/sandbox.md). This diagnostic is advisory and does not fail the plan.",
+    ])
+  }
+}

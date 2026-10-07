@@ -2148,6 +2148,7 @@ run "rejects_high_availability_with_burstable_sku" {
 
   expect_failures = [
     var.pg_enable_high_availability,
+    check.postgres_pool_size_fits_known_max_connections,
   ]
 }
 
@@ -2708,6 +2709,202 @@ run "rejects_postgres_pool_size_below_floor" {
   expect_failures = [
     var.postgres_pool_size,
   ]
+}
+
+# ── postgres_pool_size vs. known max_connections (issue #30) ───────────────
+
+run "default_pool_size_fits_known_max_connections" {
+  command = plan
+
+  assert {
+    condition     = local.pg_max_user_connections_known == 844
+    error_message = "GP_Standard_D2s_v3 (the default pg_sku_name) must resolve to 844 known max user connections."
+  }
+
+  assert {
+    condition     = local.n8n_pg_peak_connections == 240
+    error_message = "Default ceilings (main 6 + worker 10 + webhook 8 = 24) x postgres_pool_size 10 must be 240, got ${local.n8n_pg_peak_connections}."
+  }
+}
+
+run "burstable_sku_warns_when_pool_budget_exceeds_known_max_connections" {
+  command = plan
+
+  variables {
+    pg_sku_name        = "B_Standard_B1ms"
+    postgres_pool_size = 10
+  }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
+
+  assert {
+    condition     = local.pg_max_user_connections_known == 35 && local.n8n_pg_peak_connections == 240
+    error_message = "B_Standard_B1ms's 35 known user connections must be exceeded by the default ceilings' 240-connection budget."
+  }
+}
+
+run "burstable_sku_stays_clean_at_a_sandbox_sized_budget" {
+  command = plan
+
+  variables {
+    pg_sku_name                  = "B_Standard_B1ms"
+    postgres_pool_size           = 3
+    n8n_main_hpa_min_replicas    = 1
+    n8n_worker_keda_min_replicas = 1
+    n8n_worker_keda_max_replicas = 1
+    n8n_webhook_hpa_min_replicas = 1
+    n8n_webhook_hpa_max_replicas = 1
+  }
+
+  # n8n_main_hpa_max_replicas stays at its default (6) on purpose: single-main
+  # mode must clamp the modeled main ceiling to 1 regardless.
+  assert {
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1
+    error_message = "Single-main mode must clamp the modeled main ceiling to 1 even with n8n_main_hpa_max_replicas left at its default."
+  }
+
+  assert {
+    condition     = local.n8n_pg_peak_connections == 9 && local.n8n_pg_peak_connections <= local.pg_max_user_connections_known
+    error_message = "The docs/sandbox.md profile (1 main + 1 worker + 1 webhook at pool_size 3) must fit within B_Standard_B1ms's 35 user connections."
+  }
+}
+
+run "connection_budget_stays_silent_at_exactly_the_known_limit" {
+  command = plan
+
+  variables {
+    pg_sku_name                  = "B_Standard_B1ms"
+    postgres_pool_size           = 1
+    n8n_main_hpa_min_replicas    = 1
+    n8n_worker_keda_min_replicas = 1
+    n8n_worker_keda_max_replicas = 33
+    n8n_webhook_hpa_min_replicas = 1
+    n8n_webhook_hpa_max_replicas = 1
+  }
+
+  assert {
+    condition     = local.n8n_pg_peak_connections == 35 && local.pg_max_user_connections_known == 35
+    error_message = "1 main + 33 workers + 1 webhook at pool_size 1 must model exactly B_Standard_B1ms's 35 user connections, got ${local.n8n_pg_peak_connections}."
+  }
+}
+
+run "connection_budget_warns_one_above_the_known_limit" {
+  command = plan
+
+  variables {
+    pg_sku_name                  = "B_Standard_B1ms"
+    postgres_pool_size           = 1
+    n8n_main_hpa_min_replicas    = 1
+    n8n_worker_keda_min_replicas = 1
+    n8n_worker_keda_max_replicas = 34
+    n8n_webhook_hpa_min_replicas = 1
+    n8n_webhook_hpa_max_replicas = 1
+  }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
+
+  assert {
+    condition     = local.n8n_pg_peak_connections == 36
+    error_message = "1 main + 34 workers + 1 webhook at pool_size 1 must model 36 connections, got ${local.n8n_pg_peak_connections}."
+  }
+}
+
+run "connection_budget_counts_a_paused_replica_count_above_the_worker_max" {
+  command = plan
+
+  variables {
+    pg_sku_name                          = "B_Standard_B1ms"
+    postgres_pool_size                   = 1
+    n8n_main_hpa_min_replicas            = 1
+    n8n_worker_keda_min_replicas         = 1
+    n8n_worker_keda_max_replicas         = 1
+    n8n_webhook_hpa_min_replicas         = 1
+    n8n_webhook_hpa_max_replicas         = 1
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 34
+  }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == 34 && local.n8n_pg_peak_connections == 36
+    error_message = "A paused count of 34 above the worker max of 1 must be modeled (worker 34, peak 36), got worker ${local.n8n_worker_modeled_max_replicas} and peak ${local.n8n_pg_peak_connections}."
+  }
+}
+
+run "connection_budget_keeps_the_worker_max_when_paused_without_a_count" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_pause = true
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == 10 && local.n8n_pg_peak_connections == 240
+    error_message = "Pausing without a paused count freezes workers within the autoscaler maximum, so the worker term must stay at the default 10 (peak 240)."
+  }
+}
+
+run "connection_budget_resolves_same_row_ds_and_ads_skus" {
+  command = plan
+
+  variables {
+    pg_sku_name = "GP_Standard_D2ads_v5"
+  }
+
+  assert {
+    condition     = local.pg_max_user_connections_known == 844
+    error_message = "GP_Standard_D2ads_v5 shares the D2s_v3 row on Microsoft's limits page and must resolve to 844 user connections."
+  }
+}
+
+run "unknown_sku_leaves_the_connection_budget_silent" {
+  command = plan
+
+  variables {
+    pg_sku_name        = "GP_Standard_D32s_v3"
+    postgres_pool_size = 1000
+  }
+
+  assert {
+    condition     = local.pg_max_user_connections_known == null
+    error_message = "An unrecognized pg_sku_name must resolve to a null known-connections lookup rather than a guessed limit."
+  }
+}
+
+run "connection_budget_check_is_silent_on_the_external_database_path" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n"
+    postgres_external_password = "correct-horse-battery-staple"
+    postgres_pool_size         = 1000
+  }
+
+  assert {
+    condition     = local.n8n_pg_peak_connections == 24000
+    error_message = "The arithmetic still computes on the external path (24 ceiling x 1000), but create_database = false must keep check.postgres_pool_size_fits_known_max_connections silent."
+  }
+}
+
+run "connection_budget_counts_worker_pools" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0-preview.workerpools.1"
+    n8n_image_tag     = "2.39.0"
+    n8n_worker_pools = [
+      { name = "gpu", min_replicas = 1, max_replicas = 4 },
+      { name = "secteam", min_replicas = 1, max_replicas = 3 },
+    ]
+  }
+
+  assert {
+    condition     = local.n8n_pool_max_replicas_sum == 7 && local.n8n_pg_peak_connections == 310
+    error_message = "Worker pool ceilings (4 + 3 = 7) must add to the default 24-pod ceiling, giving 31 x postgres_pool_size 10 = 310, got pool sum ${local.n8n_pool_max_replicas_sum} and peak ${local.n8n_pg_peak_connections}."
+  }
 }
 
 # ── Section 4: Azure Managed Redis topologies ───────────────────────────────
@@ -6720,7 +6917,10 @@ run "known_sku_warns_when_autoscaler_maxima_exceed_capacity" {
     n8n_main_hpa_max_replicas = 100
   }
 
-  expect_failures = [check.autoscaling_maxima_fit_aks_capacity]
+  expect_failures = [
+    check.autoscaling_maxima_fit_aks_capacity,
+    check.postgres_pool_size_fits_known_max_connections,
+  ]
 
   assert {
     condition = (
@@ -6760,6 +6960,8 @@ run "unknown_vm_sku_silences_advisory_capacity_check" {
     aks_node_vm_size          = "Standard_CustomMonster_v1"
     n8n_main_hpa_max_replicas = 200
   }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
 
   assert {
     condition = (
