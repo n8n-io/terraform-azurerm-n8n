@@ -762,17 +762,29 @@ KMS is turned off, and it checks the cluster identity's key permissions on
 every later cluster update.
 
 Do not set both KMS toggles back to `false`, and do not roll back to a
-module version without these inputs. Either one deletes the module-managed
-grants (the subnet grant, and the `Key Vault Crypto User` grant when
-`aks_kms_role_assignment_enabled` was on), and Terraform deletes them
-**before** it updates the cluster. Without a caller-owned private DNS zone,
-it also deletes the `aks_cluster` identity and switches the cluster to a new
-`SystemAssigned` identity that has no access to the key. A Key Vault grant you
-manage yourself is not deleted, but it was given to the deleted identity, not
-to the new one. Whenever the change leaves the cluster identity without key
-access, AKS rejects the update. A live test of the `SystemAssigned` case
-(module-managed grant, no private DNS zone) showed the result: AKS rejected
-the update with `AzureKeyVaultKmsValidateIdentityPermissionCustomerError`, the
+module version without these inputs. Either one leaves the cluster identity
+without key access, and AKS rejects the next cluster update that checks it:
+
+- Without a caller-owned private DNS zone, the cluster switches to a new
+  `SystemAssigned` identity that has no access to the key, and the
+  `aks_cluster` identity is deleted. That cluster update fails. A Key Vault
+  grant you manage yourself is not deleted, but it belongs to the old
+  identity, not to the new one.
+- With a caller-owned private DNS zone, the `aks_cluster` identity stays, but
+  the module-managed `Key Vault Crypto User` grant (when
+  `aks_kms_role_assignment_enabled` was on) is deleted. The cluster update
+  in that apply can still succeed; the next one fails.
+
+The order differs between the two triggers. With this module version, the
+cluster depends on the module-managed grants and the identity, so Terraform
+updates the cluster first and deletes them afterwards. A module version
+without these inputs has no such dependency: in the live test that rolled
+back to one, Terraform deleted the identity and grants first. Either way, the
+failure comes from the cluster identity lacking key access, not from the
+order.
+
+A live test of the rollback case (module-managed grant, no private DNS zone)
+showed the result: AKS rejected the update with `AzureKeyVaultKmsValidateIdentityPermissionCustomerError`, the
 cluster and its node pools were left in the `Failed` state, and the AGIC
 identity dropped out of the cluster profile. The tested recovery is in
 [Troubleshooting](./troubleshooting.md#terraform-apply-aks-update-fails-with-azurekeyvaultkmsvalidateidentitypermissioncustomererror-after-removing-the-kms-toggles). Even after that recovery, the API server's
