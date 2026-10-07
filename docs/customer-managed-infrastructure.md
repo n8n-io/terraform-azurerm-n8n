@@ -762,12 +762,19 @@ KMS is turned off, and it checks the cluster identity's key permissions on
 every later cluster update.
 
 Do not set both KMS toggles back to `false`, and do not roll back to a
-module version without these inputs. Either one deletes the identity and its
-grants, and Terraform deletes them **before** it updates the cluster back to
-`SystemAssigned`. A live test showed the result: AKS rejected the update with
-`AzureKeyVaultKmsValidateIdentityPermissionCustomerError`, the cluster and its
-node pools were left in the `Failed` state, and the AGIC identity dropped out
-of the cluster profile. The tested recovery is in
+module version without these inputs. Either one deletes the module-managed
+grants (the subnet grant, and the `Key Vault Crypto User` grant when
+`aks_kms_role_assignment_enabled` was on), and Terraform deletes them
+**before** it updates the cluster. Without a caller-owned private DNS zone,
+it also deletes the `aks_cluster` identity and switches the cluster to a new
+`SystemAssigned` identity that has no access to the key. A Key Vault grant you
+manage yourself is not deleted, but it was given to the deleted identity, not
+to the new one. Whenever the change leaves the cluster identity without key
+access, AKS rejects the update. A live test of the `SystemAssigned` case
+(module-managed grant, no private DNS zone) showed the result: AKS rejected
+the update with `AzureKeyVaultKmsValidateIdentityPermissionCustomerError`, the
+cluster and its node pools were left in the `Failed` state, and the AGIC
+identity dropped out of the cluster profile. The tested recovery is in
 [Troubleshooting](./troubleshooting.md#terraform-apply-aks-update-fails-with-azurekeyvaultkmsvalidateidentitypermissioncustomererror-after-removing-the-kms-toggles). Even after that recovery, the API server's
 `/readyz/kms-providers` check kept failing, and AKS offers no supported way to
 clear the old KMS settings. Only a new cluster removes the dependency.
