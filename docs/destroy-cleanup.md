@@ -215,17 +215,22 @@ move it out, and the next plan destroys it. See
 
 **Symptom:** After `terraform destroy`, the example's Key Vault still shows in `az keyvault list-deleted`, and `az keyvault purge` fails because purge protection is on. A new apply that reuses the same vault name fails because the name is taken.
 
-**Cause:** The root module never creates a Key Vault. The examples create their own TLS vault (`azurerm_key_vault.tls`), and Azure Key Vault soft delete keeps a deleted vault recoverable for its retention period (7 days in the examples). Every example except `examples/medium` sets `purge_protection_enabled = false`. `examples/medium` sets it to `true`, because the same vault holds the AKS KMS etcd encryption key. Azure cannot turn purge protection off again.
+**Cause:** The root module never creates a Key Vault. The examples create their own TLS vault (`azurerm_key_vault.tls`), and Azure Key Vault soft delete keeps a deleted vault recoverable for its retention period (7 days in the examples). Every TLS vault sets `purge_protection_enabled = false`. `examples/medium` also creates a dedicated vault for the AKS KMS etcd encryption key (`azurerm_key_vault.kms`) with purge protection on, which Azure cannot turn off again.
 
-**Fix:** For a vault without purge protection, purge it after the destroy. Run this from the example directory before `terraform destroy`, so the name is still in state:
+**Fix:** For a vault without purge protection, purge it after the destroy. The vault name is only in state until the destroy, so capture it first. Run this from the example directory **before** `terraform destroy`:
 
 ```bash
 KV_NAME=$(terraform state show azurerm_key_vault.tls 2>/dev/null | awk '/^ +name +=/ {print $3; exit}' | tr -d '"')
-# after terraform destroy:
+echo "$KV_NAME"
+```
+
+Then run `terraform destroy`. **After** it succeeds, purge the soft-deleted vault in the same shell:
+
+```bash
 az keyvault purge --name "$KV_NAME"
 ```
 
-A vault with purge protection, such as the `examples/medium` vault, cannot be purged. Wait out the soft-delete retention, or use a different `friendly_name_prefix` for the next deployment. If KMS was on, do not purge or delete the key while any cluster still uses it; see [Delivering secrets from Azure Key Vault](./customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault).
+A vault with purge protection, such as the `examples/medium` KMS vault, cannot be purged. Wait out the soft-delete retention, or use a different `friendly_name_prefix` for the next deployment. If KMS was on, do not purge or delete the key while any cluster still uses it; see [Delivering secrets from Azure Key Vault](./customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault).
 
 ### Removing stuck resources from Terraform state
 

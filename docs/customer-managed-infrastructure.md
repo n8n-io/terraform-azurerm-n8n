@@ -565,7 +565,8 @@ caller-owned Key Vault key.
 When `true` and `create_aks = true`, this module enables the AKS-managed
 Secrets Store CSI driver add-on
 (`azurerm_kubernetes_cluster.n8n[0].key_vault_secrets_provider`) with
-autorotation on. The add-on creates and manages its own identity. The
+autorotation on by default (`aks_key_vault_secrets_provider_secret_rotation_enabled`).
+The add-on creates and manages its own identity. The
 `aks_key_vault_secrets_provider_identity_client_id` output gives its client
 ID, which a `SecretProviderClass` sets as `userAssignedIdentityID`, and
 `aks_key_vault_secrets_provider_identity_object_id` gives its object ID.
@@ -585,8 +586,9 @@ identity unauthorized, so give the identity the secret `get` permission in an
 access policy instead. When the toggle is `false` (default), grant that
 identity access out-of-band (for example a vault in RBAC mode with your own
 `azurerm_role_assignment` on the object ID output above).
-`aks_key_vault_secrets_provider_secret_rotation_interval` controls the
-autorotation poll interval (default `2m`, matching the AKS default).
+When autorotation is off, the add-on fetches vault objects only when a pod
+mounts them. `aks_key_vault_secrets_provider_secret_rotation_interval`
+controls the autorotation poll interval (default `2m`, matching the AKS default).
 
 With the add-on enabled, create a `SecretProviderClass` (a Kubernetes CRD
 this module does not manage) that references the vault objects to sync, and
@@ -732,9 +734,13 @@ key version, from Key Vault's own rotation policy or created by hand, has no
 effect until you set it in `aks_kms_key_vault_key_id` and apply. After that
 apply, confirm that AKS uses the new version
 (`az aks show --resource-group <rg> --name <cluster> --query securityProfile.azureKeyVaultKms.keyId`),
-then rewrite every Secret with the `kubectl replace` command above. AKS
-uses the previous and the current key at the same time, so keep the
-previous key version enabled and unexpired until the next rotation.
+then rewrite every Secret with the `kubectl replace` command above. Keep
+every key version the cluster has used enabled and unexpired. AKS uses the
+previous and the current key at the same time, and a Secret that was not
+rewritten after a rotation still needs the version it was written with.
+Microsoft documents that the oldest version can be retired after a second
+rotation, but only do that if every Secret was rewritten after each
+rotation; if you are not sure, keep it.
 
 #### Turning KMS off
 
@@ -1029,6 +1035,7 @@ n8n's Redis client support before revisiting this. Until then, treat
 encrypted, access-restricted remote state as the mitigation for this
 credential, the same as for the n8n encryption key and task-runner token
 above.
+
 ## Direct controller composition
 
 `modules/controllers` installs KEDA and is directly callable outside the

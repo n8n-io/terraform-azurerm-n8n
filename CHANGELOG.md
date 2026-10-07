@@ -294,7 +294,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   whose implicit `library/` prefix pushes it over the limit is now rejected
   at plan time instead of failing with `InvalidImageName` on the pods.
 - Optional AKS Key Vault Secrets Provider add-on
-  (`aks_key_vault_secrets_provider_enabled`, `aks_key_vault_secrets_provider_secret_rotation_interval`)
+  (`aks_key_vault_secrets_provider_enabled`, `aks_key_vault_secrets_provider_secret_rotation_enabled`,
+  `aks_key_vault_secrets_provider_secret_rotation_interval`)
   and an optional role assignment granting the add-on's identity `Key
   Vault Secrets User` on a caller-named vault
   (`aks_key_vault_secrets_provider_role_assignment_enabled`,
@@ -327,14 +328,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   KMS off by clearing only `aks_kms_key_vault_key_id` and keep the toggle,
   the grant, and the key. See
   [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault).
-- Setting a Key Vault add-on input or KMS toggle while `create_aks = false`
-  warns and the input is ignored, like other AKS-only inputs.
+- Setting `aks_key_vault_secrets_provider_enabled`,
+  `aks_kms_key_vault_key_id`, `aks_kms_role_assignment_enabled`, or
+  `aks_kms_cluster_identity_enabled` while `create_aks = false` warns and
+  the input is ignored, like other AKS-only inputs. The other add-on inputs
+  have no effect without these, so they are ignored silently.
 - `examples/medium` now enables the Key Vault Secrets Provider add-on
   (without a vault grant, because its vault holds the TLS certificate) and
-  prepares KMS. Applying it to an existing deployment of the example
-  switches the cluster identity to `UserAssigned` in place, adds the
-  identity's role assignments, and turns on purge protection for the
-  example's vault, which Azure cannot turn off again. See
+  prepares KMS with a key in a dedicated, purge-protected vault. Applying it
+  to an existing deployment of the example switches the cluster identity to
+  `UserAssigned` in place, adds the identity's role assignments, and creates
+  the new vault, whose purge protection Azure cannot turn off again. See
   [`examples/medium/README.md`](./examples/medium/README.md).
 - Both add-ons are documented in
   [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md#delivering-secrets-from-azure-key-vault)
