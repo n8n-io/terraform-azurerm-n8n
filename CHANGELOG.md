@@ -352,15 +352,21 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 - A plan-time advisory `check.postgres_pool_size_fits_known_max_connections`
   (`database.tf`) warns when `postgres_pool_size` times the modeled main,
   worker, webhook-processor, and `n8n_worker_pools` replica ceilings would
-  exceed the known default `max_connections` for the selected `pg_sku_name`.
-  It covers a small table of Burstable, General Purpose, and Memory
-  Optimized SKUs and stays silent for SKUs outside that table or when
-  `create_database = false`. Azure fixes `max_connections` at provisioning
-  from the SKU's memory size and does not recalculate it on a later
-  `pg_sku_name` change; this is now documented in the new
-  [`docs/sandbox.md`](./docs/sandbox.md), alongside a cheaper single-main
-  sandbox profile built from existing inputs
-  ([#30](https://github.com/n8n-io/terraform-azurerm-n8n/issues/30)).
+  exceed the default maximum user connections Microsoft publishes for the
+  selected `pg_sku_name`. While `n8n_worker_keda_pause = true`, the worker
+  term uses `n8n_worker_keda_paused_replica_count` when that is larger than
+  the worker maximum. The table covers Burstable B1ms to B4ms and the 2 to
+  16 vCore General Purpose and Memory Optimized `s_v3`, `ds_v4`, `ds_v5`,
+  and `ads_v5` SKUs. The check stays silent for other SKUs and when
+  `create_database = false`. It models the SKU default, not the live
+  server: Azure computes `max_connections` when the server is provisioned
+  and does not update it on a later SKU change, so after resizing, adjust
+  the `max_connections` server parameter and restart. A silent check
+  therefore does not prove the pools fit; confirm the live budget
+  (`SHOW max_connections`, reserved connections, and other clients). This
+  is documented in the new [`docs/sandbox.md`](./docs/sandbox.md),
+  alongside a cheaper single-main sandbox profile built from existing
+  inputs ([#30](https://github.com/n8n-io/terraform-azurerm-n8n/issues/30)).
 
 ### Changed
 

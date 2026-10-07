@@ -592,7 +592,14 @@ arithmetic, not on top of it unaccounted for.
 `check.postgres_pool_size_fits_known_max_connections` (database.tf) is
 this arithmetic made concrete: it sums `n8n_worker_pools` `max_replicas`
 alongside the main/worker/webhook ceilings and warns when the product
-exceeds the known default `max_connections` for `pg_sku_name`.
+exceeds the default maximum user connections Microsoft publishes for
+`pg_sku_name`. It models the SKU default, not the live server: Azure does
+not update `max_connections` on a later SKU change, so keep the error
+message and `docs/sandbox.md` telling callers to confirm the live budget.
+The AWS sibling's `db_postgresdb_pool_size_fits_known_max_connections`
+(`terraform-aws-n8n` #169) is a port of this check. Its measured
+`db.t3.small` value and 7-slot reserve subtraction are RDS-specific and do
+not apply here: the Azure table already excludes the 15 reserved slots.
 
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 

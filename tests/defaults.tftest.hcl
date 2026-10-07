@@ -2750,16 +2750,111 @@ run "burstable_sku_stays_clean_at_a_sandbox_sized_budget" {
     pg_sku_name                  = "B_Standard_B1ms"
     postgres_pool_size           = 3
     n8n_main_hpa_min_replicas    = 1
-    n8n_main_hpa_max_replicas    = 1
     n8n_worker_keda_min_replicas = 1
     n8n_worker_keda_max_replicas = 1
     n8n_webhook_hpa_min_replicas = 1
     n8n_webhook_hpa_max_replicas = 1
   }
 
+  # n8n_main_hpa_max_replicas stays at its default (6) on purpose: single-main
+  # mode must clamp the modeled main ceiling to 1 regardless.
+  assert {
+    condition     = local.n8n_main_hpa_effective_max_replicas == 1
+    error_message = "Single-main mode must clamp the modeled main ceiling to 1 even with n8n_main_hpa_max_replicas left at its default."
+  }
+
   assert {
     condition     = local.n8n_pg_peak_connections == 9 && local.n8n_pg_peak_connections <= local.pg_max_user_connections_known
     error_message = "The docs/sandbox.md profile (1 main + 1 worker + 1 webhook at pool_size 3) must fit within B_Standard_B1ms's 35 user connections."
+  }
+}
+
+run "connection_budget_stays_silent_at_exactly_the_known_limit" {
+  command = plan
+
+  variables {
+    pg_sku_name                  = "B_Standard_B1ms"
+    postgres_pool_size           = 1
+    n8n_main_hpa_min_replicas    = 1
+    n8n_worker_keda_min_replicas = 1
+    n8n_worker_keda_max_replicas = 33
+    n8n_webhook_hpa_min_replicas = 1
+    n8n_webhook_hpa_max_replicas = 1
+  }
+
+  assert {
+    condition     = local.n8n_pg_peak_connections == 35 && local.pg_max_user_connections_known == 35
+    error_message = "1 main + 33 workers + 1 webhook at pool_size 1 must model exactly B_Standard_B1ms's 35 user connections, got ${local.n8n_pg_peak_connections}."
+  }
+}
+
+run "connection_budget_warns_one_above_the_known_limit" {
+  command = plan
+
+  variables {
+    pg_sku_name                  = "B_Standard_B1ms"
+    postgres_pool_size           = 1
+    n8n_main_hpa_min_replicas    = 1
+    n8n_worker_keda_min_replicas = 1
+    n8n_worker_keda_max_replicas = 34
+    n8n_webhook_hpa_min_replicas = 1
+    n8n_webhook_hpa_max_replicas = 1
+  }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
+
+  assert {
+    condition     = local.n8n_pg_peak_connections == 36
+    error_message = "1 main + 34 workers + 1 webhook at pool_size 1 must model 36 connections, got ${local.n8n_pg_peak_connections}."
+  }
+}
+
+run "connection_budget_counts_a_paused_replica_count_above_the_worker_max" {
+  command = plan
+
+  variables {
+    pg_sku_name                          = "B_Standard_B1ms"
+    postgres_pool_size                   = 1
+    n8n_main_hpa_min_replicas            = 1
+    n8n_worker_keda_min_replicas         = 1
+    n8n_worker_keda_max_replicas         = 1
+    n8n_webhook_hpa_min_replicas         = 1
+    n8n_webhook_hpa_max_replicas         = 1
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 34
+  }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == 34 && local.n8n_pg_peak_connections == 36
+    error_message = "A paused count of 34 above the worker max of 1 must be modeled (worker 34, peak 36), got worker ${local.n8n_worker_modeled_max_replicas} and peak ${local.n8n_pg_peak_connections}."
+  }
+}
+
+run "connection_budget_keeps_the_worker_max_when_paused_without_a_count" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_pause = true
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == 10 && local.n8n_pg_peak_connections == 240
+    error_message = "Pausing without a paused count freezes workers within the autoscaler maximum, so the worker term must stay at the default 10 (peak 240)."
+  }
+}
+
+run "connection_budget_resolves_same_row_ds_and_ads_skus" {
+  command = plan
+
+  variables {
+    pg_sku_name = "GP_Standard_D2ads_v5"
+  }
+
+  assert {
+    condition     = local.pg_max_user_connections_known == 844
+    error_message = "GP_Standard_D2ads_v5 shares the D2s_v3 row on Microsoft's limits page and must resolve to 844 user connections."
   }
 }
 
