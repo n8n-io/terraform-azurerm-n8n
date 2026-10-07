@@ -520,7 +520,18 @@ destroys it. The module never reads your Secret's value, so nothing checks
 that the two stay in sync. A mismatch surfaces as a PostgreSQL
 authentication failure when a pod opens a new connection, not as a
 Terraform error. The `postgres_admin_password` output is `null` on this
-path, because the module never has the value to expose.
+path, because the module never has the value to expose. Terraform does not
+store null outputs, so a root output that re-exports it (such as
+`postgres_password` in the examples) reports "Output not found" from
+`terraform output` instead of printing `null`.
+
+While `postgres_password_write_only = true`, **every** plan and apply needs
+`postgres_admin_password_wo`, not only the ones that change the password.
+Without it, the plan fails with `Invalid value for variable`. Supply the
+current value each time, and change it only together with a
+`postgres_admin_password_wo_version` bump. Terraform does not compare a
+write-only value with the previous one, so a different value without a
+version bump plans no change.
 
 #### Keeping the password out of the calling root too
 

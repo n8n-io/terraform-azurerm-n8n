@@ -214,7 +214,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   in state on every managed path. To downgrade to an earlier module
   version, first switch back to the generated password, then remove all
   three new inputs from the module call, even when they are set to their
-  defaults: earlier versions do not declare them
+  defaults: earlier versions do not declare them.
+  **Upgrade note:** with `postgres_password_write_only` left at `false`, the
+  first plan after upgrading shows one in-place update on
+  `azurerm_postgresql_flexible_server.n8n` with no visible attribute change.
+  It comes from the new write-only argument's sensitivity marking, not from
+  a value change: in a live test it applied in 0 seconds with no Azure
+  change, and the next plan was empty. Downgrading shows the same update in
+  reverse
   ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
 
 ### Changed
