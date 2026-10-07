@@ -200,10 +200,21 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   module cannot copy a write-only value into the Kubernetes Secret it would
   otherwise manage), makes the `postgres_admin_password` output `null`, and
   is fully opt-in — the default (`postgres_password_write_only = false`)
-  behavior is unchanged. See "Secrets that remain in Terraform state" in
+  behavior is unchanged. `postgres_admin_password_wo` is checked against
+  the Flexible Server password rules at plan time, and
+  `postgres_password_secret_ref` must not name the module-managed
+  `n8n-db-secret` on this path, because the same apply destroys it. A
+  rotation (`postgres_admin_password_wo_version` bump) does not restart
+  n8n; restart the Deployments after the apply. See "Secrets that remain
+  in Terraform state" in
   [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md)
-  for the full contract, including the Redis access key and other
-  credentials that still remain in state on every managed path
+  for the full contract, the steps to switch an existing deployment over
+  (with its current password first, then rotate), rotation, switching
+  back, and the Redis access key and other credentials that still remain
+  in state on every managed path. To downgrade to an earlier module
+  version, first switch back to the generated password, then remove all
+  three new inputs from the module call, even when they are set to their
+  defaults: earlier versions do not declare them
   ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
 
 ### Changed
@@ -273,12 +284,18 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   following `terraform apply`
   ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
 - **Breaking:** `required_version` is now `>= 1.11` (was `>= 1.9`) and the
-  `azurerm` provider requirement is now `>= 4.21.0, < 5.0.0` (was `~> 4.0`).
-  Both are needed to parse and use `postgres_password_write_only`'s
-  `ephemeral` variable and write-only `administrator_password_wo` argument
-  (see "Added" above), and apply module-wide regardless of whether you set
-  that variable, because Terraform parses `ephemeral` and write-only syntax
-  from this module's HCL unconditionally. Upgrade the Terraform CLI and let
+  `azurerm` provider requirement is now `>= 4.39.0, < 5.0.0` (was `~> 4.0`)
+  for the root module and every example. Both are needed to parse and use
+  `postgres_password_write_only`'s `ephemeral` variable and write-only
+  `administrator_password_wo` argument (see "Added" above), and apply
+  module-wide regardless of whether you set that variable, because
+  Terraform parses `ephemeral` and write-only syntax from this module's HCL
+  unconditionally. The argument shipped in azurerm 4.21.0; the floor is
+  4.39.0 because earlier releases sent an empty administrator password
+  when `pg_admin_username` changed with write-only enabled
+  ([hashicorp/terraform-provider-azurerm#29475](https://github.com/hashicorp/terraform-provider-azurerm/issues/29475)).
+  `modules/controllers` and the two TLS helper modules keep their existing
+  constraints. Upgrade the Terraform CLI and let
   the `azurerm` provider resolve within the new range before applying
   ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
 

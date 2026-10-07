@@ -50,10 +50,14 @@ terraform {
   required_providers {
     azurerm = {
       source = "hashicorp/azurerm"
-      # >= 4.21 for azurerm_postgresql_flexible_server.administrator_password_wo
-      # / administrator_password_wo_version (postgres_password_write_only,
-      # issue #26). Kept within the same 4.x major as before.
-      version = ">= 4.21.0, < 5.0.0"
+      # azurerm_postgresql_flexible_server.administrator_password_wo /
+      # administrator_password_wo_version (postgres_password_write_only,
+      # issue #26) shipped in 4.21.0. The floor is 4.39.0 because before
+      # that release a pg_admin_username change sent only
+      # administrator_password, so with write-only enabled it sent an empty
+      # password (hashicorp/terraform-provider-azurerm#29475).
+      # Kept within the same 4.x major as before.
+      version = ">= 4.39.0, < 5.0.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"

@@ -28,7 +28,7 @@ provider "registry.terraform.io/gavinbunney/kubectl" {
 
 provider "registry.terraform.io/hashicorp/azurerm" {
   version     = "4.81.0"
-  constraints = "~> 4.0"
+  constraints = ">= 4.39.0, < 5.0.0"
   hashes = [
     "h1:XhToZua4gtih1Kv8RdStcfND83G4Tmb6GZFT4jEUhDU=",
     "h1:olVprUWhmFTARlydw/r7VIx4fata2gy3zsAWfPGRrhg=",

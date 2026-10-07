@@ -84,9 +84,12 @@ resource "kubernetes_service_account_v1" "n8n" {
 # ── Secrets ───────────────────────────────────────────────────────────────────
 
 # Gated to zero when postgres_password_secret_ref selects a caller-managed
-# Secret instead (external database path only — database.tf's validation
-# rejects setting it while create_database = true, since the module-managed
-# Flexible Server always generates and manages its own password).
+# Secret instead: the external database path (create_database = false), or
+# the module-managed write-only path (postgres_password_write_only = true),
+# where the module never holds the password and cannot copy it into a
+# Secret. postgres_password_secret_ref's validations in variables.tf reject
+# the ref on the managed path otherwise, and reject reusing this Secret's
+# name on the write-only path, since the same apply destroys it.
 resource "kubernetes_secret" "n8n_db" {
   count = local.postgres_password_uses_secret_ref ? 0 : 1
 

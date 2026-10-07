@@ -8,8 +8,8 @@ Added in `port-aws-050-enhancements`, mirroring the AWS sibling's
 
 | Pin | Current | File | Bump tier |
 |---|---|---|---|
-| `terraform` floor | `>= 1.11` | `versions.tf` (root + every submodule/example) | Minor-required: raising the floor can drop support for older caller pipelines. |
-| `azurerm` provider | `>= 4.21.0, < 5.0.0` | `versions.tf` | Verification-required: re-run the full offline matrix; a major bump needs a live-apply check per `docs/manual-azure-qualification.md`. |
+| `terraform` floor | `>= 1.11` (root and examples); `>= 1.9` (`modules/controllers`, `modules/tls-letsencrypt`, `modules/tls-self-signed`) | `versions.tf` | Minor-required: raising the floor can drop support for older caller pipelines. |
+| `azurerm` provider | `>= 4.39.0, < 5.0.0` (root and examples); `~> 4.0` (`modules/tls-letsencrypt`, `modules/tls-self-signed`) | `versions.tf` | Verification-required: re-run the full offline matrix; a major bump needs a live-apply check per `docs/manual-azure-qualification.md`. |
 | `kubernetes` provider | `~> 3.0` | `versions.tf` (root, `modules/controllers`, all 8 examples) | Verification-required for a major bump (2.x to 3.x deprecated unversioned resource types with no working `moved` block; see `AGENTS.md`'s "Historical retirements"). Patch-safe within `~> 3.0`. |
 | `helm` provider | `~> 2.12` | `versions.tf` | Patch-safe. |
 | `random` provider | `~> 3.0` | `versions.tf` | Patch-safe. |

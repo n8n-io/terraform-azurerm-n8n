@@ -18,7 +18,7 @@ plugin "terraform" {
 }
 
 # Azure provider ruleset. Bump together with the azurerm provider pin in
-# `versions.tf` (currently `~> 4.0`); the azurerm ruleset tracks azurerm
+# `versions.tf` (currently `>= 4.39.0, < 5.0.0`); the azurerm ruleset tracks azurerm
 # resource argument changes.
 plugin "azurerm" {
   enabled = true

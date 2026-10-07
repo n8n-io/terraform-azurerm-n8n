@@ -409,7 +409,7 @@ credential references replace a Terraform-managed value and use
 |---|---|---|
 | n8n license key | `n8n_license_key_secret_ref` | `n8n_license_key` |
 | n8n encryption key | `n8n_encryption_key_secret_ref` | `n8n_encryption_key` |
-| External PostgreSQL password | `postgres_password_secret_ref` | `postgres_external_password` |
+| PostgreSQL password (external database, or the managed server with `postgres_password_write_only = true`) | `postgres_password_secret_ref` | `postgres_external_password` |
 | External Redis password | `redis_password_secret_ref` | `redis_external_password` |
 | n8n credential overwrite JSON | `n8n_credentials_overwrite_secret_ref` | `CREDENTIALS_OVERWRITE_DATA` or `CREDENTIALS_OVERWRITE_DATA_FILE` in `n8n_extra_env`; the reserved volume name `credentials-overwrite`; the reserved mount path `/etc/n8n/credentials-overwrite` |
 
@@ -493,51 +493,226 @@ On the default, fully module-managed path, the following land in state:
 Setting `postgres_password_write_only = true` (with `create_database = true`)
 writes the administrator password through
 `azurerm_postgresql_flexible_server.n8n`'s write-only
-`administrator_password_wo` argument (Terraform >= 1.11, azurerm >= 4.21,
-both already required by this module's `versions.tf`) instead of generating
-one with `random_password.postgres_admin`. Feed the actual value in through
-`postgres_admin_password_wo` — an `ephemeral` module variable, so Terraform
-never writes it to a plan or state file — and increment
-`postgres_admin_password_wo_version` whenever you rotate it; Terraform only
+`administrator_password_wo` argument instead of generating one with
+`random_password.postgres_admin`. This needs Terraform >= 1.11 and azurerm
+>= 4.39.0, both already required by this module's `versions.tf`. Feed the
+actual value in through `postgres_admin_password_wo`, an `ephemeral` module
+variable, so this module never writes it to a plan or state file. Increment
+`postgres_admin_password_wo_version` whenever you rotate it: Terraform only
 re-applies a write-only value when its version number changes.
 
-Because the value never touches state, the module also cannot copy it into a
-Kubernetes Secret the way it does on the default path. `postgres_password_write_only
-= true` therefore also requires `postgres_password_secret_ref`: you must
-populate that Secret yourself, outside Terraform, with the same password you
-passed to `postgres_admin_password_wo` — for example, syncing an Azure Key
-Vault secret into the cluster with the Key Vault CSI driver or an External
-Secrets Operator `ExternalSecret`. The module never reads that Secret's
-value, so nothing checks the two stay in sync; a mismatch surfaces as a
-PostgreSQL authentication failure on the next pod restart, not a Terraform
-error. The `postgres_admin_password` output is `null` on this path for the
-same reason it never has the value to expose.
+The value must meet the Flexible Server password rules: 8 to 128
+characters, from at least three of uppercase letters, lowercase letters,
+digits, and non-alphanumeric characters. The module checks this at plan
+time. Azure also rejects a password that contains the login name
+(`pg_admin_username`); the module does not check that.
 
-Typical source for `postgres_admin_password_wo`: an `ephemeral
-"azurerm_key_vault_secret"` block (or your own ephemeral/ephemeral-adjacent
-source) in the **calling** root module, read from the same Key Vault secret
-your Kubernetes Secret syncs from, so both stay in lockstep by construction
-rather than by manual bookkeeping.
+Because the value never touches state, the module also cannot copy it into
+a Kubernetes Secret the way it does on the default path.
+`postgres_password_write_only = true` therefore also requires
+`postgres_password_secret_ref`. You populate that Secret yourself, outside
+Terraform, with the same password you pass to `postgres_admin_password_wo`.
+For example, sync an Azure Key Vault secret into the cluster with the Key
+Vault CSI driver or an External Secrets Operator `ExternalSecret`. The
+Secret must not be named `n8n-db-secret`: that is the module-managed Secret,
+and the module rejects the name on this path because the same apply
+destroys it. The module never reads your Secret's value, so nothing checks
+that the two stay in sync. A mismatch surfaces as a PostgreSQL
+authentication failure when a pod opens a new connection, not as a
+Terraform error. The `postgres_admin_password` output is `null` on this
+path, because the module never has the value to expose.
 
-**Upgrading an existing deployment onto this path replaces the server's
-password out of band of Terraform's own change detection, and rolls pods
-as part of the same apply, before you get a chance to verify anything.**
-Flipping `postgres_password_write_only` from `false` to `true` moves the
-server from `administrator_password` to `administrator_password_wo`; azurerm
-applies this as a password update, not a resource replacement. In the same
-apply, `postgres_password_secret_ref` becomes required, which changes the
-Helm release's `database.postgresdb.passwordSecret` reference from the
-module-managed `n8n-db-secret` to your own Secret's name: that is a Helm
-values change, so `helm_release.n8n` rolls the `n8n-main`, `n8n-worker`,
-`n8n-webhook-processor`, and any `n8n_worker_pools` group deployments
-**automatically during this same `terraform apply`**, not as a manual
-follow-up step. Populate your `postgres_password_secret_ref` Secret with the
-exact value you are about to pass to `postgres_admin_password_wo`, and
-confirm it, **before** running the apply that flips
-`postgres_password_write_only`: pods roll against whatever the Secret
-contains at apply time, so a stale or missing Secret breaks PostgreSQL
-connectivity immediately rather than on some later manual restart. Plan a
-maintenance window for this cutover.
+#### Keeping the password out of the calling root too
+
+`postgres_admin_password_wo` keeps the value out of **this module's** plan
+and state. It stays out of the **calling root's** plan and state only if
+that root passes an ephemeral value too:
+
+- Use an `ephemeral "azurerm_key_vault_secret"` block, or an ephemeral input
+  variable (`ephemeral = true`), in the calling root.
+- A non-ephemeral root input variable is saved in the caller's plan file.
+- A `data "azurerm_key_vault_secret"` read, or a Kubernetes Secret the
+  calling root manages with Terraform, stores the value in that root's
+  state.
+
+Read the ephemeral value from the same Key Vault secret your Kubernetes
+Secret syncs from. A shared source does not make the sync instant: confirm
+that the intended version reached the Kubernetes Secret before you restart
+n8n.
+
+#### Switching an existing deployment to the write-only password
+
+Setting `postgres_password_write_only = true` from the first apply of a new
+deployment needs no special steps. On an existing deployment, the apply
+that turns it on does three things at once:
+
+- `azurerm_postgresql_flexible_server.n8n` moves from
+  `administrator_password` to `administrator_password_wo`. azurerm sends
+  the write-only value as an in-place password update, not a replacement.
+- `random_password.postgres_admin[0]` and `kubernetes_secret.n8n_db[0]`
+  are destroyed, before the Helm upgrade runs. After this apply, Terraform
+  no longer knows the old password.
+- The chart's `database.passwordSecret` value changes from `n8n-db-secret`
+  to your Secret. This is a Helm values change, so `helm_release.n8n` rolls
+  the `n8n-main`, `n8n-worker`, `n8n-webhook-processor`, and any
+  `n8n_worker_pools` Deployments during the same apply.
+
+If you pass a **new** password in that apply, the server credential changes
+while pods that still use `n8n-db-secret` are running, and a failed Helm
+upgrade cannot undo the change on the server. To avoid that, switch over
+with the server's **current** password first, so the credential does not
+change during the switch, and rotate in a separate apply:
+
+1. While `postgres_password_write_only` is still `false`, read the current
+   password from the module's `postgres_admin_password` output. The output
+   name in your root depends on how your root re-exports it; the examples
+   in this repository export it as `postgres_password`
+   (`terraform output -raw postgres_password`). Do not run this where the
+   terminal is recorded or logged.
+2. Store that same password in your own source (for example the Key Vault
+   secret), and create a Kubernetes Secret holding it in the n8n namespace
+   (`n8n_namespace`, default `n8n`). Use any name except `n8n-db-secret`.
+   Confirm the Secret contains the value before you continue. Keep this
+   source version unchanged until the switch is complete.
+3. Set `postgres_password_write_only = true`, `postgres_admin_password_wo`
+   to that same current password (from your ephemeral source), and
+   `postgres_password_secret_ref` to the new Secret. Save a plan
+   (`terraform plan -out=tfplan`), review it (`terraform show tfplan`), and
+   get it approved before you apply. Expect
+   `random_password.postgres_admin[0]` and `kubernetes_secret.n8n_db[0]` to
+   be destroyed, an in-place update on
+   `azurerm_postgresql_flexible_server.n8n`, an in-place update on
+   `helm_release.n8n`, and no replacement. Then apply that plan
+   (`terraform apply tfplan`). Ephemeral values are not stored in a saved
+   plan file, so the apply reads `postgres_admin_password_wo` again; make
+   sure it resolves to the same value. Protect and then delete the plan
+   file: it can contain the old password from state. The pods roll onto a Secret that holds the password the server
+   already accepts.
+4. Confirm that n8n reconnects to PostgreSQL before you continue.
+5. The old password is still readable in earlier state versions, saved
+   plans, and backups of either. Rotate it once on the new path, as
+   described in the next section.
+
+If the Helm upgrade in step 3 fails, `atomic = true` rolls the release back
+to the previous pod template, which references `n8n-db-secret`. That Secret
+was already destroyed, so new and restarted pods fail with
+`CreateContainerConfigError`. The server still accepts the current
+password, so recover by recreating `n8n-db-secret` from your Secret, then
+fixing the cause of the failure and running a freshly reviewed plan and
+apply again:
+
+```bash
+kubectl -n <namespace> get secret <secret-name> -o json \
+  | jq --arg key '<key>' \
+      '{apiVersion: "v1", kind: "Secret", type: "Opaque",
+        metadata: {name: "n8n-db-secret", namespace: .metadata.namespace},
+        data: {password: .data[$key]}}' \
+  | kubectl apply -f -
+```
+
+Terraform does not manage this recreated Secret. Delete it after the apply
+succeeds and n8n has reconnected.
+
+The module cannot detect "existing server, switching to write-only" at plan
+time, because that depends on what is already running. Follow these steps
+by hand, in a maintenance window.
+
+#### Rotating the password
+
+Rotating changes no Helm values: the chart still points at the same Secret
+name and key. n8n reads the password from an environment variable when a
+pod starts, so neither the Secret update nor the apply restarts n8n. Until
+the pods restart, every new PostgreSQL connection they open uses the old
+password and fails.
+
+1. Pass the new value as `postgres_admin_password_wo`, increment
+   `postgres_admin_password_wo_version`, and save a plan
+   (`terraform plan -out=tfplan`). Review it (`terraform show tfplan`) and
+   get it approved: expect an in-place update on
+   `azurerm_postgresql_flexible_server.n8n` only. If your Kubernetes Secret
+   syncs from the same source that feeds `postgres_admin_password_wo`, read
+   the new value for this plan from a separate, staged secret or version,
+   so the live sync source does not change before step 2.
+2. Put the new password in your source and in the Kubernetes Secret
+   referenced by `postgres_password_secret_ref`. Confirm the Secret holds
+   the new value.
+3. Apply the reviewed plan: `terraform apply tfplan`. Supply the same new
+   value for `postgres_admin_password_wo`, because ephemeral values are not
+   stored in the plan file.
+4. Restart every n8n Deployment so the pods read the new value:
+
+   ```bash
+   kubectl -n <namespace> rollout restart deployment \
+     -l app.kubernetes.io/instance=n8n
+   ```
+
+   The label selects `n8n-main`, `n8n-worker`, `n8n-webhook-processor`, and
+   any `n8n_worker_pools` Deployments.
+5. Confirm that n8n reconnects.
+
+Run steps 2 to 4 back to back. A pod that restarts between steps 2 and 3
+for any other reason (a node replacement, an out-of-memory kill) reads the
+new password while the server still has the old one, and cannot connect.
+
+If n8n does not reconnect, first check that the cause is a password
+mismatch: the n8n pod logs show a PostgreSQL authentication failure for
+`pg_admin_username`. Then set the server credential to the value in the
+Secret and restart the Deployments again. The commands below read the
+password from the Secret into a request file that only you can read, so it
+never appears in shell history or in process arguments. They stop before
+calling Azure if the Secret or its key is missing or empty, and remove the
+request file on every exit path:
+
+```bash
+(
+  set +x
+  set -euo pipefail
+  umask 077
+  REQ=$(mktemp)
+  trap 'rm -f "$REQ"' EXIT
+  kubectl -n <namespace> get secret <secret-name> -o json \
+    | jq -e --arg key '<key>' '
+        (.data[$key] // "" | @base64d) as $pw
+        | if ($pw | length) == 0 then error("Secret key missing or empty")
+          else {properties: {administratorLoginPassword: $pw}} end' > "$REQ"
+  az rest --method patch \
+    --url "<postgres_server_id>?api-version=2024-08-01" \
+    --body "@$REQ" >/dev/null
+)
+```
+
+`<postgres_server_id>` is the module's `postgres_server_id` output. After
+the reset, make sure the value your root passes as
+`postgres_admin_password_wo` matches the Secret again, so the next
+rotation starts from a consistent state.
+
+#### Switching back to the generated password
+
+Setting `postgres_password_write_only` back to `false` is a password
+rotation, not a no-op. The validations require you to remove
+`postgres_admin_password_wo` and `postgres_password_secret_ref` in the same
+change. The apply then:
+
+- Creates a new `random_password.postgres_admin[0]` and sends it to the
+  server through `administrator_password`.
+- Recreates `kubernetes_secret.n8n_db` (`n8n-db-secret`) with that
+  password.
+- Changes `database.passwordSecret` back to `n8n-db-secret`, which rolls
+  the n8n Deployments during the same apply.
+- Stores the password in plain text in Terraform state again.
+
+The credential changes on the server before the pods roll. Save, review,
+and apply a plan file as in the switch-over steps, do it in a maintenance
+window, and confirm n8n reconnects. Keep your own
+Secret and its source version until then.
+
+If the Helm upgrade fails, `atomic = true` rolls the release back to pods
+that read your Secret, which still holds the previous password, while the
+server already has the generated one. `n8n-db-secret` already holds the
+generated password, so the fastest recovery is to fix the cause of the
+failure and run a freshly reviewed plan and apply again. Restoring an earlier Terraform state or
+rolling Helm back does not restore the previous database password. After
+the switch succeeds, you can delete your own Secret.
 
 ### Redis access key (no write-only path)
 

@@ -7435,7 +7435,7 @@ run "accepts_postgres_password_write_only_with_secret_ref" {
 
   variables {
     postgres_password_write_only       = true
-    postgres_admin_password_wo         = "an-ephemeral-value-terraform-never-persists"
+    postgres_admin_password_wo         = "An-Ephemeral-Value-Never-Persisted-1"
     postgres_admin_password_wo_version = 2
     postgres_password_secret_ref       = { name = "platform-n8n-db-password", key = "password" }
   }
@@ -7481,7 +7481,7 @@ run "rejects_postgres_password_write_only_without_secret_ref" {
 
   variables {
     postgres_password_write_only = true
-    postgres_admin_password_wo   = "an-ephemeral-value-terraform-never-persists"
+    postgres_admin_password_wo   = "An-Ephemeral-Value-Never-Persisted-1"
   }
 
   expect_failures = [var.postgres_password_secret_ref]
@@ -7507,7 +7507,7 @@ run "rejects_postgres_password_write_only_with_external_database" {
     postgres_external_username   = "n8n"
     postgres_external_password   = "super-secret-external-password"
     postgres_password_write_only = true
-    postgres_admin_password_wo   = "an-ephemeral-value-terraform-never-persists"
+    postgres_admin_password_wo   = "An-Ephemeral-Value-Never-Persisted-1"
     postgres_password_secret_ref = null
   }
 
@@ -7518,7 +7518,7 @@ run "rejects_postgres_admin_password_wo_when_write_only_disabled" {
   command = plan
 
   variables {
-    postgres_admin_password_wo = "an-ephemeral-value-terraform-never-persists"
+    postgres_admin_password_wo = "An-Ephemeral-Value-Never-Persisted-1"
   }
 
   expect_failures = [var.postgres_admin_password_wo]
@@ -7542,6 +7542,130 @@ run "rejects_fractional_postgres_admin_password_wo_version" {
   }
 
   expect_failures = [var.postgres_admin_password_wo_version]
+}
+
+run "rejects_module_managed_secret_name_on_write_only_path" {
+  command = plan
+
+  variables {
+    postgres_password_write_only = true
+    postgres_admin_password_wo   = "An-Ephemeral-Value-Never-Persisted-1"
+    postgres_password_secret_ref = { name = "n8n-db-secret", key = "password" }
+  }
+
+  expect_failures = [var.postgres_password_secret_ref]
+}
+
+# The reserved-name guard is scoped to the write-only path: on the external
+# path the module never creates n8n-db-secret, so a caller-owned Secret with
+# that name stays valid.
+run "accepts_n8n_db_secret_name_on_external_database_path" {
+  command = plan
+
+  variables {
+    create_database              = false
+    postgres_external_host       = "external-pg.example.com"
+    postgres_external_username   = "n8n"
+    postgres_password_secret_ref = { name = "n8n-db-secret", key = "password" }
+  }
+
+  assert {
+    condition     = local.postgres_password_secret_name == "n8n-db-secret" && length(kubernetes_secret.n8n_db) == 0
+    error_message = "A caller-owned Secret named n8n-db-secret must stay accepted on the external database path, with no module-managed Secret created."
+  }
+}
+
+run "accepts_postgres_admin_password_wo_at_the_8_character_minimum" {
+  command = plan
+
+  variables {
+    postgres_password_write_only = true
+    postgres_admin_password_wo   = "Abcdef1!"
+    postgres_password_secret_ref = { name = "platform-n8n-db-password", key = "password" }
+  }
+
+  assert {
+    condition     = length(random_password.postgres_admin) == 0
+    error_message = "An 8-character password from four categories must be accepted."
+  }
+}
+
+run "accepts_postgres_admin_password_wo_at_the_128_character_limit" {
+  command = plan
+
+  variables {
+    postgres_password_write_only = true
+    postgres_admin_password_wo   = "Aa1${join("", [for i in range(125) : "b"])}"
+    postgres_password_secret_ref = { name = "platform-n8n-db-password", key = "password" }
+  }
+
+  assert {
+    condition     = length(random_password.postgres_admin) == 0
+    error_message = "A 128-character password from three categories must be accepted."
+  }
+}
+
+run "accepts_postgres_admin_password_wo_with_three_categories" {
+  command = plan
+
+  variables {
+    postgres_password_write_only = true
+    postgres_admin_password_wo   = "abcdefgh12!!"
+    postgres_password_secret_ref = { name = "platform-n8n-db-password", key = "password" }
+  }
+
+  assert {
+    condition     = length(random_password.postgres_admin) == 0
+    error_message = "A password from lowercase, digit, and non-alphanumeric categories (no uppercase) must be accepted."
+  }
+}
+
+run "rejects_empty_postgres_admin_password_wo" {
+  command = plan
+
+  variables {
+    postgres_password_write_only = true
+    postgres_admin_password_wo   = ""
+    postgres_password_secret_ref = { name = "platform-n8n-db-password", key = "password" }
+  }
+
+  expect_failures = [var.postgres_admin_password_wo]
+}
+
+run "rejects_short_postgres_admin_password_wo" {
+  command = plan
+
+  variables {
+    postgres_password_write_only = true
+    postgres_admin_password_wo   = "Abcde1!"
+    postgres_password_secret_ref = { name = "platform-n8n-db-password", key = "password" }
+  }
+
+  expect_failures = [var.postgres_admin_password_wo]
+}
+
+run "rejects_overlong_postgres_admin_password_wo" {
+  command = plan
+
+  variables {
+    postgres_password_write_only = true
+    postgres_admin_password_wo   = "Aa1${join("", [for i in range(126) : "b"])}"
+    postgres_password_secret_ref = { name = "platform-n8n-db-password", key = "password" }
+  }
+
+  expect_failures = [var.postgres_admin_password_wo]
+}
+
+run "rejects_postgres_admin_password_wo_with_two_categories" {
+  command = plan
+
+  variables {
+    postgres_password_write_only = true
+    postgres_admin_password_wo   = "abcdefgh12345"
+    postgres_password_secret_ref = { name = "platform-n8n-db-password", key = "password" }
+  }
+
+  expect_failures = [var.postgres_admin_password_wo]
 }
 
 run "rejects_postgres_external_neither_password_nor_secret_ref" {
