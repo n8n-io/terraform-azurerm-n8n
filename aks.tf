@@ -72,16 +72,16 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   default_node_pool {
     name                         = "system"
     temporary_name_for_rotation  = "systemtemp"
-    vm_size                      = var.aks_node_vm_size
+    vm_size                      = local.aks_system_node_vm_size_effective
     vnet_subnet_id               = var.aks_subnet_id
     zones                        = var.aks_availability_zones
     os_disk_size_gb              = var.aks_node_os_disk_size_gb
     only_critical_addons_enabled = var.aks_system_pool_critical_addons_only
 
-    node_count           = var.aks_node_count_min
+    node_count           = local.aks_system_node_count_min_effective
     auto_scaling_enabled = true
-    min_count            = var.aks_node_count_min
-    max_count            = var.aks_node_count_max
+    min_count            = local.aks_system_node_count_min_effective
+    max_count            = local.aks_system_node_count_max_effective
 
     upgrade_settings {
       max_surge = var.aks_node_upgrade_max_surge
@@ -196,11 +196,13 @@ resource "azurerm_kubernetes_cluster" "n8n" {
 }
 
 # ── Optional user node pool ──
-# Second pool for n8n workloads, mode = "User" by default. Sized identically
-# to the system pool today (same SKU, same autoscaler bounds). No taint is
-# applied here: KEDA, the Redis exporter, and n8n set no nodeSelector or
-# toleration, so when aks_system_pool_critical_addons_only taints the system
-# pool, everything this module installs lands on this pool automatically.
+# Second pool for n8n workloads, mode = "User" by default. Sized from
+# aks_node_vm_size/aks_node_count_min/aks_node_count_max; the system pool
+# shares those values unless aks_system_node_* overrides it (locals.tf). No
+# taint is applied here: KEDA, the Redis exporter, and n8n set no nodeSelector
+# or toleration, so when aks_system_pool_critical_addons_only taints the
+# system pool, everything this module installs lands on this pool
+# automatically.
 resource "azurerm_kubernetes_cluster_node_pool" "n8n_user" {
   count = var.create_aks ? 1 : 0
 

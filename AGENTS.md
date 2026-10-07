@@ -176,10 +176,13 @@ expose sovereign vault or authority settings.
 ScaledObject, while root `scaling.tf` owns the webhook HPA because the chart
 suppresses that object whenever KEDA is enabled. Helm replica counts must
 remain tied to the three autoscaler floors. The CPU capacity check models
-both AKS pools, or only `n8nuser` when `aks_system_pool_critical_addons_only`
+both AKS pools, each at its own effective VM size and maximum (the
+`aks_system_node_*` overrides fall back to the shared `aks_node_*` inputs
+through `locals.tf`), or only `n8nuser` when `aks_system_pool_critical_addons_only`
 taints the system pool (then subtracting only KEDA's control CPU), subtracts documented AKS and fixed system workload
-allowances, warns only for reviewed Dsv4, Dsv5, and Dsv7 SKUs, and stays silent for
-unknown valid SKUs. Keep the SKU map and reservation comments current when
+allowances, warns only for reviewed Dsv4, Dsv5, and Dsv7 SKUs, and stays silent when
+the SKU of any pool it counts is unknown but valid. A tainted system pool's
+SKU is not counted, so it cannot silence the user-pool-only model. Keep the SKU map and reservation comments current when
 AKS or example sizing changes. The warning is advisory and does not replace
 live capacity testing.
 
@@ -1081,16 +1084,30 @@ terraform init                                          # populated terraform.tf
 ```
 
 Every value can be overridden (`--region`, `--vm-size`, `--node-count-max`,
-`--zones`, `--pg-version`, `--pg-sku`, `--redis-sku`); `--region` alone
-skips the plan. The vCPU quota check reads `az vm list-usage` for both the
-VM family (e.g. `standardDSv5Family`) and the aggregate `cores` cap against
-worst-case demand: the planned `max_count` of every node pool of that VM
-size, summed from the plan (`2 x aks_node_count_max` with the module's
-system and user pools, each scaling `aks_node_count_min..aks_node_count_max`
-independently, aks.tf); with `--node-count-max N` or `--region` it assumes
-`2 x N`. The shortfall is a hard failure only when every non-deposed
-`azurerm_kubernetes_cluster` and `azurerm_kubernetes_cluster_node_pool`
-entry in the plan's `resource_changes` is exactly `["create"]`
+`--system-vm-size`, `--system-node-count-max`, `--zones`, `--pg-version`,
+`--pg-sku`, `--redis-sku`); `--region` alone skips the plan.
+`aks_node_vm_size`/`aks_node_count_max` size the user (`n8nuser`) pool; the
+system (default) pool uses the same values unless `aks_system_node_vm_size`/
+`aks_system_node_count_max` overrides them (aks.tf, locals.tf). The script
+handles node pools as plain `ROLE VM_SIZE MAX ZONES` records
+(`plan_pool_records`: every managed default pool, `n8nuser` pool, and other
+pool in the plan, across every module instance; `MAX` is `max_count`, or
+`node_count` when `auto_scaling_enabled = false`), then applies the flags with
+the module's own fallback (`apply_overrides`: the system pool takes
+`--system-vm-size`, else `--vm-size`, and `--system-node-count-max`, else
+`--node-count-max`; `--zones` replaces every pool's zones). With `--region`,
+the records start from the root defaults instead. Empty sizing flags are
+rejected, since an empty value means "not overridden". `size_peaks` sums the
+counts and unions the zones per distinct VM size, the script reads
+`az vm list-skus` once per size and checks that size's zones, and `family_totals` sums the
+vCPU need per VM family plus the aggregate `cores` total, checked against a
+single region-wide `az vm list-usage` call. A failing check names the
+inputs that size the pools of that family (`quota_hint`). The records and
+`awk` aggregation replace associative arrays on purpose: `declare -A` is
+bash 4 only, and macOS ships bash 3.2 as `/bin/bash`. The
+shortfall is a hard failure only when every non-deposed `azurerm_kubernetes_cluster` and
+`azurerm_kubernetes_cluster_node_pool` entry in the plan's `resource_changes`
+is exactly `["create"]`
 (`plan_quota_mode`); anything else (`no-op`, `update`, replace, a new pool
 on an existing cluster, a second existing cluster) is a warning, because
 `currentValue` may already count those nodes. Without a plan it
@@ -1101,7 +1118,8 @@ and 1000 nodes per pool: bash evaluates array subscripts inside `$((...))`,
 so an unchecked `a[$(cmd)]` would execute, an unset name under `set -u`
 aborted mid-report with exit 0 on macOS bash 3.2, and bash wraps silently on
 overflow. `PREFLIGHT_SELF_TEST=1` exercises that validation,
-`plan_pool_maxes`, `plan_quota_mode`, and `check_quota` against synthetic
+`plan_pool_records`, `apply_overrides`, `size_peaks`, `family_totals`,
+`quota_hint`, `plan_quota_mode`, and `check_quota` against synthetic
 fixtures before any `az`/`terraform` call;
 its probes use `rc=0; <cond> || rc=1` so a failing condition is recorded
 instead of tripping `set -e`. Azure has no capacity API for
