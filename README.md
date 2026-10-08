@@ -58,7 +58,7 @@ The module **expects a pre-existing VNet** and five pre-sized subnets (AKS, Appl
 
 ## Prerequisites
 
-- **Terraform** `>= 1.11` (ephemeral input variables and write-only arguments, used by `postgres_admin_password_wo`; 1.9 added the cross-variable validation this module also relies on, e.g. `var.app_gateway_keyvault_id` against `var.app_gateway_keyvault_role_assignment_enabled`).
+- **Terraform** `>= 1.12` (the first release that short-circuits `||` and `&&`, which the module's `var.x == null || var.x.attr` validations need; on 1.11 and earlier they fail whenever such an input is left null. `postgres_admin_password_wo` uses ephemeral input variables (added in 1.10) and write-only arguments (added in 1.11), and 1.9 added the cross-variable validation this module also relies on, e.g. `var.app_gateway_keyvault_id` against `var.app_gateway_keyvault_role_assignment_enabled`).
 - **`hashicorp/azurerm`** `>= 4.39.0, < 5.0.0` (see `versions.tf` for why 4.39.0).
 - **Azure CLI** `>= 2.50` (`az login`, plus the few imperative steps in the docs under `docs/`); `>= 2.75` to run `tests/scripts/preflight-region-check.sh`, which parses the newer `az postgres flexible-server list-skus` payload and uses the `redisenterprise` extension.
 - **jq** (used by `tests/scripts/preflight-region-check.sh` and the offline chart check; the module itself never shells out to it).
@@ -526,7 +526,7 @@ This module does not:
 
 | Name | Version |
 | ---- | ------- |
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.12 |
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | >= 4.39.0, < 5.0.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |

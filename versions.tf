@@ -38,14 +38,23 @@
 # argument needs 1.11's write-only-argument support for managed resources.
 # Both are parsed unconditionally from this module's HCL regardless of
 # whether any caller sets `postgres_password_write_only`, so the floor is
-# module-wide. No `provider {}` blocks — provider configuration (subscription,
-# auth, kube/helm wiring against the AKS cluster this module creates) is
-# the caller's job. See `examples/small/providers.tf` (added in section 13)
+# module-wide.
+#
+# Raised again to `>= 1.12`: the `var.x == null || var.x.attr` guards in
+# variables.tf need 1.12, the first release that short-circuits `||` and
+# `&&`. On 1.11 and earlier both sides are evaluated, so those guards fail
+# with "Attempt to get attribute from null value" on every plan that
+# leaves such an input null (for example `pg_maintenance_window`, which
+# defaults to null). CI tests this floor alongside its newer runtime.
+#
+# No `provider {}` blocks — provider configuration (subscription, auth,
+# kube/helm wiring against the AKS cluster this module creates) is the
+# caller's job. See `examples/small/providers.tf` (added in section 13)
 # for the canonical wiring, mirroring `terraform-aws-n8n`'s
 # `examples/small/providers.tf`.
 
 terraform {
-  required_version = ">= 1.11"
+  required_version = ">= 1.12"
 
   required_providers {
     azurerm = {
