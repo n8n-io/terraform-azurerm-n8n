@@ -251,7 +251,12 @@ run "customer_managed_everything_plan" {
   }
 
   assert {
-    condition     = yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerValue == "{var_add_x_forwarded_for_proxy}"
+    condition = (
+      yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).kind == "AzureApplicationGatewayRewrite" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].actionType == "set" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerName == "X-Forwarded-For" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerValue == "{var_add_x_forwarded_for_proxy}"
+    )
     error_message = "The rewrite must set X-Forwarded-For to {var_add_x_forwarded_for_proxy} so upstream proxy entries survive and the port is dropped."
   }
 }
