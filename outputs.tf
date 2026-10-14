@@ -199,6 +199,10 @@ output "n8n_helm_release_revision" {
 output "n8n_image_tag" {
   description = "n8n application image tag the Helm release sends as image.tag, or null when none is sent and the chart's own default runs (its appVersion on upstream charts from 1.12.0, which moves with n8n_chart_version)."
   value       = var.n8n_image_tag
+
+  # A bare variable has no dependency edge of its own; the depends_on keeps the
+  # file's ordering contract (consumers see it only after the release exists).
+  depends_on = [helm_release.n8n]
 }
 
 output "n8n_service_name" {

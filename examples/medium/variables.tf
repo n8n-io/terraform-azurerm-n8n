@@ -81,7 +81,7 @@ variable "n8n_main_hpa_min_replicas" {
 }
 
 variable "n8n_image_tag" {
-  description = "n8n application image tag, passed straight through to the root module's n8n_image_tag. Null (the default) sends no tag, so the chart's own default runs: its appVersion (2.42.4 at the module's default chart 1.15.0), which moves only when the module's n8n_chart_version moves, so upgrading the module can also upgrade n8n across its database migrations. Pin a concrete version (for example \"2.42.4\") in production to upgrade n8n deliberately; see docs/upgrading-n8n.md."
+  description = "n8n application image tag, passed straight through to the root module's n8n_image_tag. Null (the default) sends no tag, so the chart's own default runs: its appVersion (2.42.4 at the module's default chart 1.15.0), which moves only when the module's n8n_chart_version moves, so upgrading the module can also upgrade n8n across its database migrations. Pin a concrete version (for example \"2.42.4\") in production to upgrade n8n deliberately; see [docs/upgrading-n8n.md](../../docs/upgrading-n8n.md)."
   type        = string
   default     = null
 
