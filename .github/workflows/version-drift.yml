@@ -65,12 +65,15 @@ jobs:
           cat drift.txt
 
       # Sync the report to one tracking issue labelled version-drift, so a
-      # stale pin shows up where every other piece of repo work does. The
-      # body is always replaced with the latest report; an edit notifies
-      # nobody, so a comment is posted only when the set of DRIFT:/ERROR:
-      # lines changed. A clean report closes the issue, and drift coming back
-      # reopens it. tests/scripts/drift-issue-sync.sh makes that decision
-      # (offline self-test in terraform-tests.yml); this step only calls gh.
+      # stale pin shows up where every other piece of repo work does. A
+      # complete report replaces the body; an edit notifies nobody, so a
+      # comment is posted only when the set of DRIFT:/ERROR: lines changed.
+      # A clean report closes the issue, and drift coming back reopens it.
+      # An incomplete report writes nothing to GitHub (not even the label)
+      # and fails this step. tests/scripts/drift-issue-sync.sh makes that
+      # decision (offline self-test in terraform-tests.yml);
+      # tests/scripts/test-version-drift-workflow.sh runs this step against a
+      # fake gh. This step only calls gh.
       - name: sync tracking issue
         if: always()
         shell: bash
@@ -86,24 +89,28 @@ jobs:
             exit 1
           fi
 
-          gh label create "$label" --force --color D93F0B \
-            --description "Automated weekly version drift report (tests/scripts/check-version-drift.sh)"
-
-          # Open issue with the label first. Then an open issue with the
-          # title but no label (issues opened before the label existed),
-          # which gets the label. Then the most recent closed one, so drift
-          # coming back reopens it instead of opening a duplicate.
+          # Read-only lookups first; nothing is written until the report has
+          # been validated below. The label alone does not identify the
+          # tracker (a person may label a follow-up bump issue
+          # version-drift), and title search is fuzzy, so every lookup keeps
+          # only an exact title match.
+          tracker() {
+            jq -r --arg t "$title" 'map(select(.title == $t)) | sort_by(-.number) | .[0].number // empty'
+          }
+          # Open labelled tracker first. Then an open unlabelled one (opened
+          # before the label existed), which gets the label. Then the most
+          # recent closed one, so drift coming back reopens it instead of
+          # opening a duplicate.
           state=open
-          number="$(gh issue list --label "$label" --state open --limit 1 --json number --jq '.[0].number // empty')"
+          needs_label=""
+          number="$(gh issue list --label "$label" --state open --limit 100 --json number,title | tracker)"
           if [[ -z "$number" ]]; then
-            number="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
-            if [[ -n "$number" ]]; then
-              gh issue edit "$number" --add-label "$label"
-            fi
+            number="$(gh issue list --state open --search "\"$title\" in:title" --limit 100 --json number,title | tracker)"
+            [[ -z "$number" ]] || needs_label=1
           fi
           if [[ -z "$number" ]]; then
             state=closed
-            number="$(gh issue list --label "$label" --state closed --limit 1 --json number --jq '.[0].number // empty')"
+            number="$(gh issue list --label "$label" --state closed --limit 100 --json number,title | tracker)"
           fi
           if [[ -n "$number" ]]; then
             gh issue view "$number" --json body --jq '.body' >previous.md
@@ -117,10 +124,24 @@ jobs:
 
           case "$action" in
             abort)
-              echo "::error::the report has no valid summary line; leaving the tracking issue unchanged"
+              echo "::error::the report is incomplete (no valid summary line, or counts that disagree with its lines); leaving the tracking issue unchanged"
               exit 1
               ;;
-            noop) ;;
+            noop) exit 0 ;;
+            create | update | comment | reopen | close) ;;
+            *)
+              echo "::error::unexpected action '${action}' from drift-issue-sync.sh"
+              exit 1
+              ;;
+          esac
+
+          gh label create "$label" --force --color D93F0B \
+            --description "Automated weekly version drift report (tests/scripts/check-version-drift.sh)"
+          if [[ -n "$needs_label" ]]; then
+            gh issue edit "$number" --add-label "$label"
+          fi
+
+          case "$action" in
             create)
               gh issue create --title "$title" --label "$label" --body-file report.md
               ;;
@@ -144,10 +165,6 @@ jobs:
             close)
               gh issue edit "$number" --body-file report.md
               gh issue close "$number" --comment "No drift and no lookup errors in [workflow run](${RUN_URL}). Closing; the next report with findings reopens this issue."
-              ;;
-            *)
-              echo "::error::unexpected action '${action}' from drift-issue-sync.sh"
-              exit 1
               ;;
           esac
 
