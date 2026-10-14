@@ -154,6 +154,13 @@ tests/scripts/check-n8n-chart.sh
 
 ### What it covers
 
+- The pinned chart's `appVersion` is a plain `major.minor.patch` version at
+  or above `2.39.0` (the premise of `local.n8n_chart_default_image_current`),
+  and with `n8n_image_tag` null (the default fixture) the module sends no
+  image tag while every n8n container runs
+  `docker.n8n.io/n8nio/n8n:<appVersion>` and the worker's runner sidecar runs
+  `n8nio/runners:<appVersion>`. No exact version is pinned, so a chart bump
+  needs no script edit.
 - Deployment families (`deployment-main`, `deployment-worker`,
   `deployment-webhook-processor`) at their configured replica floors.
 - The main `HorizontalPodAutoscaler` bounds/threshold and the main

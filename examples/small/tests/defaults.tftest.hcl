@@ -146,3 +146,51 @@ run "small_tier_blob_delete_retention_days_override" {
     error_message = "Setting blob_delete_retention_days must not change unrelated example outputs."
   }
 }
+
+run "small_tier_n8n_image_tag_defaults_to_the_chart_appversion" {
+  command = plan
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = module.n8n.n8n_image_tag == null
+    error_message = "Leaving n8n_image_tag unset must pass null through to the root module, so the chart's appVersion runs."
+  }
+}
+
+run "small_tier_n8n_image_tag_override" {
+  command = plan
+
+  variables {
+    n8n_image_tag = "2.42.4"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = module.n8n.n8n_image_tag == "2.42.4"
+    error_message = "Setting n8n_image_tag must pass the pinned tag through to the root module unchanged."
+  }
+}
+
+run "small_tier_rejects_a_malformed_n8n_image_tag" {
+  command = plan
+
+  variables {
+    n8n_image_tag = "latest"
+  }
+
+  expect_failures = [var.n8n_image_tag]
+}

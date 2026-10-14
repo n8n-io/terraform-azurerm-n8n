@@ -370,6 +370,42 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Changed
 
+- **Breaking: `n8n_image_tag` now defaults to `null`** (was `"2.35.0"`),
+  matching terraform-aws-n8n and terraform-google-n8n
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). With
+  a null tag the module sends no `image.tag` (and no
+  `taskRunners.image.tag`), so the chart's own default runs: its
+  `appVersion` on upstream charts from `1.12.0` (`2.41.4` at chart
+  `1.14.0`, `2.42.4` at `1.15.0`). A later `n8n_chart_version` bump
+  therefore also upgrades n8n for unpinned callers. **Upgrade note:** a
+  caller that relied on the old default moves from n8n `2.35.0` to the
+  chart's appVersion on the next apply. That crosses n8n's forward-only
+  database migrations, and `atomic = true` rolls back Kubernetes objects,
+  not migrations. To keep the current version, set
+  `n8n_image_tag = "2.35.0"` before upgrading the module, then follow
+  [docs/upgrading-n8n.md](./docs/upgrading-n8n.md#moving-to-the-chart-default-image-tag).
+  A caller that already pins `n8n_image_tag` renders byte-identical values.
+  The 2.19 and 2.29 floors and the `WEBHOOK_URL` cutover treat a null tag
+  on an upstream numbered chart at `1.12.0` or later as current
+  (`local.n8n_chart_default_image_current`, the AWS sibling's predicate
+  plus a prerelease exclusion). On any other chart (older, prerelease
+  including the worker-pools preview, or a custom `n8n_chart_repository`),
+  the new `check.n8n_image_version_is_known` warns, `WEBHOOK_URL` is still
+  rendered, and `n8n_worker_pools` fails the plan until the tag is pinned.
+  New warning: `check.custom_image_repository_needs_an_explicit_tag`, for
+  `n8n_image_repository` with a null tag (ported from terraform-aws-n8n).
+  `check.custom_image_tag_needs_a_task_runner_tag` now fires only with an
+  explicit tag. `check.task_runner_image_tag_matches_application_version`
+  now warns when the runner tag is pinned but the application tag is null.
+  New root output `n8n_image_tag` reports the tag sent (null when the
+  chart's default runs). `examples/small`, `examples/medium`, and
+  `examples/large` gain an `n8n_image_tag` passthrough (default null) so
+  production callers can pin the version there.
+  `tests/scripts/check-n8n-chart.sh` now asserts the pinned chart's
+  `appVersion` is a concrete version at or above `2.39.0` and that the
+  default fixture renders `docker.n8n.io/n8nio/n8n:<appVersion>` and
+  `n8nio/runners:<appVersion>`.
+
 - **Breaking: `n8n_available_binary_data_modes` removed, replaced by
   `azure_blob_retain_read_access`** (bool, default `false`). The list only
   rendered `N8N_AVAILABLE_BINARY_DATA_MODES`, which n8n 2.x never reads

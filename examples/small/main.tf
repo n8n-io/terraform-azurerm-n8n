@@ -200,6 +200,7 @@ module "n8n" {
   public_dns_zone_id       = azurerm_dns_zone.public.id
 
   n8n_license_key = var.n8n_license_key
+  n8n_image_tag   = var.n8n_image_tag
 
   depends_on = [
     time_sleep.storage_rbac,

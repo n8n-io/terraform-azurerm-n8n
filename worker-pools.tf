@@ -46,7 +46,9 @@ locals {
   # tagged in n8n@2.39.0). Older images accept both variables and ignore them:
   # mains never route to a pool and pool workers consume the default queue.
   # Enforced as a hard validation on var.n8n_image_tag (variables.tf), next to
-  # the existing 2.19 and 2.29 feature floors on the same input.
+  # the existing 2.19 and 2.29 feature floors on the same input. A null tag
+  # passes only when local.n8n_chart_default_image_current (locals.tf) proves
+  # the chart's own default meets it.
   n8n_worker_pools_min_n8n_minor = 39
 
   # No numbered n8n-hosting release carries queueMode.workerGroups: the
@@ -158,10 +160,14 @@ locals {
 # Image pairing: an n8n image older than 2.39 accepts and ignores
 # N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME, so the pods come up
 # healthy while pool workers consume the default queue and every pool queue
-# stays empty. var.n8n_image_tag always carries a validated X.Y.Z prefix in
-# this module (its default is a pinned version, never the chart's floating
-# tag, and its own regex rejects null), so the floor is fully decidable at
-# plan time and lives as a validation block on that variable next to the
+# stays empty. var.n8n_image_tag is either null or carries a validated X.Y.Z
+# prefix. An explicit tag is compared against the floor directly. A null tag
+# runs the chart's own default, which is decidable at plan time only on an
+# upstream numbered chart at 1.12.0 or later (appVersion 2.39.6 and up,
+# local.n8n_chart_default_image_current); every other chart, the preview
+# included (its default is the floating stable tag), fails the plan until the
+# tag is pinned. Unlike terraform-aws-n8n, which skips the floor for a null
+# tag, this is a hard stop, as a validation block on that variable next to the
 # existing 2.19 (log streaming) and 2.29 (Azure blob modes) floors.
 #
 # A missing feat:workerPools licence entitlement is the one pool-related

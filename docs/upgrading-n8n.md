@@ -13,13 +13,59 @@ guide; the per-version sections below cover only what reaches this module.
 | Variable | Controls | Default |
 | --- | --- | --- |
 | `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.15.0"`, pinned |
-| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `"2.35.0"`, pinned. Unlike the AWS and GCP siblings this module never leaves the tag to the chart, so a chart bump on its own never changes the running n8n version. |
-| `n8n_task_runner_image_tag` | Task runner image tag; keep aligned with the underlying n8n version when using a custom application tag. | `null`, meaning `n8n_image_tag` |
+| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `null`, meaning the chart's `appVersion` (`2.42.4` at chart `1.15.0`), as in the AWS and GCP siblings. A chart bump then also upgrades n8n. Pin a version in production to upgrade n8n deliberately. |
+| `n8n_task_runner_image_tag` | Task runner image tag; keep aligned with the underlying n8n version when using a custom application tag. | `null`, meaning `n8n_image_tag`, else the chart's `appVersion` |
 
 Bumping the image tag alone gets you a new n8n version without changing the
 chart's templates or value schema. Bumping the chart version can also change
 what values the chart accepts and what the chart renders, so treat it as the
-larger-blast-radius change of the two.
+larger-blast-radius change of the two. With `n8n_image_tag = null` a chart
+bump is both changes at once: the new chart's `appVersion` replaces the
+running n8n version, across its database migrations.
+
+## Moving to the chart-default image tag
+
+`n8n_image_tag` now defaults to `null` (it was `"2.35.0"`;
+[#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). With a
+null tag the module sends no `image.tag` or `taskRunners.image.tag`, so the
+chart's own default runs: its `appVersion` on upstream charts from `1.12.0`
+(`2.42.4` at `1.15.0`). A caller that relied on the old default therefore
+moves from n8n `2.35.0` to `2.42.4` on the next apply after upgrading the
+module, and every later `n8n_chart_version` bump moves n8n again. A caller
+that already sets `n8n_image_tag` sees no change: the rendered values are
+byte-identical.
+
+1. Read the version running now:
+
+   ```bash
+   kubectl -n <namespace> get deploy n8n-main \
+     -o jsonpath='{.spec.template.spec.containers[0].image}'
+   ```
+
+   or the "Application version" table `tests/scripts/smoke-test.sh` prints.
+2. Decide. To stay on that version (recommended for production), set
+   `n8n_image_tag = "2.35.0"` (or whatever step 1 printed) in the same change
+   that upgrades the module, and plan the n8n upgrade separately with
+   [Bumping](#bumping). To accept the move, continue.
+3. Before accepting, take a PostgreSQL backup (a Flexible Server on-demand
+   backup or restore point, or `pg_dump` for an external database) and back
+   up the n8n encryption key (`n8n_encryption_key` output, or your own
+   Secret).
+4. `terraform apply`. The main pods run the forward-only migrations from
+   `2.35.0` to the chart's `appVersion` during the rollout, inside
+   `n8n_helm_timeout` (600 seconds by default). On a large database, raise
+   `n8n_helm_timeout` first.
+5. Rolling back means restoring the database backup with the old tag pinned.
+   `atomic = true` rolls back Kubernetes objects, not migrations, so setting
+   the tag back alone is not enough once the migrations have run.
+
+The version floors treat a null tag on an upstream numbered chart at
+`1.12.0` or later as current (`local.n8n_chart_default_image_current`).
+With a null tag on any other chart (older, a prerelease including the
+worker-pools preview, or a custom `n8n_chart_repository`), the plan warns
+through `check.n8n_image_version_is_known`, still renders `WEBHOOK_URL`
+next to `N8N_WEBHOOK_URL`, and fails when `n8n_worker_pools` is set. Pin
+the tag there.
 
 ## Moving from KEDA chart 2.15.0 to 2.21.0
 
@@ -114,8 +160,9 @@ ownership, the worker `ScaledObject`, and task-runner placement are as on
   Neither is exposed by this module. The chart's `NOTES.txt` warns when
   `database.ssl.key` is set; the module never sets it.
 
-The chart's `appVersion` moved to `2.42.4`; inert here because
-`n8n_image_tag` always sets the image.
+The chart's `appVersion` moved to `2.42.4`. Unpinned callers
+(`n8n_image_tag = null`) also move n8n to `2.42.4` with this bump; see
+[Moving to the chart-default image tag](#moving-to-the-chart-default-image-tag).
 
 **What the upgrade from `1.14.0` does (verified live once).** On `1.14.0`
 the chart's entry is `DB_POSTGRESDB_SSL` and the module's is
@@ -211,8 +258,9 @@ different for this module's configurations. The three upstream changes:
 - **Values validation reports every failure in one render** (n8n-hosting
   #209). Only the error text changes when several checks fail at once.
 
-The chart's `appVersion` moved to `2.41.4`; inert here because
-`n8n_image_tag` always sets the image.
+The chart's `appVersion` moved to `2.41.4`. This was inert at the time,
+when `n8n_image_tag` always set the image; with today's null default an
+unpinned caller on this chart runs `2.41.4`.
 
 ## Moving from chart 1.11.0 to 1.13.0
 
@@ -227,10 +275,13 @@ changes that matter are in `templates/`, which is why the offline
 diffing values.
 
 **The chart's `image.tag` default moved from floating `stable` to its
-`appVersion`.** Inert here: this module always sets `image.tag` from
-`n8n_image_tag`, so nothing about the running application changes on the
-chart bump. The AWS and GCP siblings, whose `n8n_image_tag` defaults to
-null, have to pin before upgrading; this module does not.
+`appVersion`.** This was inert at the time of this bump, when the module
+always set `image.tag` from `n8n_image_tag`. Since `n8n_image_tag` defaults
+to null, this is what lets a null tag count as a known version on charts
+from `1.12.0` (see
+[Moving to the chart-default image tag](#moving-to-the-chart-default-image-tag));
+on `1.11.0` and older a null tag runs the floating `stable` tag, and the
+plan warns.
 
 **The first upgrade resets the worker count to 1, once.**
 Chart `1.13.0` stops setting `spec.replicas` on the worker Deployment
@@ -343,7 +394,8 @@ receive neither #201 nor #179 until a new preview build exists.
 ## Bumping
 
 1. Set `n8n_image_tag`, any required `n8n_chart_version`, and, when using a
-   custom application tag, the matching `n8n_task_runner_image_tag`.
+   custom application tag, the matching `n8n_task_runner_image_tag`. With
+   `n8n_image_tag = null`, the chart bump alone is the n8n upgrade.
 2. `terraform plan` and review the diff and warnings. A chart-only bump
    plans as exactly one in-place change to `module.n8n.helm_release.n8n`.
 3. `terraform apply`. Watch the main pods through the rollout:

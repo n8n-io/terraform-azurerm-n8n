@@ -186,9 +186,9 @@ resource "kubernetes_secret" "n8n_task_runners" {
 
 # ── Helm release ──────────────────────────────────────────────────────────────
 # The chart is pinned to 1.15.0 (see var.n8n_chart_version for the delta
-# since 1.11.0). The application and task-runner images are pinned to one n8n
-# version so storage and runner protocol changes cannot drift between pod
-# families. Explicit multiMain.setup, wait, atomic, cleanup, and timeout
+# since 1.11.0). The application and task-runner images share one n8n
+# version, n8n_image_tag when set, else the chart's appVersion, so storage and
+# runner protocol changes cannot drift between pod families. Explicit multiMain.setup, wait, atomic, cleanup, and timeout
 # settings preserve the migration-leader and rollback safeguards from the
 # former workload tier.
 resource "helm_release" "n8n" {
@@ -204,7 +204,7 @@ resource "helm_release" "n8n" {
 
   values = [yamlencode(merge({
     image = merge(
-      { tag = var.n8n_image_tag },
+      var.n8n_image_tag == null ? {} : { tag = var.n8n_image_tag },
       var.n8n_image_repository == null ? {} : { repository = var.n8n_image_repository },
     )
 
@@ -599,7 +599,7 @@ resource "helm_release" "n8n" {
       # image block above, so the chart's default n8nio/runners repository
       # stays the default for every caller who has not mirrored it.
       image = merge(
-        { tag = coalesce(var.n8n_task_runner_image_tag, var.n8n_image_tag) },
+        var.n8n_task_runner_image_tag == null && var.n8n_image_tag == null ? {} : { tag = coalesce(var.n8n_task_runner_image_tag, var.n8n_image_tag) },
         var.n8n_task_runner_image_repository == null ? {} : { repository = var.n8n_task_runner_image_repository },
       )
       authToken = {
@@ -746,10 +746,13 @@ check "log_streaming_destinations_require_managed_by_env" {
 # set, the sidecar no longer pulls n8nio/runners, so this message would name the
 # wrong image; custom_task_runner_repository_needs_an_explicit_tag covers that
 # case instead, and the two never fire together. Same split as
-# terraform-aws-n8n.
+# terraform-aws-n8n. With n8n_image_tag null the runner inherits the chart's
+# appVersion, which n8nio/runners publishes, and
+# custom_image_repository_needs_an_explicit_tag reports the missing tag
+# instead, so this one stays quiet.
 check "custom_image_tag_needs_a_task_runner_tag" {
   assert {
-    condition = var.n8n_image_repository != null ? (
+    condition = var.n8n_image_repository != null && var.n8n_image_tag != null ? (
       var.n8n_task_runners_enabled ? (
         var.n8n_task_runner_image_repository == null ? var.n8n_task_runner_image_tag != null : true
       ) : true
@@ -758,24 +761,48 @@ check "custom_image_tag_needs_a_task_runner_tag" {
   }
 }
 
-# A runner mirror with no explicit tag inherits n8n_image_tag. That is fine
-# when the mirror publishes that tag, so this is a warning, not a validation:
-# a hard rule would reject a valid mirror that carries the inherited tag.
+# A runner mirror with no explicit tag inherits n8n_image_tag, or the chart's
+# appVersion when that is also null. That is fine when the mirror publishes
+# that tag, so this is a warning, not a validation: a hard rule would reject a
+# valid mirror that carries the inherited tag.
 check "custom_task_runner_repository_needs_an_explicit_tag" {
   assert {
     condition = var.n8n_task_runner_image_repository != null ? (
       var.n8n_task_runners_enabled ? var.n8n_task_runner_image_tag != null : true
     ) : true
-    error_message = "n8n_task_runner_image_repository is set but n8n_task_runner_image_tag is null, so the runner sidecar's tag falls back to n8n_image_tag (${var.n8n_image_tag}). If that tag does not exist in ${coalesce(var.n8n_task_runner_image_repository, "the runner repository")}, every pod carrying a runner sidecar fails with ImagePullBackOff and the Helm release rolls back. Set n8n_task_runner_image_tag to a tag that exists in this repository. Ignore this warning only if the repository publishes the inherited tag."
+    error_message = "n8n_task_runner_image_repository is set but n8n_task_runner_image_tag is null, so the runner sidecar's tag falls back to n8n_image_tag (${coalesce(var.n8n_image_tag, "null, so the chart's appVersion")}). If that tag does not exist in ${coalesce(var.n8n_task_runner_image_repository, "the runner repository")}, every pod carrying a runner sidecar fails with ImagePullBackOff and the Helm release rolls back. Set n8n_task_runner_image_tag to a tag that exists in this repository. Ignore this warning only if the repository publishes the inherited tag."
+  }
+}
+
+# A mirrored application image with no tag gets the chart's own default tag
+# appended, which moves with n8n_chart_version and may not exist in the
+# mirror. Ported from terraform-aws-n8n.
+check "custom_image_repository_needs_an_explicit_tag" {
+  assert {
+    condition     = var.n8n_image_repository == null || var.n8n_image_tag != null
+    error_message = "n8n_image_repository is set but n8n_image_tag is null, so the chart appends its own default tag (its appVersion on upstream charts from 1.12.0, such as 2.42.4 for chart 1.15.0). That tag moves with n8n_chart_version, and the repository must already carry it, or every n8n pod fails with ImagePullBackOff and the Helm release rolls back. Pin n8n_image_tag to a tag the repository publishes."
+  }
+}
+
+# With n8n_image_tag null, the 2.19.0 and 2.29.0 floors in variables.tf and
+# the WEBHOOK_URL cut-over (locals.tf) trust the chart's appVersion only on a
+# verified chart (local.n8n_chart_default_image_current). Anywhere else the
+# running version is unknown at plan time, so warn whether or not a
+# floor-gated feature is on: Azure Blob mode is the default, and a floating
+# stable tag also means unreviewed database migrations on every pod restart.
+check "n8n_image_version_is_known" {
+  assert {
+    condition     = !local.n8n_image_version_unknown
+    error_message = "n8n_image_tag is null and n8n_chart_version \"${var.n8n_chart_version}\" from ${var.n8n_chart_repository} is not an upstream numbered chart at 1.12.0 or later, so the pods run whatever tag that chart defaults to (charts before 1.12.0 and the worker-pools preview use the floating stable tag). The plan cannot check the n8n 2.29.0 floor (Azure Blob modes) or the 2.19.0 floor (n8n_log_streaming_managed_by_env), and WEBHOOK_URL is rendered next to N8N_WEBHOOK_URL in case the image predates 2.30.0. Pin n8n_image_tag to the version that chart runs."
   }
 }
 
 check "task_runner_image_tag_matches_application_version" {
   assert {
     condition = var.n8n_task_runner_image_tag == null ? true : (
-      var.n8n_task_runner_image_tag == join(".", regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag))
+      var.n8n_image_tag == null ? false : var.n8n_task_runner_image_tag == join(".", regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag))
     )
-    error_message = "n8n_task_runner_image_tag does not match the semantic n8n version at the start of n8n_image_tag. Runner and application protocols are versioned together; use the underlying application version without a custom image suffix."
+    error_message = "n8n_task_runner_image_tag does not match the semantic n8n version at the start of n8n_image_tag. Runner and application protocols are versioned together; use the underlying application version without a custom image suffix. With n8n_image_tag null the application follows the chart's appVersion, which this check cannot compare, while the runner stays pinned across chart bumps; pin n8n_image_tag too, or clear the runner tag."
   }
 }
 

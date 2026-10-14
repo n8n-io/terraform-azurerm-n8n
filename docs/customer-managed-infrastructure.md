@@ -439,9 +439,15 @@ in different repositories on the same mirror, and `n8n_image_pull_secrets`
 grants both images' pods registry authentication through the same Secret
 names. Set `n8n_task_runner_image_tag` alongside
 `n8n_task_runner_image_repository`: left null, the sidecar inherits
-`n8n_image_tag`, and a plan-time warning
-(`check.custom_task_runner_repository_needs_an_explicit_tag`) reminds you
-that the mirror must carry that tag.
+`n8n_image_tag` (or the chart's `appVersion` when it is null), and a
+plan-time warning (`check.custom_task_runner_repository_needs_an_explicit_tag`)
+reminds you that the mirror must carry that tag. Likewise, set
+`n8n_image_tag` alongside `n8n_image_repository`: left null, the chart
+appends its own default tag, which moves with `n8n_chart_version`, and
+`check.custom_image_repository_needs_an_explicit_tag` warns. A mirrored
+chart (`n8n_chart_repository`) with a null `n8n_image_tag` also draws
+`check.n8n_image_version_is_known`, because the module cannot verify what
+that chart's default tag is.
 
 #### Authenticating to a private chart mirror
 

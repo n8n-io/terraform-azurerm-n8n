@@ -2566,6 +2566,7 @@ run "postgres_ssl_enabled_env_kept_on_a_mirrored_chart" {
   command = plan
 
   variables {
+    n8n_image_tag              = "2.35.0"
     create_database            = false
     postgres_external_host     = "external-pg.example.com"
     postgres_external_username = "n8n_app"
@@ -2603,6 +2604,7 @@ run "postgres_ssl_enabled_env_kept_on_the_worker_pools_preview_chart" {
   command = plan
 
   variables {
+    n8n_image_tag              = "2.35.0"
     create_database            = false
     postgres_external_host     = "external-pg.example.com"
     postgres_external_username = "n8n_app"
@@ -2639,6 +2641,7 @@ run "chart_renders_postgres_ssl_enabled_skips_prereleases_and_compares_numerical
   command = plan
 
   variables {
+    n8n_image_tag     = "2.35.0"
     n8n_chart_version = "1.15.1-rc.1"
   }
 
@@ -3942,8 +3945,8 @@ run "controllers_and_base_n8n_release_in_plan" {
   }
 
   assert {
-    condition     = helm_release.n8n.version == "1.15.0" && var.n8n_image_tag == "2.35.0"
-    error_message = "The base release must pin chart 1.15.0 and n8n 2.35.0."
+    condition     = helm_release.n8n.version == "1.15.0" && var.n8n_image_tag == null && local.n8n_image_known_current && !local.n8n_needs_legacy_webhook_url_env
+    error_message = "The base release must pin chart 1.15.0 and leave n8n_image_tag null, so the chart's appVersion runs, counts as known current, and needs no legacy WEBHOOK_URL."
   }
 
   assert {
@@ -4029,10 +4032,10 @@ run "external_authenticated_redis_is_shared_by_n8n_and_keda" {
 
   assert {
     condition = (
-      yamldecode(helm_release.n8n.values[0]).image.tag == var.n8n_image_tag &&
-      yamldecode(helm_release.n8n.values[0]).taskRunners.image.tag == var.n8n_image_tag
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).image), "tag") &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).taskRunners.image), "tag")
     )
-    error_message = "The application and task-runner images must stay on the same pinned n8n version."
+    error_message = "With n8n_image_tag null (the default), neither image.tag nor taskRunners.image.tag may be sent, so both images follow the chart's appVersion."
   }
 
   assert {
@@ -4159,6 +4162,7 @@ run "rejects_malformed_n8n_chart_version" {
   command = plan
 
   variables {
+    n8n_image_tag     = "2.35.0"
     n8n_chart_version = "latest"
   }
 
@@ -4379,7 +4383,7 @@ run "runtime_controls_defaults_render_in_helm_values" {
   assert {
     condition = (
       yamldecode(helm_release.n8n.values[0]).taskRunners.enabled &&
-      yamldecode(helm_release.n8n.values[0]).taskRunners.image.tag == var.n8n_image_tag &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).taskRunners.image), "tag") &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.nativePythonRunner &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.launcher.autoShutdownTimeout == 15 &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.resources.requests.cpu == "200m" &&
@@ -4388,7 +4392,7 @@ run "runtime_controls_defaults_render_in_helm_values" {
       yamldecode(helm_release.n8n.values[0]).taskRunners.resources.limits.memory == "1Gi" &&
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_RUNNERS_TASK_REQUEST_TIMEOUT"]) == "300"
     )
-    error_message = "Task-runner enablement, derived image, Python support, resources, and timeouts must render into Helm values."
+    error_message = "Task-runner enablement, an omitted image tag (the chart's appVersion), Python support, resources, and timeouts must render into Helm values."
   }
 
   assert {
@@ -4968,7 +4972,7 @@ run "runtime_control_overrides_render_in_helm_values" {
   assert {
     condition = (
       !yamldecode(helm_release.n8n.values[0]).taskRunners.enabled &&
-      yamldecode(helm_release.n8n.values[0]).taskRunners.image.tag == "2.35.0" &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).taskRunners.image), "tag") &&
       !yamldecode(helm_release.n8n.values[0]).taskRunners.nativePythonRunner &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.launcher.autoShutdownTimeout == 0 &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.resources.requests.cpu == "250m" &&
@@ -4976,7 +4980,7 @@ run "runtime_control_overrides_render_in_helm_values" {
       yamldecode(helm_release.n8n.values[0]).taskRunners.resources.limits.cpu == "1200m" &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.resources.limits.memory == "1280Mi"
     )
-    error_message = "Task-runner enablement, explicit image tag, Python toggle, and auto-shutdown override must render."
+    error_message = "Task-runner enablement, an omitted image tag (the chart's appVersion), Python toggle, and auto-shutdown override must render."
   }
 
   assert {
@@ -5001,6 +5005,7 @@ run "rejects_invalid_runtime_string_formats" {
   command = plan
 
   variables {
+    n8n_image_tag                   = "2.35.0"
     n8n_timezone                    = "Europe Berlin"
     n8n_log_level                   = "trace"
     n8n_log_output                  = "json"
@@ -5245,6 +5250,7 @@ run "rejects_invalid_custom_image_and_volume_inputs" {
   command = plan
 
   variables {
+    n8n_image_tag          = "2.35.0"
     n8n_image_repository   = "https://registry.example.com/n8n"
     n8n_image_pull_secrets = ["registry-creds", "registry-creds"]
     n8n_helm_timeout       = 59.5
@@ -5293,6 +5299,7 @@ run "rejects_multiple_custom_extension_paths" {
   command = plan
 
   variables {
+    n8n_image_tag              = "2.35.0"
     n8n_image_repository       = "registry.example.com/n8n"
     n8n_task_runner_image_tag  = "2.35.0"
     n8n_custom_extensions_path = "/opt/nodes;/opt/more-nodes"
@@ -5305,6 +5312,7 @@ run "rejects_unsafe_custom_extension_path" {
   command = plan
 
   variables {
+    n8n_image_tag              = "2.35.0"
     n8n_image_repository       = "registry.example.com/n8n"
     n8n_task_runner_image_tag  = "2.35.0"
     n8n_custom_extensions_path = "/home/node/.n8n/custom"
@@ -5790,6 +5798,7 @@ run "warns_when_custom_image_has_no_explicit_runner_tag" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_image_repository = "registry.example.com/n8n"
   }
 
@@ -5822,6 +5831,7 @@ run "image_pull_secrets_with_only_a_runner_mirror_do_not_warn" {
   command = plan
 
   variables {
+    n8n_image_tag                    = "2.35.0"
     n8n_image_pull_secrets           = ["registry-creds"]
     n8n_task_runner_image_repository = "registry.example.com/runners"
     n8n_task_runner_image_tag        = "2.35.0"
@@ -5855,6 +5865,7 @@ run "warns_when_runner_mirror_has_no_explicit_tag" {
   command = plan
 
   variables {
+    n8n_image_tag                    = "2.35.0"
     n8n_image_repository             = "registry.example.com/n8n"
     n8n_task_runner_image_repository = "registry.example.com/runners"
   }
@@ -5940,6 +5951,7 @@ run "accepts_bare_runner_repository_at_the_normalized_limit" {
   command = plan
 
   variables {
+    n8n_image_tag                    = "2.35.0"
     n8n_task_runner_image_repository = join("", [for i in range(247) : "a"])
     n8n_task_runner_image_tag        = "2.35.0"
   }
@@ -5961,6 +5973,7 @@ run "rejects_bare_application_repository_over_the_normalized_length" {
   command = plan
 
   variables {
+    n8n_image_tag             = "2.35.0"
     n8n_image_repository      = join("", [for i in range(248) : "a"])
     n8n_task_runner_image_tag = "2.35.0"
   }
@@ -5976,6 +5989,7 @@ run "accepts_a_255_character_repository_path_behind_a_registry" {
   command = plan
 
   variables {
+    n8n_image_tag              = "2.35.0"
     create_database            = false
     postgres_external_host     = "postgres.external.example.com"
     postgres_external_username = "n8n_app"
@@ -6032,9 +6046,9 @@ run "runner_repository_is_omitted_from_helm_values_when_null" {
   assert {
     condition = (
       !contains(keys(yamldecode(helm_release.n8n.values[0]).taskRunners.image), "repository") &&
-      yamldecode(helm_release.n8n.values[0]).taskRunners.image.tag == var.n8n_image_tag
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).taskRunners.image), "tag")
     )
-    error_message = "With n8n_task_runner_image_repository null, taskRunners.image must omit repository so the chart's n8nio/runners default applies, and the tag must inherit n8n_image_tag."
+    error_message = "With n8n_task_runner_image_repository null, taskRunners.image must omit repository so the chart's n8nio/runners default applies, and with n8n_image_tag also null the tag must be omitted so the runner follows the chart's appVersion."
   }
 }
 
@@ -6054,6 +6068,7 @@ run "warns_when_runner_tag_is_inert" {
   command = plan
 
   variables {
+    n8n_image_tag             = "2.35.0"
     n8n_task_runners_enabled  = false
     n8n_task_runner_image_tag = "2.35.0"
   }
@@ -6998,6 +7013,7 @@ run "warns_when_worker_pause_uses_the_worker_pools_preview_chart" {
   command = plan
 
   variables {
+    n8n_image_tag         = "2.35.0"
     n8n_chart_version     = "1.11.0-preview.workerpools.1"
     n8n_worker_keda_pause = true
   }
@@ -7034,6 +7050,7 @@ run "allows_worker_pause_on_a_1_13_preview_chart" {
   command = plan
 
   variables {
+    n8n_image_tag         = "2.35.0"
     n8n_chart_version     = "1.13.0-preview.1"
     n8n_worker_keda_pause = true
   }
@@ -7050,6 +7067,7 @@ run "skips_worker_pause_chart_check_on_a_mirrored_chart" {
   command = plan
 
   variables {
+    n8n_image_tag         = "2.35.0"
     n8n_chart_repository  = "oci://mirror.example.com/n8n-helm-chart"
     n8n_chart_version     = "1.12.0"
     n8n_worker_keda_pause = true
@@ -8213,6 +8231,7 @@ run "rejects_malformed_n8n_chart_repository" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "not-a-url"
   }
 
@@ -8224,6 +8243,7 @@ run "rejects_n8n_chart_repository_with_embedded_credentials" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "oci://user:token@mirror.example.com/n8n-helm-chart"
   }
 
@@ -8234,6 +8254,7 @@ run "rejects_n8n_chart_repository_without_a_host" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "https:///charts"
   }
 
@@ -8244,6 +8265,7 @@ run "rejects_n8n_chart_repository_with_a_hyphen_only_host" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "oci://-"
   }
 
@@ -8254,6 +8276,7 @@ run "rejects_n8n_chart_repository_with_an_empty_host_label" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "oci://foo..bar/n8n-helm-chart"
   }
 
@@ -8264,6 +8287,7 @@ run "accepts_n8n_chart_repository_with_a_dns_host_and_port" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "oci://registry-1.internal.example.com:5000/n8n-helm-chart"
   }
 
@@ -8277,6 +8301,7 @@ run "accepts_n8n_chart_repository_with_a_port_or_ipv6_host" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "oci://[2001:db8::1]:5000/n8n-helm-chart"
   }
 
@@ -8869,6 +8894,7 @@ run "passes_custom_n8n_chart_repository_to_the_helm_release" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "oci://mirror.example.com/n8n-helm-chart"
   }
 
@@ -9817,6 +9843,7 @@ run "graceful_shutdown_check_skips_for_a_custom_chart_repository" {
   command = plan
 
   variables {
+    n8n_image_tag = "2.35.0"
     # Same 30 + 31 = 61 over the default 60s grace period that
     # graceful_shutdown_timeout_null_default_warns_when_it_does_not_fit warns
     # on against the upstream chart. A custom n8n_chart_repository's
@@ -10947,9 +10974,10 @@ run "redis_exporter_cpu_demand_increases_by_exactly_its_request" {
 # and n8n_image_tag to 2.39.0. The module's default chart predates
 # queueMode.workerGroups and the precondition on helm_release.n8n fails the
 # plan on that pairing (tested separately below), and the module's default
-# n8n_image_tag (2.35.0) predates the pool env vars, which fails the
-# n8n_image_tag validation on every other run in this section (also tested
-# separately below). A prerelease chart is the honest pin: at the time of
+# n8n_image_tag (null) runs the preview chart's floating stable tag, which the
+# plan cannot check against the pool floor, so it fails the n8n_image_tag
+# validation on every other run in this section (also tested separately
+# below). A prerelease chart is the honest pin: at the time of
 # writing the only chart that renders pools is a preview build from
 # n8n-io/n8n-hosting#189, and the guard takes a prerelease at the caller's
 # word rather than comparing it against a release that does not exist yet.
@@ -11424,6 +11452,7 @@ run "capacity_model_keeps_main_runner_on_an_older_chart" {
   command = plan
 
   variables {
+    n8n_image_tag     = "2.35.0"
     n8n_chart_version = "1.11.0"
   }
 
@@ -11440,6 +11469,7 @@ run "capacity_model_keeps_main_runner_on_a_mirrored_chart" {
   command = plan
 
   variables {
+    n8n_image_tag        = "2.35.0"
     n8n_chart_repository = "oci://mirror.example.com/n8n-helm-chart"
   }
 
@@ -11453,6 +11483,7 @@ run "capacity_model_keeps_main_runner_on_a_preview_chart" {
   command = plan
 
   variables {
+    n8n_image_tag     = "2.35.0"
     n8n_chart_version = "1.13.0-preview.workerpools.1"
   }
 
@@ -11928,9 +11959,12 @@ run "worker_pools_reject_a_pinned_n8n_image_that_predates_them" {
   expect_failures = [var.n8n_image_tag]
 }
 
-# The module's own default image tag (2.35.0) predates pools, so declaring a
-# pool without also pinning n8n_image_tag must fail rather than warn.
-run "worker_pools_reject_the_module_default_n8n_image" {
+# The module's default image tag is null, which on the preview chart runs the
+# floating stable tag the plan cannot check, so declaring a pool without also
+# pinning n8n_image_tag must fail rather than warn. Only the variable failure
+# is expected: once n8n_image_tag's validation fails, checks that read it
+# (check.n8n_image_version_is_known) are not evaluated.
+run "worker_pools_reject_a_null_image_tag_on_the_preview_chart" {
   command = plan
 
   variables {
@@ -11983,4 +12017,178 @@ run "n8n_image_floor_for_pools_is_inert_without_pools" {
     condition     = length(local.n8n_worker_groups) == 0
     error_message = "an image older than 2.39 must remain valid while n8n_worker_pools is empty"
   }
+}
+
+# ── n8n_image_tag null: the chart's appVersion runs ──────────────────────────
+# A null tag sends no image.tag, so the chart's own default runs. Only an
+# upstream numbered chart at 1.12.0 or later has a concrete appVersion
+# (2.39.6 and up) that meets every floor this module checks
+# (local.n8n_chart_default_image_current). Everywhere else the version is
+# unknown at plan time: check.n8n_image_version_is_known warns, WEBHOOK_URL is
+# still rendered, and n8n_worker_pools fails the plan.
+run "null_image_tag_from_chart_1_12_0_is_known_current" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.12.0"
+  }
+
+  assert {
+    condition     = local.n8n_image_known_current && !local.n8n_needs_legacy_webhook_url_env && length(local.n8n_webhook_url_env) == 1
+    error_message = "Upstream chart 1.12.0 (appVersion 2.39.6) is the first with a concrete appVersion, so a null tag must count as known current and render N8N_WEBHOOK_URL only."
+  }
+}
+
+# Chart 1.11.0 defaults to the floating stable tag. The default Azure Blob
+# mode must still plan (warning, not a hard stop on the 2.29.0 floor).
+run "null_image_tag_on_a_floating_chart_warns_and_keeps_legacy_webhook_url" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.11.0"
+  }
+
+  expect_failures = [check.n8n_image_version_is_known]
+
+  assert {
+    condition     = local.n8n_azure_storage_enabled && !local.n8n_image_known_current && local.n8n_needs_legacy_webhook_url_env && length(local.n8n_webhook_url_env) == 2
+    error_message = "Chart 1.11.0 defaults to the floating stable tag, so a null tag must not count as known current, must keep WEBHOOK_URL next to N8N_WEBHOOK_URL, and must not fail the default Azure Blob mode's 2.29.0 floor."
+  }
+}
+
+run "null_image_tag_on_a_mirrored_chart_warns" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://n8nmirror.azurecr.io/helm"
+  }
+
+  expect_failures = [check.n8n_image_version_is_known]
+
+  assert {
+    condition     = !local.n8n_image_known_current && local.n8n_needs_legacy_webhook_url_env
+    error_message = "A mirrored chart's default tag cannot be verified even at 1.15.0, so a null tag must not count as known current and must keep WEBHOOK_URL."
+  }
+}
+
+# The worker-pools preview proves a prerelease can carry the stable tag.
+run "null_image_tag_on_a_prerelease_chart_warns" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.15.0-rc.1"
+  }
+
+  expect_failures = [check.n8n_image_version_is_known]
+
+  assert {
+    condition     = !local.n8n_image_known_current && local.n8n_needs_legacy_webhook_url_env
+    error_message = "A prerelease chart cannot be verified, so a null tag must not count as known current even at 1.15.0."
+  }
+}
+
+# A malformed chart version must surface as that variable's own error, not as
+# a tonumber() evaluation error inside local.n8n_chart_default_image_current.
+run "null_image_tag_with_malformed_chart_version_fails_cleanly" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "latest"
+  }
+
+  expect_failures = [var.n8n_chart_version]
+}
+
+run "explicit_image_tag_renders_on_both_images" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_image_tag              = "2.35.0"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      yamldecode(helm_release.n8n.values[0]).image.tag == "2.35.0" &&
+      yamldecode(helm_release.n8n.values[0]).taskRunners.image.tag == "2.35.0" &&
+      !local.n8n_image_known_current && !local.n8n_image_version_unknown && !local.n8n_needs_legacy_webhook_url_env
+    )
+    error_message = "A pinned n8n_image_tag must render as image.tag and, with no runner tag, taskRunners.image.tag, exactly as before the null default, and decide WEBHOOK_URL from the tag itself."
+  }
+}
+
+run "explicit_image_tag_below_2_30_keeps_legacy_webhook_url" {
+  command = plan
+
+  variables {
+    n8n_image_tag = "2.29.0"
+  }
+
+  assert {
+    condition     = local.n8n_needs_legacy_webhook_url_env && length(local.n8n_webhook_url_env) == 2
+    error_message = "An explicit tag below 2.30.0 must keep WEBHOOK_URL next to N8N_WEBHOOK_URL."
+  }
+}
+
+run "worker_pools_accept_a_null_image_tag_on_a_known_current_chart" {
+  command = plan
+
+  variables {
+    n8n_worker_pools                = [{ name = "gpu" }]
+    n8n_worker_pools_chart_verified = true
+  }
+
+  assert {
+    condition     = length(local.n8n_worker_groups) == 1
+    error_message = "On the default upstream chart (appVersion 2.42.4) a null tag meets the 2.39.0 pool floor and must not fail n8n_image_tag."
+  }
+}
+
+run "worker_pools_reject_a_null_image_tag_on_a_mirrored_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_repository            = "oci://n8nmirror.azurecr.io/helm"
+    n8n_worker_pools                = [{ name = "gpu" }]
+    n8n_worker_pools_chart_verified = true
+  }
+
+  expect_failures = [var.n8n_image_tag]
+}
+
+# Exactly one warning: custom_image_tag_needs_a_task_runner_tag stays quiet
+# while the tag is null, since the runner inherits the chart's appVersion.
+run "custom_image_repository_with_null_tag_warns_once" {
+  command = plan
+
+  variables {
+    n8n_image_repository = "registry.example.com/n8n"
+  }
+
+  expect_failures = [check.custom_image_repository_needs_an_explicit_tag]
+}
+
+run "runner_tag_with_null_image_tag_warns" {
+  command = plan
+
+  variables {
+    n8n_task_runner_image_tag = "2.42.4"
+  }
+
+  expect_failures = [check.task_runner_image_tag_matches_application_version]
 }

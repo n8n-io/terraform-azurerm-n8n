@@ -30,7 +30,7 @@ overwritten.
 Environment:     <subscription / resource group / region>
 Module version:  <git tag or commit>
 AKS version:     <az aks show --query kubernetesVersion>
-n8n image tag:   <var.n8n_image_tag>
+n8n image tag:   <var.n8n_image_tag, or "null (chart appVersion X.Y.Z)">
 Chart version:   <var.n8n_chart_version>
 Date:            <run date>
 Operator:        <name>

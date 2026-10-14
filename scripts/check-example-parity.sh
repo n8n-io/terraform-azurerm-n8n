@@ -67,13 +67,16 @@ ALLOW=$(cat <<'EOF_ALLOW'
 # worker-pools is the only example that cannot run the module's default
 # chart: queueMode.workerGroups ships in a preview build only, so the
 # version is a required input there (no default) and the attestation
-# flag goes with it. n8n_image_tag also becomes a required-in-practice
-# input, pinned above the pools' n8n 2.39.0 floor rather than the
-# module's own 2.35.0 default. See its README, "Getting a chart that
-# renders pools".
+# flag goes with it. See its README, "Getting a chart that renders
+# pools".
 +n8n_chart_version|worker-pools
 +n8n_worker_pools_chart_verified|worker-pools
-+n8n_image_tag|worker-pools
+# The sizing tiers (and worker-pools, which pins its own default above the
+# pools' n8n 2.39.0 floor because the root default (null) resolves to the
+# floating stable tag on the preview chart, which the plan cannot verify)
+# expose n8n_image_tag so production callers can pin the n8n version. The
+# topology and customer-managed examples leave the root default in place.
+-n8n_image_tag|split-ingress customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
 # The preview chart is often pulled from a private mirror, so worker-pools
 # also exposes the chart repository next to the version.
 +n8n_chart_repository|worker-pools

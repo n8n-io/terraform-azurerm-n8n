@@ -80,6 +80,18 @@ variable "n8n_main_hpa_min_replicas" {
   }
 }
 
+variable "n8n_image_tag" {
+  description = "n8n application image tag, passed straight through to the root module's n8n_image_tag. Null (the default) sends no tag, so the chart's own default runs: its appVersion (2.42.4 at the module's default chart 1.15.0), which moves only when the module's n8n_chart_version moves, so upgrading the module can also upgrade n8n across its database migrations. Pin a concrete version (for example \"2.42.4\") in production to upgrade n8n deliberately; see docs/upgrading-n8n.md."
+  type        = string
+  default     = null
+
+  validation {
+    # Keep in sync with the module root's n8n_image_tag format validation.
+    condition     = var.n8n_image_tag == null || can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-zA-Z0-9._-]+)?$", var.n8n_image_tag))
+    error_message = "n8n_image_tag must be null or start with a semantic application version such as 2.42.4 or 2.42.4-custom."
+  }
+}
+
 variable "pg_backup_retention_days" {
   description = "Number of days to retain automated PostgreSQL Flexible Server backups, passed through to the root module. The medium tier defaults to 14. Azure enforces a range of 7-35 days for Flexible Server."
   type        = number
