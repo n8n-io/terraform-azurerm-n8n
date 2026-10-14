@@ -470,6 +470,25 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Fixed
 
+- **Breaking:** `appgw_frontend_mode = "internal"` now requires the new
+  `appgw_private_ip_address` and creates a static private frontend. The module
+  used to request a dynamic address, which Application Gateway v2 rejects
+  (`ApplicationGatewayFrontendIpPrivateIpAddressInvalidAllocationType`, seen
+  live), so the internal mode had never been qualified. A private-only gateway
+  also needs the `Microsoft.Network/EnableApplicationGatewayNetworkIsolation`
+  feature, a subnet delegated to `Microsoft.Network/applicationGateways`, and
+  a `Microsoft.KeyVault` service endpoint on that subnet; without the endpoint
+  Azure fails the create with a bare `InternalServerError`. Verified live: the
+  gateway created at the static address with no public IP, served HTTPS from
+  inside the VNet, and carried the `X-Forwarded-For` rewrite. Callers who
+  never used the internal mode are unaffected
+  ([docs/troubleshooting.md](./docs/troubleshooting.md)).
+- `examples/split-ingress` now works on current Azure. Each gateway has its own
+  delegated subnet and NSG (a shared subnet could only carry one, so the
+  VNet-only admin rule and the internet-facing webhook rule applied to both
+  gateways), the admin gateway has a static private address, and both subnets
+  have the Key Vault service endpoint. It requires the
+  `EnableApplicationGatewayNetworkIsolation` feature (see its README).
 - n8n's per-IP rate limiter and request logs no longer see the client's
   source port. Application Gateway v2 writes `X-Forwarded-For` as `IP:port`,
   so with `N8N_PROXY_HOPS=1` Express reported `req.ip` as `ip:port`, n8n's

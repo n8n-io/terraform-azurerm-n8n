@@ -57,11 +57,50 @@ resource "azurerm_subnet" "aks" {
   address_prefixes     = ["10.0.0.0/21"]
 }
 
-resource "azurerm_subnet" "appgw" {
-  name                 = "appgw"
+# One delegated subnet per gateway. Azure requires a subnet delegated to
+# Microsoft.Network/applicationGateways for any private-only (no public IP)
+# Application Gateway v2 and, once a subscription enables
+# EnableApplicationGatewayNetworkIsolation, for every v2 gateway in it. The
+# admin gateway is private-only, so this example needs that preview feature
+# registered on the subscription (see the README). Separate subnets also let
+# each gateway carry its own NSG: a shared subnet can only have one, so the
+# internet-facing webhook rule and the VNet-only admin rule would have applied
+# to both gateways. The Key Vault service endpoint is what lets the private-only
+# admin gateway fetch its TLS certificate: with no public IP it has no route to
+# the vault's public endpoint, and without the endpoint Azure fails the create
+# with a bare InternalServerError.
+resource "azurerm_subnet" "appgw_webhook" {
+  name                 = "appgw-webhook"
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
   address_prefixes     = ["10.0.8.0/24"]
+  service_endpoints    = ["Microsoft.KeyVault"]
+
+  delegation {
+    name = "application-gateways"
+
+    service_delegation {
+      name    = "Microsoft.Network/applicationGateways"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
+}
+
+resource "azurerm_subnet" "appgw_admin" {
+  name                 = "appgw-admin"
+  resource_group_name  = azurerm_resource_group.network.name
+  virtual_network_name = azurerm_virtual_network.n8n.name
+  address_prefixes     = ["10.0.12.0/24"]
+  service_endpoints    = ["Microsoft.KeyVault"]
+
+  delegation {
+    name = "application-gateways"
+
+    service_delegation {
+      name    = "Microsoft.Network/applicationGateways"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
 }
 
 resource "azurerm_subnet" "postgres" {
@@ -192,7 +231,7 @@ module "n8n" {
   aks_subnet_id              = azurerm_subnet.aks.id
   postgres_subnet_id         = azurerm_subnet.postgres.id
   redis_subnet_id            = azurerm_subnet.redis.id
-  appgw_subnet_id            = azurerm_subnet.appgw.id
+  appgw_subnet_id            = azurerm_subnet.appgw_webhook.id
   private_endpoint_subnet_id = azurerm_subnet.private_endpoints.id
 
   pg_backup_retention_days   = var.pg_backup_retention_days
@@ -214,7 +253,8 @@ module "n8n" {
   depends_on = [
     time_sleep.storage_rbac,
     azurerm_subnet.aks,
-    azurerm_subnet.appgw,
+    azurerm_subnet.appgw_webhook,
+    azurerm_subnet.appgw_admin,
     azurerm_subnet.postgres,
     azurerm_subnet.redis,
     azurerm_subnet.private_endpoints,

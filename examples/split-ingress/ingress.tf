@@ -100,7 +100,7 @@ resource "azurerm_application_gateway" "webhook" {
 
   gateway_ip_configuration {
     name      = "appgw-ip-config"
-    subnet_id = azurerm_subnet.appgw.id
+    subnet_id = azurerm_subnet.appgw_webhook.id
   }
 
   frontend_port {
@@ -182,9 +182,10 @@ resource "azurerm_application_gateway" "webhook" {
 }
 
 # ── Admin Application Gateway (private) ──────────────────────────────────────
-# No public IP: the frontend_ip_configuration below binds a dynamic private
-# address inside the appgw subnet instead, so this gateway is reachable only
-# from inside the VNet or whatever is peered/VPN-attached to it.
+# No public IP: the frontend_ip_configuration below binds a static private
+# address inside the appgw subnet instead (Application Gateway v2 rejects a
+# dynamic one), so this gateway is reachable only from inside the VNet or
+# whatever is peered/VPN-attached to it.
 
 resource "azurerm_user_assigned_identity" "admin_tls_cert" {
   name                = "${var.friendly_name_prefix}-admin-tls"
@@ -228,7 +229,7 @@ resource "azurerm_application_gateway" "admin" {
 
   gateway_ip_configuration {
     name      = "appgw-ip-config"
-    subnet_id = azurerm_subnet.appgw.id
+    subnet_id = azurerm_subnet.appgw_admin.id
   }
 
   frontend_port {
@@ -238,8 +239,9 @@ resource "azurerm_application_gateway" "admin" {
 
   frontend_ip_configuration {
     name                          = "admin-frontend-ip"
-    subnet_id                     = azurerm_subnet.appgw.id
-    private_ip_address_allocation = "Dynamic"
+    subnet_id                     = azurerm_subnet.appgw_admin.id
+    private_ip_address_allocation = "Static"
+    private_ip_address            = cidrhost(azurerm_subnet.appgw_admin.address_prefixes[0], 10)
   }
 
   backend_address_pool {
@@ -305,15 +307,16 @@ resource "azurerm_application_gateway" "admin" {
   depends_on = [time_sleep.admin_tls_cert_kv_rbac]
 }
 
-# ── Application Gateway subnet NSG ───────────────────────────────────────────
-# Shared by both gateways since they share the appgw subnet. The admin
-# gateway is already private; admin_allowed_cidr_blocks narrows it further
-# for defense in depth. The webhook gateway accepts any source, since
-# webhook senders are arbitrary internet hosts by design.
+# ── Application Gateway subnet NSGs ──────────────────────────────────────────
+# One NSG per gateway subnet. The webhook gateway accepts any source, since
+# webhook senders are arbitrary internet hosts by design. The admin gateway is
+# private and accepts only VNet sources (or admin_allowed_cidr_blocks for
+# defense in depth); with one NSG per subnet that restriction really does
+# apply to the admin gateway alone.
 
-# checkov:skip=CKV_AZURE_160:AllowWebhookFrontend intentionally opens 80/443 from Internet: the webhook Application Gateway exists to accept unauthenticated internet webhook traffic. The admin frontend on the same NSG stays VirtualNetwork-only (or admin_allowed_cidr_blocks-restricted) by design, which is the isolation this example exists to demonstrate.
-resource "azurerm_network_security_group" "appgw" {
-  name                = "${var.friendly_name_prefix}-appgw-nsg"
+# checkov:skip=CKV_AZURE_160:AllowWebhookFrontend intentionally opens 80/443 from Internet: the webhook Application Gateway exists to accept unauthenticated internet webhook traffic. The admin gateway sits in its own subnet with its own VNet-only NSG, which is the isolation this example exists to demonstrate.
+resource "azurerm_network_security_group" "appgw_webhook" {
+  name                = "${var.friendly_name_prefix}-appgw-webhook-nsg"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
 
@@ -354,6 +357,50 @@ resource "azurerm_network_security_group" "appgw" {
   }
 
   security_rule {
+    name                       = "DenyOtherInbound"
+    priority                   = 4096
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-appgw-webhook-nsg" })
+}
+
+resource "azurerm_network_security_group" "appgw_admin" {
+  name                = "${var.friendly_name_prefix}-appgw-admin-nsg"
+  resource_group_name = azurerm_resource_group.n8n.name
+  location            = azurerm_resource_group.n8n.location
+
+  security_rule {
+    name                       = "AllowGatewayManager"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "65200-65535"
+    source_address_prefix      = "GatewayManager"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowAzureLoadBalancer"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = "AzureLoadBalancer"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
     name                       = "AllowAdminFrontend"
     priority                   = 130
     direction                  = "Inbound"
@@ -378,12 +425,17 @@ resource "azurerm_network_security_group" "appgw" {
     destination_address_prefix = "*"
   }
 
-  tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-appgw-nsg" })
+  tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-appgw-admin-nsg" })
 }
 
-resource "azurerm_subnet_network_security_group_association" "appgw" {
-  subnet_id                 = azurerm_subnet.appgw.id
-  network_security_group_id = azurerm_network_security_group.appgw.id
+resource "azurerm_subnet_network_security_group_association" "appgw_webhook" {
+  subnet_id                 = azurerm_subnet.appgw_webhook.id
+  network_security_group_id = azurerm_network_security_group.appgw_webhook.id
+}
+
+resource "azurerm_subnet_network_security_group_association" "appgw_admin" {
+  subnet_id                 = azurerm_subnet.appgw_admin.id
+  network_security_group_id = azurerm_network_security_group.appgw_admin.id
 }
 
 # ── Standalone AGIC identities and permissions ───────────────────────────────
@@ -416,8 +468,17 @@ resource "azurerm_role_assignment" "agic_webhook_rg_reader" {
   principal_id         = azurerm_user_assigned_identity.agic_webhook.principal_id
 }
 
+# AGIC assigns the gateway's TLS identity when it updates the gateway; without
+# this role every update fails with LinkedAuthorizationFailed on
+# Microsoft.ManagedIdentity/userAssignedIdentities/assign/action.
+resource "azurerm_role_assignment" "agic_webhook_tls_identity_operator" {
+  scope                = azurerm_user_assigned_identity.webhook_tls_cert.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.agic_webhook.principal_id
+}
+
 resource "azurerm_role_assignment" "agic_webhook_subnet_network_contributor" {
-  scope                = azurerm_subnet.appgw.id
+  scope                = azurerm_subnet.appgw_webhook.id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_user_assigned_identity.agic_webhook.principal_id
 }
@@ -427,7 +488,7 @@ resource "azurerm_federated_identity_credential" "agic_webhook" {
   user_assigned_identity_id = azurerm_user_assigned_identity.agic_webhook.id
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = module.n8n.aks_oidc_issuer_url
-  subject                   = "system:serviceaccount:agic-webhook:ingress-azure"
+  subject                   = "system:serviceaccount:agic-webhook:agic-webhook-sa-ingress-azure"
 }
 
 resource "azurerm_user_assigned_identity" "agic_admin" {
@@ -450,8 +511,17 @@ resource "azurerm_role_assignment" "agic_admin_rg_reader" {
   principal_id         = azurerm_user_assigned_identity.agic_admin.principal_id
 }
 
+# AGIC assigns the gateway's TLS identity when it updates the gateway; without
+# this role every update fails with LinkedAuthorizationFailed on
+# Microsoft.ManagedIdentity/userAssignedIdentities/assign/action.
+resource "azurerm_role_assignment" "agic_admin_tls_identity_operator" {
+  scope                = azurerm_user_assigned_identity.admin_tls_cert.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.agic_admin.principal_id
+}
+
 resource "azurerm_role_assignment" "agic_admin_subnet_network_contributor" {
-  scope                = azurerm_subnet.appgw.id
+  scope                = azurerm_subnet.appgw_admin.id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_user_assigned_identity.agic_admin.principal_id
 }
@@ -461,7 +531,7 @@ resource "azurerm_federated_identity_credential" "agic_admin" {
   user_assigned_identity_id = azurerm_user_assigned_identity.agic_admin.id
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = module.n8n.aks_oidc_issuer_url
-  subject                   = "system:serviceaccount:agic-admin:ingress-azure"
+  subject                   = "system:serviceaccount:agic-admin:agic-admin-sa-ingress-azure"
 }
 
 # ── Standalone AGIC Helm releases ─────────────────────────────────────────────
@@ -510,6 +580,15 @@ resource "helm_release" "agic_webhook" {
     value = local.webhook_ingress_class
   }
 
+  # Both releases would otherwise try to own the cluster-scoped IngressClass
+  # "azure-application-gateway" (Helm rejects the second with an ownership
+  # error). The Ingresses below select their controller through the
+  # kubernetes.io/ingress.class annotation, so no IngressClass resource is needed.
+  set {
+    name  = "kubernetes.ingressClassResource.enabled"
+    value = "false"
+  }
+
   set {
     name  = "rbac.enabled"
     value = "true"
@@ -519,6 +598,7 @@ resource "helm_release" "agic_webhook" {
     azurerm_role_assignment.agic_webhook_appgw_contributor,
     azurerm_role_assignment.agic_webhook_rg_reader,
     azurerm_role_assignment.agic_webhook_subnet_network_contributor,
+    azurerm_role_assignment.agic_webhook_tls_identity_operator,
     azurerm_federated_identity_credential.agic_webhook,
   ]
 }
@@ -563,6 +643,15 @@ resource "helm_release" "agic_admin" {
     value = local.admin_ingress_class
   }
 
+  # Both releases would otherwise try to own the cluster-scoped IngressClass
+  # "azure-application-gateway" (Helm rejects the second with an ownership
+  # error). The Ingresses below select their controller through the
+  # kubernetes.io/ingress.class annotation, so no IngressClass resource is needed.
+  set {
+    name  = "kubernetes.ingressClassResource.enabled"
+    value = "false"
+  }
+
   set {
     name  = "rbac.enabled"
     value = "true"
@@ -572,6 +661,7 @@ resource "helm_release" "agic_admin" {
     azurerm_role_assignment.agic_admin_appgw_contributor,
     azurerm_role_assignment.agic_admin_rg_reader,
     azurerm_role_assignment.agic_admin_subnet_network_contributor,
+    azurerm_role_assignment.agic_admin_tls_identity_operator,
     azurerm_federated_identity_credential.agic_admin,
   ]
 }
@@ -632,6 +722,13 @@ resource "kubernetes_ingress_v1" "webhook_public" {
 
     annotations = {
       "kubernetes.io/ingress.class" = local.webhook_ingress_class
+      # TLS: terminate on the gateway with the certificate each gateway already
+      # carries (`appgw-ssl-cert`) and redirect plain HTTP. Without these AGIC
+      # builds only a port-80 listener, which would serve webhooks and the editor
+      # unencrypted.
+      "appgw.ingress.kubernetes.io/ssl-redirect"          = "true"
+      "appgw.ingress.kubernetes.io/backend-protocol"      = "http"
+      "appgw.ingress.kubernetes.io/appgw-ssl-certificate" = "appgw-ssl-cert"
       # Match the root module's timeout and draining defaults
       # (local.appgw_ingress_default_annotations in locals.tf). AGIC's own
       # defaults are a 30 s request timeout and no connection draining. No
@@ -691,6 +788,16 @@ resource "kubernetes_ingress_v1" "admin_internal" {
 
     annotations = {
       "kubernetes.io/ingress.class" = local.admin_ingress_class
+      # TLS: terminate on the gateway with the certificate each gateway already
+      # carries (`appgw-ssl-cert`) and redirect plain HTTP. Without these AGIC
+      # builds only a port-80 listener, which would serve webhooks and the editor
+      # unencrypted.
+      "appgw.ingress.kubernetes.io/ssl-redirect"          = "true"
+      "appgw.ingress.kubernetes.io/backend-protocol"      = "http"
+      "appgw.ingress.kubernetes.io/appgw-ssl-certificate" = "appgw-ssl-cert"
+      # The admin gateway has only a private frontend; without this AGIC ignores the
+      # Ingress ("requires Application Gateway ... to have a public IP address").
+      "appgw.ingress.kubernetes.io/use-private-ip" = "true"
       # Match the root module's defaults (local.appgw_ingress_default_annotations
       # in locals.tf). AGIC's own defaults are a 30 s request timeout and no
       # connection draining.
