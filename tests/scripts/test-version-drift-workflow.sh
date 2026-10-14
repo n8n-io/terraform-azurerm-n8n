@@ -185,5 +185,71 @@ rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
 check "no report.md: the sync step fails" '[[ "$rc" != 0 ]]'
 check "no report.md: nothing is written to GitHub" '[[ ! -s "$w/.gh.log" ]]'
 
+# ── Tracking-issue lifecycle ──────────────────────────────────────────────
+TITLE="Version drift report (automated)"
+TRUNCATED_REPORT='== Terraform providers (registry.terraform.io) ==
+OK:    random provider [root] pinned at "~> 3.0" (accepts latest 3.9.1)'
+
+# sync_case <name> <stub exit> <stub output> <issues JSON>: runs the report
+# step, then the sync step; leaves $w and $rc set for the checks.
+sync_case() {
+  w="$(new_workdir "$1" "$2" "$3")"
+  printf '%s\n' "$4" >"$w/.issues.json"
+  run_step "$w" "$RUN_STEP" >/dev/null
+  rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
+}
+# wrote <text>: some logged write contains <text> (fixed string).
+wrote() { grep -qF "WRITE: $1" "$w/.gh.log"; }
+# touched <number>: some logged write targets that issue.
+touched() { grep -qE "^WRITE: issue [a-z]+ $1( |$)" "$w/.gh.log"; }
+
+sync_case other-labelled 2 "$ERROR_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[\"version-drift\"],\"body\":\"old\"},
+  {\"number\":90,\"title\":\"Bump the KEDA chart to 2.21.0\",\"state\":\"OPEN\",\"labels\":[\"version-drift\"],\"body\":\"human\"}]"
+check "another open labelled issue: the tracker is updated" 'wrote "issue edit 57 --body-file"'
+check "another open labelled issue: it is left alone" '! touched 90'
+
+sync_case other-closed 2 "$ERROR_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"CLOSED\",\"labels\":[\"version-drift\"],\"body\":\"old\"},
+  {\"number\":91,\"title\":\"Bump the helm provider to 3.x\",\"state\":\"CLOSED\",\"labels\":[\"version-drift\"],\"body\":\"human\"}]"
+check "another closed labelled issue: the tracker is reopened" 'wrote "issue reopen 57"'
+check "another closed labelled issue: it is left alone" '! touched 91'
+
+sync_case fuzzy-title 2 "$ERROR_REPORT" "[
+  {\"number\":92,\"title\":\"Re: $TITLE is noisy\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"human\"}]"
+check "a title search hit that is not the exact title is not adopted" '! touched 92'
+check "a title search hit that is not the exact title: a tracker is created" 'wrote "issue create --title $TITLE --label version-drift"'
+
+sync_case adopt 2 "$ERROR_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"old\"}]"
+check "an unlabelled tracker is adopted and labelled" 'wrote "issue edit 57 --add-label version-drift"'
+
+sync_case truncated-unlabelled 0 "$TRUNCATED_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"old\"}]"
+check "incomplete report: the sync step fails" '[[ "$rc" != 0 ]]'
+check "incomplete report: nothing is written, not even the label" '[[ ! -s "$w/.gh.log" ]]'
+
+sync_case truncated-labelled 0 "$TRUNCATED_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[\"version-drift\"],\"body\":\"old\"}]"
+check "incomplete report, labelled tracker: nothing is written" '[[ ! -s "$w/.gh.log" ]]'
+
+sync_case clean-closed 0 "$CLEAN_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"CLOSED\",\"labels\":[\"version-drift\"],\"body\":\"old\"}]"
+check "clean report, closed tracker: the step succeeds" '[[ "$rc" == 0 ]]'
+check "clean report, closed tracker: nothing is written" '[[ ! -s "$w/.gh.log" ]]'
+
+sync_case clean-open 0 "$CLEAN_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[\"version-drift\"],\"body\":\"old\"}]"
+check "clean report, open tracker: it is closed" 'wrote "issue close 57"'
+
+# An action word the sync step does not know must not get as far as a write.
+w="$(new_workdir unexpected 0 "$CLEAN_REPORT")"
+printf '#!/usr/bin/env bash\necho frobnicate\n' >"$w/tests/scripts/drift-issue-sync.sh"
+echo "[{\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"old\"}]" >"$w/.issues.json"
+run_step "$w" "$RUN_STEP" >/dev/null
+rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
+check "unexpected action: the sync step fails" '[[ "$rc" != 0 ]]'
+check "unexpected action: nothing is written" '[[ ! -s "$w/.gh.log" ]]'
+
 echo "test-version-drift-workflow.sh: ${cases} case(s), ${failures} failure(s)"
 ((failures == 0))
