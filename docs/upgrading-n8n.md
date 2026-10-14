@@ -72,10 +72,15 @@ which covers 1.35 and the next AKS minor.
 - **KEDA's own Prometheus metrics.** 2.17 removed the deprecated KEDA
   operator metric names. The module scrapes none of them; update any
   dashboard or alert of your own that does.
-- **Older clusters.** With `create_aks = false` on a cluster below 1.34,
-  pin a release KEDA tests there (`"2.20.2"` on 1.33, `"2.19.0"` on 1.32)
-  as a temporary hold, after checking the KEDA release notes for security
-  fixes that release lacks.
+- **Older clusters.** On any cluster below 1.34, whether module-managed
+  (`aks_kubernetes_version`) or caller-managed (`create_aks = false`), pin
+  a release KEDA tests there (`"2.20.2"` on 1.33, `"2.19.0"` on 1.32) as a
+  temporary hold. Both are inside the affected range (`<= 2.20.2`) of
+  KEDA's critical security advisory
+  [GHSA-637c-6jxx-4rwm](https://github.com/kedacore/keda/security/advisories/GHSA-637c-6jxx-4rwm),
+  which lists no patched version; the `2.21.0` default is outside that
+  range. Weigh that before holding, and move to the default as soon as the
+  cluster reaches 1.34.
 
 ## Moving from chart 1.13.0 to 1.14.0
 
