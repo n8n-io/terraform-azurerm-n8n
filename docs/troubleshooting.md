@@ -181,6 +181,28 @@ This input has no effect at all when `create_aks = false`; `check.aks_tuning_req
 
 The Standard and Premium tiers add an hourly charge per cluster. Premium is a prerequisite for AKS Long Term Support, but this module does not set the cluster's `support_plan`.
 
+## Changing `aks_kubernetes_version` upgrades only the AKS control plane
+
+**Validation scope.** Not yet observed live. This entry is derived from the `azurerm` provider source (4.81.0) and the Azure CLI's `az aks upgrade` implementation.
+
+**Symptom**
+
+After an apply that changed `aks_kubernetes_version` on an existing cluster (for example, moving to a module release whose default is `1.36` without pinning the input), `az aks show --query currentKubernetesVersion` reports the new version, but `kubectl get nodes` still shows the previous minor (for example, `v1.35.x`) on both the system and `n8nuser` pools. The plan showed one in-place change, `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`, and no change to either pool.
+
+**Root cause**
+
+When `kubernetes_version` changes, the `azurerm` provider reads the managed cluster, sets the new version, and writes it back. Each node pool keeps its stored `orchestratorVersion`, so AKS upgrades the control plane only, the same as `az aks upgrade --control-plane-only`. The module sets `orchestrator_version` on neither pool, and the attribute is computed, so the plan shows no node pool drift, before or after the upgrade. No node is drained or recreated and no pod restarts, but the API server can be briefly unavailable while the control plane upgrades, and `time_sleep.aks_api_warmup` does not run again on an update. Control plane and node pools may differ by up to three minor versions.
+
+The module also sets no `automatic_upgrade_channel` (Azure treats it as `none`), so AKS never upgrades the Kubernetes version on its own, and no maintenance windows. `node_os_upgrade_channel` stays at the provider default, `NodeImage`: AKS updates the node OS image automatically, which reimages nodes but keeps their Kubernetes version. The module configures no `maintenance_window_node_os`, so AKS chooses when those node image upgrades run.
+
+A caller that sets `aks_kubernetes_version` explicitly sees no change from a new default. With `create_aks = false` the input has no effect; `check.aks_tuning_requires_module_managed_aks` warns (non-failing) if it is set to anything other than the default.
+
+**Resolution**
+
+1. Change the version in its own apply, without other module changes, and confirm the plan contains only `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`. Minor versions cannot be skipped: move one minor per apply.
+2. If an apply that combined the upgrade with Kubernetes or Helm changes fails with `ServiceUnavailable`, `InternalError`, or a connection timeout, wait until `kubectl get --raw=/readyz` returns `ok`, then run `terraform plan` and `terraform apply` again.
+3. Upgrade the node pools outside Terraform, one at a time, with `az aks nodepool upgrade --resource-group <rg> --cluster-name <cluster> --name system --kubernetes-version <version>`, then `--name n8nuser`. This is a surge upgrade: AKS adds `aks_node_upgrade_max_surge` nodes (one per pool at the default sizing, which needs vCPU quota headroom), then cordons, drains, and replaces each node, so n8n pods restart. The next `terraform plan` shows no change, because `orchestrator_version` is computed.
+
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
 **Symptom**

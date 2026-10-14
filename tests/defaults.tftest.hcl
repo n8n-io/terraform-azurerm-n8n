@@ -286,6 +286,11 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].kubernetes_version == "1.36"
+    error_message = "AKS cluster kubernetes_version must default to \"1.36\" (var.aks_kubernetes_version's default; keep check.aks_tuning_requires_module_managed_aks in step)."
+  }
+
+  assert {
     condition     = azurerm_kubernetes_cluster.n8n[0].oidc_issuer_enabled == true
     error_message = "AKS cluster must have the OIDC issuer enabled (required for n8n workload identity federation)."
   }
