@@ -254,6 +254,17 @@ resource "azurerm_application_gateway" "n8n" {
   # the module-owned `appgw-ssl-cert` by name and never rewrites it, and
   # ignoring it would silently drop every rotation of
   # var.app_gateway_tls_cert_secret_id on an existing gateway.
+  # Bound the provider's wait. The azurerm default is 90 minutes per operation,
+  # and a gateway that lands in provisioningState Failed (for example after a
+  # partially failed first apply) made `terraform destroy` poll for over an hour
+  # after Azure had already marked the delete failed. Gateways create and delete
+  # in minutes, so these fail fast instead.
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "20m"
+  }
+
   lifecycle {
     ignore_changes = [
       backend_address_pool,
