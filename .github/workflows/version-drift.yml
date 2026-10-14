@@ -1,9 +1,10 @@
 name: Version drift report
 
 # Reports, never bumps. See docs/versioning.md for the bump policy and
-# tests/scripts/check-version-drift.sh for exactly what this checks (and, in
-# its header comment, what it deliberately cannot see without Azure
-# credentials this repo's CI does not hold).
+# tests/scripts/check-version-drift.sh for exactly what this checks (its
+# header comment also lists what it does not check). Needs no cloud
+# credentials: every lookup is a public, unauthenticated API, plus the
+# workflow token for the GitHub releases rate limit.
 "on":
   schedule:
     # Every Monday 09:00 UTC. Weekly is frequent enough to catch drift before
@@ -30,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The script's chart-currency lookup uses `helm show chart`. Pin the same
+      # The script's KEDA chart lookup uses `helm show chart`. Pin the same
       # Helm binary terraform-tests.yml uses instead of depending on whatever
       # the runner image happens to ship.
       - uses: azure/setup-helm@v4.3.0
@@ -39,14 +40,10 @@ jobs:
 
       # The script exits 2 when any lookup failed. Record the exit code
       # instead of failing here, so the sync step still runs and the ERROR
-      # lines reach the tracking issue; the last step fails the job. (Piping
-      # the script straight into `tee` under `shell: bash`'s errexit and
-      # pipefail would end this step at the script's exit 2, with the report
-      # cut short and the sync skipped.)
+      # lines reach the tracking issue; the last step fails the job.
       # The script prints plain text, not Markdown, so fence it; otherwise the
       # issue body and step summary collapse each section into one paragraph.
-      # The header line records when and where the report was produced, since
-      # an issue edit sends no notification and the body is replaced weekly.
+      # The header line records when and where the report was produced.
       - name: run tests/scripts/check-version-drift.sh
         id: drift
         shell: bash
@@ -67,40 +64,97 @@ jobs:
           cat report.md >>"$GITHUB_STEP_SUMMARY"
           cat drift.txt
 
-      # Drift never fails the build: every pin it flags is release-sized work
-      # per docs/versioning.md, not something CI should auto-bump or gate on.
-      # Sync the report to a single tracking issue so a stale pin shows up
-      # where every other piece of repo work does, instead of only in a
-      # scheduled run's job summary. Runs even when a lookup failed, so the
-      # ERROR lines are synced too, but only for a complete report: one whose
-      # last line is the script's summary. Exit 1 (curl or jq missing) or a
-      # crash leaves no summary, and syncing that would replace the last good
-      # report with a fragment, so the step fails instead.
+      # Sync the report to one tracking issue labelled version-drift, so a
+      # stale pin shows up where every other piece of repo work does. The
+      # body is always replaced with the latest report; an edit notifies
+      # nobody, so a comment is posted only when the set of DRIFT:/ERROR:
+      # lines changed. A clean report closes the issue, and drift coming back
+      # reopens it. tests/scripts/drift-issue-sync.sh makes that decision
+      # (offline self-test in terraform-tests.yml); this step only calls gh.
       - name: sync tracking issue
         if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          label="version-drift"
+          title="Version drift report (automated)"
+
           if [[ ! -f report.md ]]; then
             echo "::error::no report was produced; leaving the tracking issue unchanged"
             exit 1
           fi
-          summary_re='^check-version-drift\.sh: [0-9]+ pin\(s\) behind upstream, [0-9]+ lookup\(s\) failed$'
-          if ! tail -n 1 drift.txt | grep -Eq "$summary_re"; then
-            echo "::error::the drift report is incomplete (no summary line); leaving the tracking issue unchanged"
-            exit 1
+
+          gh label create "$label" --force --color D93F0B \
+            --description "Automated weekly version drift report (tests/scripts/check-version-drift.sh)"
+
+          # Open issue with the label first. Then an open issue with the
+          # title but no label (issues opened before the label existed),
+          # which gets the label. Then the most recent closed one, so drift
+          # coming back reopens it instead of opening a duplicate.
+          state=open
+          number="$(gh issue list --label "$label" --state open --limit 1 --json number --jq '.[0].number // empty')"
+          if [[ -z "$number" ]]; then
+            number="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
+            if [[ -n "$number" ]]; then
+              gh issue edit "$number" --add-label "$label"
+            fi
           fi
-          title="Version drift report (automated)"
-          existing="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
-          if [[ -n "$existing" ]]; then
-            gh issue edit "$existing" --body-file report.md
+          if [[ -z "$number" ]]; then
+            state=closed
+            number="$(gh issue list --label "$label" --state closed --limit 1 --json number --jq '.[0].number // empty')"
+          fi
+          if [[ -n "$number" ]]; then
+            gh issue view "$number" --json body --jq '.body' >previous.md
           else
-            gh issue create --title "$title" --body-file report.md
+            state=none
+            : >previous.md
           fi
 
-      # A failed lookup fails the job, after the sync above, so it is not
-      # mistaken for "nothing changed".
+          action="$(tests/scripts/drift-issue-sync.sh action report.md previous.md "$state")"
+          echo "tracking issue: ${number:-none} (${state}); action: ${action}"
+
+          case "$action" in
+            abort)
+              echo "::error::the report has no valid summary line; leaving the tracking issue unchanged"
+              exit 1
+              ;;
+            noop) ;;
+            create)
+              gh issue create --title "$title" --label "$label" --body-file report.md
+              ;;
+            update)
+              gh issue edit "$number" --body-file report.md
+              ;;
+            comment | reopen)
+              gh issue edit "$number" --body-file report.md
+              header="Findings changed in [workflow run](${RUN_URL})."
+              if [[ "$action" == "reopen" ]]; then
+                gh issue reopen "$number"
+                header="Reopening: findings are back in [workflow run](${RUN_URL})."
+              fi
+              {
+                echo "$header"
+                echo
+                tests/scripts/drift-issue-sync.sh changes previous.md report.md
+              } >comment.md
+              gh issue comment "$number" --body-file comment.md
+              ;;
+            close)
+              gh issue edit "$number" --body-file report.md
+              gh issue close "$number" --comment "No drift and no lookup errors in [workflow run](${RUN_URL}). Closing; the next report with findings reopens this issue."
+              ;;
+            *)
+              echo "::error::unexpected action '${action}' from drift-issue-sync.sh"
+              exit 1
+              ;;
+          esac
+
+      # Drift alone never fails the job (every flagged pin is release-sized
+      # work per docs/versioning.md, not something CI should gate on). A
+      # failed lookup does, after the sync above, so it is not mistaken for
+      # "nothing changed".
       - name: fail on lookup errors
         if: always()
         shell: bash

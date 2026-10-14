@@ -105,7 +105,7 @@ echo "== new-script syntax checks (port-aws-050-enhancements) =="
 for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-pools.sh \
   tests/scripts/check-version-drift.sh tests/scripts/lib/constraints.sh \
   tests/scripts/test-version-drift-constraints.sh tests/scripts/test-version-drift-workflow.sh \
-  tests/scripts/check-checkov.sh \
+  tests/scripts/drift-issue-sync.sh tests/scripts/check-checkov.sh \
   scripts/check-example-parity.sh; do
   bash -n "$script"
   if command -v shellcheck >/dev/null 2>&1; then
@@ -114,9 +114,10 @@ for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-poo
 done
 tests/scripts/chart-values-diff.sh --help >/dev/null
 # Offline tests for the drift script's version helpers and for
-# version-drift.yml's own shell steps.
+# version-drift.yml's own shell steps and tracking-issue sync decision.
 tests/scripts/test-version-drift-constraints.sh
 tests/scripts/test-version-drift-workflow.sh
+DRIFT_SYNC_SELF_TEST=1 tests/scripts/drift-issue-sync.sh
 
 echo
 echo "== markdownlint =="

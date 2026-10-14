@@ -663,11 +663,19 @@ tests/scripts/test-version-drift-constraints.sh
 ```
 
 That test runs in CI on every pull request. `.github/workflows/version-drift.yml`
-runs the report itself every Monday and syncs it to the tracking issue, also
-when a lookup failed (the run fails after the sync).
-`test-version-drift-workflow.sh` runs that workflow's own shell steps offline,
-against a stub report and a fake `gh`, to keep it that way:
+runs the report itself every Monday and syncs it to the tracking issue
+labelled `version-drift`, also when a lookup failed (the run fails after the
+sync). `test-version-drift-workflow.sh` runs that workflow's own shell steps
+offline, against a stub report and a fake `gh`:
 
 ```bash
 tests/scripts/test-version-drift-workflow.sh
+```
+
+`drift-issue-sync.sh` decides what that sync does (create, update the body,
+comment, close, reopen, or leave the issue alone when the report is
+incomplete), so the decision can be tested without GitHub:
+
+```bash
+DRIFT_SYNC_SELF_TEST=1 tests/scripts/drift-issue-sync.sh
 ```
