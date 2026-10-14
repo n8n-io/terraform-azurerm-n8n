@@ -472,6 +472,6 @@ check "ingress_annotations_override_module_controls" {
       toset(keys(var.ingress_annotations)),
       local.appgw_ingress_control_annotation_names,
     )) == 0 : true
-    error_message = "ingress_annotations overrides one or more module-owned AGIC annotations for TLS, frontend selection, backend protocol, timeout, draining, or affinity. Caller annotations are merged last and win; confirm the override preserves the intended dedicated ingress control."
+    error_message = "ingress_annotations overrides one or more module-owned AGIC annotations for TLS, frontend selection, backend protocol, timeout, draining, affinity, or the X-Forwarded-For rewrite. Caller annotations are merged last and win; confirm the override preserves the intended dedicated ingress control. A caller rewrite rule set replaces n8n-strip-xff-port, so it must strip the client port from X-Forwarded-For itself."
   }
 }

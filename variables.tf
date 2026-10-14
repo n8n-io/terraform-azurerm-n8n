@@ -1119,7 +1119,7 @@ variable "appgw_allowed_inbound_cidrs" {
 }
 
 variable "ingress_annotations" {
-  description = "Additional annotations for the module-managed AGIC Ingress, merged over module defaults. Use this for AGIC features such as rewrite rule sets. Overrides of module-owned TLS, frontend, backend, draining, timeout, or affinity annotations emit a warning because the caller value wins. Ignored when create_ingress is false."
+  description = "Additional annotations for the module-managed AGIC Ingress, merged over module defaults. Overrides of module-owned TLS, frontend, backend, draining, timeout, affinity, or rewrite rule set annotations emit a warning because the caller value wins. AGIC attaches one rewrite rule set per Ingress, so a caller rewrite-rule-set or rewrite-rule-set-custom-resource replaces the module's X-Forwarded-For port rewrite. Ignored when create_ingress is false."
   type        = map(string)
   default     = {}
   nullable    = false

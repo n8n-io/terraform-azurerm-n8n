@@ -952,6 +952,7 @@ run "managed_ingress_strips_the_port_from_x_forwarded_for" {
       yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).kind == "AzureApplicationGatewayRewrite" &&
       yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).metadata.name == "n8n-strip-xff-port" &&
       yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).metadata.namespace == local.n8n_namespace &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].actionType == "set" &&
       yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerName == "X-Forwarded-For" &&
       yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerValue == "{var_add_x_forwarded_for_proxy}"
     )
@@ -987,6 +988,32 @@ run "caller_can_replace_the_rewrite_annotation_with_a_warning" {
   assert {
     condition     = local.appgw_ingress_annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == "platform-rewrite"
     error_message = "A caller-supplied rewrite annotation must win the merge."
+  }
+
+  expect_failures = [check.ingress_annotations_override_module_controls]
+}
+
+# AGIC attaches no rewrite rule set to an Ingress that carries both
+# rewrite-rule-set and rewrite-rule-set-custom-resource (it logs "both
+# annotations are defined"), so a caller's gateway-defined rule set must
+# replace the module's custom resource reference, not sit beside it.
+run "caller_gateway_rewrite_rule_set_replaces_the_custom_resource_with_a_warning" {
+  command = plan
+
+  variables {
+    ingress_annotations = {
+      "appgw.ingress.kubernetes.io/rewrite-rule-set" = "platform-rewrite"
+    }
+  }
+
+  assert {
+    condition     = !contains(keys(local.appgw_ingress_annotations), "appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource")
+    error_message = "The Ingress must not carry both AGIC rewrite annotations, or AGIC attaches neither rule set."
+  }
+
+  assert {
+    condition     = local.appgw_ingress_annotations["appgw.ingress.kubernetes.io/rewrite-rule-set"] == "platform-rewrite"
+    error_message = "The caller's gateway-defined rewrite rule set must reach the Ingress."
   }
 
   expect_failures = [check.ingress_annotations_override_module_controls]
@@ -7792,6 +7819,9 @@ run "application_gateway_autoscaling_waf_and_annotations_render" {
     condition     = kubernetes_ingress_v1.n8n[0].metadata[0].annotations["appgw.ingress.kubernetes.io/rewrite-rule-set"] == "n8n-rewrites"
     error_message = "Caller AGIC annotations must merge over module defaults."
   }
+
+  # A caller rewrite rule set replaces the module's X-Forwarded-For rewrite.
+  expect_failures = [check.ingress_annotations_override_module_controls]
 }
 
 run "caller_managed_waf_policy_is_attached_without_duplicate_policy" {
