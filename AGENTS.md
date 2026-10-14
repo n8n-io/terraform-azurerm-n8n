@@ -630,10 +630,22 @@ not apply here: the Azure table already excludes the 15 reserved slots.
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
 This section records the 1.11.0 to 1.13.0 bump. The current default is
-`1.14.0` (`feat/chart-1.14.0`: see `docs/upgrading-n8n.md`; the chart change
-there is inert for this module, and `N8N_AVAILABLE_BINARY_DATA_MODES` is now
-rejected through `local.n8n_deprecated_env_names`), matching the AWS sibling
-after `terraform-aws-n8n` #160. The removed `n8n_available_binary_data_modes`
+`1.15.0` (`feat/chart-1.15.0`, issue #57: see `docs/upgrading-n8n.md`). That
+chart renders `database.ssl.enabled` as `DB_POSTGRESDB_SSL_ENABLED` itself
+(n8n-hosting #175), a name the module had always set through
+`config.extraEnv` to work around the older `DB_POSTGRESDB_SSL` key, so
+`local.n8n_chart_renders_postgres_ssl_enabled` (`locals.tf`: upstream
+repository, numbered release, numeric major.minor `>= 1.15` on the shared
+`local.n8n_chart_version_core`) drops the module's entry there; mirrors,
+prereleases (including the `1.11.0`-based worker-pools preview), and older
+charts keep it. `check-n8n-chart.sh` reads that gate through `terraform
+console` (wrapped in `tostring`, because the script's `jq -e` exits 1 on a
+bare `false`) and requires exactly one entry per n8n container from the
+source the gate selects. Before that, `1.14.0` (`feat/chart-1.14.0`; the
+chart change there is inert for this module, and
+`N8N_AVAILABLE_BINARY_DATA_MODES` is now rejected through
+`local.n8n_deprecated_env_names`) matched the AWS sibling after
+`terraform-aws-n8n` #160. The removed `n8n_available_binary_data_modes`
 stays declared for one release as a tombstone (null-only validation plus a
 `tflint-ignore`); delete it with its two `rejects_removed_*` runs in the
 release after. Like the AWS sibling, `WEBHOOK_URL` is sent only to
@@ -663,7 +675,7 @@ task-runner sidecar, its env, and the launcher ConfigMap mount on main only
 in standalone mode; this module always runs queue mode, so only workers
 carry the sidecar, `scaling.tf`'s capacity model drops the sidecar request
 from the main ceiling only for the verified upstream charts `1.12.0`,
-`1.13.0`, and `1.14.0` served from the upstream repository
+`1.13.0`, `1.14.0`, and `1.15.0` served from the upstream repository
 (`local.n8n_chart_has_worker_only_runners`, the same repository- and
 version-gated shape as `terraform-aws-n8n`, keyed on
 `local.n8n_chart_is_upstream` since `n8n_chart_repository` made the

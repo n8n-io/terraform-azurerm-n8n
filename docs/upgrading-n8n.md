@@ -12,7 +12,7 @@ guide; the per-version sections below cover only what reaches this module.
 
 | Variable | Controls | Default |
 | --- | --- | --- |
-| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.14.0"`, pinned |
+| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.15.0"`, pinned |
 | `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `"2.35.0"`, pinned. Unlike the AWS and GCP siblings this module never leaves the tag to the chart, so a chart bump on its own never changes the running n8n version. |
 | `n8n_task_runner_image_tag` | Task runner image tag; keep aligned with the underlying n8n version when using a custom application tag. | `null`, meaning `n8n_image_tag` |
 
@@ -100,6 +100,78 @@ which covers 1.35 and the next AKS minor.
   1.33, `"2.19.0"` on 1.32, `"2.18.3"` on 1.31) as a temporary hold. None of them carries the
   CVE-2026-77524 fix above, so weigh that before holding, and move to the
   default as soon as the cluster reaches 1.34.
+
+## Moving from chart 1.14.0 to 1.15.0
+
+`helm_release.n8n` plans the `version` change and, whenever PostgreSQL TLS
+is on (always on the module-managed Flexible Server; on the external path
+unless `postgres_external_ssl_mode = "disable"`), the removal of the
+module's own `DB_POSTGRESDB_SSL_ENABLED` entry from `config.extraEnv`. Every
+n8n pod rolls once. No `deployment-*.yaml` template changed, so replica
+ownership, the worker `ScaledObject`, and task-runner placement are as on
+`1.14.0`. The upstream changes:
+
+- **`DB_POSTGRESDB_SSL` renamed to `DB_POSTGRESDB_SSL_ENABLED`** in the
+  chart ConfigMap and pod env (n8n-hosting #175). This is the name n8n
+  reads, and the module had been setting it itself through
+  `config.extraEnv` because older charts used the wrong one (see
+  [PostgreSQL TLS](./postgresql-tls.md#chart-workaround-for-db_postgresdb_ssl_enabled)).
+  Kept as is, every n8n container would carry the name twice, so on the
+  upstream repository at a numbered `1.15.0` or newer the module now leaves
+  it to the chart (`local.n8n_chart_renders_postgres_ssl_enabled`). After
+  the upgrade each n8n container has exactly one `DB_POSTGRESDB_SSL_ENABLED`,
+  a `configMapKeyRef` to the chart's ConfigMap key of the same name
+  (value `"true"`), and no `DB_POSTGRESDB_SSL`. The effective value is
+  `"true"` before and after, so n8n's TLS behavior does not change.
+- **`extraObjects`** (n8n-hosting #219) renders extra Kubernetes objects
+  inside the release, and **`database.ssl.existingSecret`** (n8n-hosting
+  #222) sources a CA, client certificate, or client key from a Secret.
+  Neither is exposed by this module. The chart's `NOTES.txt` warns when
+  `database.ssl.key` is set; the module never sets it.
+
+The chart's `appVersion` moved to `2.42.4`; inert here because
+`n8n_image_tag` always sets the image.
+
+**Why the upgrade from `1.14.0` is safe, and when it is not.** On `1.14.0`
+the chart's entry is `DB_POSTGRESDB_SSL` and the module's is
+`DB_POSTGRESDB_SSL_ENABLED`, so no container ever carries a duplicate name,
+and Helm's three-way strategic merge patch (env entries are keyed by
+`name`) swaps the module's literal for the chart's `configMapKeyRef` and
+deletes `DB_POSTGRESDB_SSL`. Duplicates only exist where the module cannot
+verify the chart: a custom `n8n_chart_repository` or a prerelease at
+`1.15.0` or newer keeps the module's entry, so each container carries
+`DB_POSTGRESDB_SSL_ENABLED` twice (both `"true"`; Kubernetes may print a
+"hides previous definition" warning). A strategic merge patch matches list
+entries by `name`, so a later change that removes one of two same-named
+entries (for example switching such a deployment to the upstream
+repository) is the risky path: check the pods afterwards as below, and
+`kubectl rollout restart` with a re-apply if the name went missing.
+
+**Check after the upgrade** (namespace `n8n` unless you changed it):
+
+1. `helm history n8n -n n8n`: the newest revision is `deployed` with chart
+   `n8n-1.15.0`, and no `failed` or rolled-back revision came after the
+   previous one (`atomic = true` rolls a failed upgrade back, so a
+   successful-looking apply that left `1.14.0` deployed means it failed).
+2. `kubectl rollout status deploy/n8n-main deploy/n8n-worker deploy/n8n-webhook-processor -n n8n`.
+3. For each of those Deployments, the n8n container's env has exactly one
+   `DB_POSTGRESDB_SSL_ENABLED`, from `configMapKeyRef` `n8n` /
+   `DB_POSTGRESDB_SSL_ENABLED`, and no `DB_POSTGRESDB_SSL`:
+   `kubectl get deploy n8n-main -n n8n -o json | jq '[.spec.template.spec.containers[] | {name, ssl: [.env[]? | select(.name | startswith("DB_POSTGRESDB_SSL"))]}]'`
+   (the filter also lists `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` and
+   `DB_POSTGRESDB_SSL_CA` where your TLS mode renders them; those do not
+   change, and the `task-runner` sidecar lists none).
+4. `kubectl get configmap n8n -n n8n -o json | jq '.data | with_entries(select(.key | startswith("DB_POSTGRESDB_SSL")))'`
+   shows `DB_POSTGRESDB_SSL_ENABLED: "true"` and no `DB_POSTGRESDB_SSL`.
+5. In a running pod, `printenv DB_POSTGRESDB_SSL_ENABLED` prints `true`,
+   and the n8n logs show no PostgreSQL connection or TLS errors.
+6. `tests/scripts/smoke-test.sh` passes.
+
+Failure signs: the Helm upgrade fails with
+`valueFrom: Invalid value: "": may not be specified when 'value' is not empty`
+(the patch kept the old literal next to the new reference), a container
+with zero or two `DB_POSTGRESDB_SSL_ENABLED` entries, or main pods failing
+their readiness probe on database connection errors after the roll.
 
 ## Moving from chart 1.13.0 to 1.14.0
 
@@ -203,7 +275,7 @@ main, so the sidecar was idle there. Main pods roll once to drop the
 container. `n8n_task_runner_*` resources now describe worker pods only, and
 the advisory capacity check (`check.autoscaling_maxima_fit_aks_capacity`)
 stops adding the sidecar request to the main ceiling for the verified
-charts `1.12.0`, `1.13.0`, and `1.14.0` (`local.n8n_chart_has_worker_only_runners`);
+charts `1.12.0`, `1.13.0`, `1.14.0`, and `1.15.0` (`local.n8n_chart_has_worker_only_runners`);
 any other `n8n_chart_version` keeps the conservative allowance. Verify
 JavaScript and Python Code nodes through workers after the upgrade,
 including manual executions from the editor.

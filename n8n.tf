@@ -187,7 +187,7 @@ resource "kubernetes_secret" "n8n_task_runners" {
 }
 
 # ── Helm release ──────────────────────────────────────────────────────────────
-# The chart is pinned to 1.14.0 (see var.n8n_chart_version for the delta
+# The chart is pinned to 1.15.0 (see var.n8n_chart_version for the delta
 # since 1.11.0). The application and task-runner images are pinned to one n8n
 # version so storage and runner protocol changes cannot drift between pod
 # families. Explicit multiMain.setup, wait, atomic, cleanup, and timeout
@@ -226,7 +226,7 @@ resource "helm_release" "n8n" {
       },
     )
 
-    # spec.replicas ownership differs per Deployment on chart 1.14.0:
+    # spec.replicas ownership differs per Deployment on chart 1.15.0:
     # - main: the chart renders it unconditionally (multiMain.replicas or
     #   replicaCount, selected by multiMain.enabled), so it is set to the HPA
     #   floor and a Helm upgrade at the floor never scales main down first.
@@ -289,7 +289,7 @@ resource "helm_release" "n8n" {
       disableProductionWebhooksOnMainProcess = true
 
       # The chart renders executions.data only on main and worker pods
-      # (re-checked on 1.14.0: tests/scripts/check-n8n-chart.sh's duplicate
+      # (re-checked on 1.15.0: tests/scripts/check-n8n-chart.sh's duplicate
       # detector fails if the chart ever adds them to webhook pods too).
       # The webhook process also decides retention when a queued run finishes,
       # so it must receive the same defaults. Keep these role-specific to avoid
@@ -436,12 +436,12 @@ resource "helm_release" "n8n" {
         # PostgreSQL connection/health-check runtime tuning (section 3). Null
         # inputs contribute no entries and retain n8n's pinned defaults.
         local.n8n_postgres_runtime_env,
-        # DB_POSTGRESDB_SSL_ENABLED works around a chart bug: the pinned
-        # chart renders database.ssl.enabled into a ConfigMap key named
-        # DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
-        # upstream), so verify-ca/verify-full without a CA connected in
-        # plaintext. Setting the correct name here fixes that regardless of
-        # chart version.
+        # DB_POSTGRESDB_SSL_ENABLED works around a bug in charts before
+        # 1.15.0: they render database.ssl.enabled into a ConfigMap key named
+        # DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175),
+        # so verify-ca/verify-full without a CA connected in plaintext. Empty
+        # on the upstream chart from 1.15.0, which renders the correct name
+        # itself (local.n8n_chart_renders_postgres_ssl_enabled in locals.tf).
         local.n8n_postgres_ssl_enabled_env,
         # Optional shared V8 heap ceiling (section 6). Null contributes no
         # entries and leaves n8n/Node's own default and any caller NODE_OPTIONS
