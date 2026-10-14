@@ -196,6 +196,15 @@ output "n8n_helm_release_revision" {
   value       = helm_release.n8n.metadata[0].revision
 }
 
+output "n8n_image_tag" {
+  description = "n8n application image tag the Helm release sends as image.tag, or null when none is sent and the chart's own default runs (its appVersion on upstream charts from 1.12.0, which moves with n8n_chart_version)."
+  value       = var.n8n_image_tag
+
+  # A bare variable has no dependency edge of its own; the depends_on keeps the
+  # file's ordering contract (consumers see it only after the release exists).
+  depends_on = [helm_release.n8n]
+}
+
 output "n8n_service_name" {
   description = "Name of the chart-rendered ClusterIP Service for n8n main pods. Point caller-owned editor and API ingress routes at this service."
   value       = "${helm_release.n8n.name}-main"

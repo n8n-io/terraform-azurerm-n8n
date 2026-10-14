@@ -375,7 +375,8 @@ else
   fi
 
   # The module enforces this floor at plan time as a validation on
-  # n8n_image_tag, so a fresh apply cannot reach here with an old pinned tag.
+  # n8n_image_tag, so a fresh apply cannot reach here with an old pinned tag,
+  # or with a null tag on a chart whose default the module cannot verify.
   # What this catches is drift: an image retagged or mutated in the registry
   # after apply, or a deployment whose tag was changed out of band. Read what
   # actually deployed rather than trusting the plan-time value.

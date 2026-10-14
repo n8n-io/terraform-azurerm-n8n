@@ -15,6 +15,7 @@ The sizing examples use the same single root module and differ only where worklo
 | Redis | Balanced B0 | Balanced B5 | Memory Optimized M20, HA |
 | Blob durability | LRS | ZRS | ZRS |
 | Database pooler | None | None | PgBouncer, 2 replicas |
+| n8n version (`n8n_image_tag`) | Chart appVersion (null) | Chart appVersion (null) | Chart appVersion (null) |
 | Main cost factors | Baseline AKS, WAF, PostgreSQL, and Redis charges | Higher warm node floor, AKS Standard tier, larger data services, ZRS, gateway autoscaling | Large warm floor, AKS Standard tier, PostgreSQL HA and geo-backups, Redis HA, replicated storage, gateway autoscaling |
 
 These tiers are reference configurations, not throughput or cost guarantees. Workflow shape, payload size, Code nodes, external API latency, retention, and execution-data mode can change demand by orders of magnitude. Run load tests with representative workflows and review the root module's advisory capacity diagnostic.
@@ -26,6 +27,10 @@ These tiers are reference configurations, not throughput or cost guarantees. Wor
 All eight examples in this directory — the three sizing tiers, `split-ingress`, and the four customer-managed examples — expose `n8n_main_hpa_min_replicas`, a passthrough to the root module's own variable of the same name. It defaults to each example's documented floor (2, except medium's 3 and large's 6) and is the only topology selector: setting it to 1 requests single-main queue mode, which works with a license that lacks `feat:multipleMainInstances` (including Business licenses). Selecting a floor of 1 does not change any other example decision — sizing, storage mode, ingress, or Redis/PostgreSQL topology stay exactly as documented above and in the customer-managed table below.
 
 Main-floor selection and Azure storage entitlements are independent. A license without `feat:multipleMainInstances` does not automatically gain `feat:binaryDataAz` or `feat:executionDataAz`. A new Business-tier deployment without those entitlements should set the root module's `n8n_binary_data_storage_mode`/`n8n_execution_data_storage_mode` to `database`, independent of whatever main floor it selects. An existing deployment moving off Azure must set `azure_blob_retain_read_access = true` until its retained objects are addressed.
+
+## Pinning the n8n version
+
+`small`, `medium`, and `large` expose `n8n_image_tag`, a passthrough to the root module's variable of the same name. Null (the default) sends no image tag, so the chart's appVersion runs (`2.42.4` at the module's default chart `1.15.0`). That version moves whenever the module's `n8n_chart_version` moves, so upgrading the module can also upgrade n8n across its forward-only database migrations. Pin a concrete version in production and upgrade it deliberately; see [`docs/upgrading-n8n.md`](../docs/upgrading-n8n.md). `worker-pools` keeps its own pinned default (`2.39.0`, the pool floor). The other examples leave the root module default in place.
 
 ## Topology examples
 
