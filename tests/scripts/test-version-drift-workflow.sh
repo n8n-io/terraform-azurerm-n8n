@@ -125,6 +125,12 @@ new_workdir() {
   echo "$dir"
 }
 
+# writes <dir>: how many writes the fake gh logged.
+writes() { grep -c '^WRITE:' "$1/.gh.log"; }
+# wrote <text>: some logged write in $w contains <text> (fixed string).
+wrote() { grep -qF "WRITE: $1" "$w/.gh.log"; }
+
+TITLE="Version drift report (automated)"
 ERROR_REPORT='== Helm charts ==
 DRIFT: n8n chart (n8n_chart_version) [variables.tf] pinned at 1.14.0, latest is 1.15.0
 ERROR: KEDA chart: kedacore chart repository lookup failed
@@ -143,12 +149,25 @@ check "exit 2: the report keeps the ERROR line" 'grep -q "^ERROR: KEDA chart" "$
 check "exit 2: the report keeps the summary line" 'grep -q "^check-version-drift.sh: 1 pin(s) behind upstream, 1 lookup(s) failed$" "$w/report.md"'
 check "exit 2: the code fence is closed" '[[ "$(tail -n 1 "$w/report.md")" == "\`\`\`" ]]'
 check "exit 2: the step summary has the report" 'grep -q "^ERROR: KEDA chart" "$w/.summary"'
-echo '[{"number":57,"title":"Version drift report (automated)","state":"OPEN","labels":[],"body":"old"}]' >"$w/.issues.json"
+echo "[{\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"old\"}]" >"$w/.issues.json"
 rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
 check "exit 2: the sync step succeeds" '[[ "$rc" == 0 ]]'
+check "existing tracker: exactly one write" '[[ "$(writes "$w")" == 1 ]]'
+check "existing tracker: it is the body edit of issue 57" 'wrote "issue edit 57 --body-file report.md"'
+check "existing tracker: no duplicate issue is created" '! wrote "issue create"'
 check "exit 2: the ERROR line reaches the tracking issue" 'grep -q "^  | ERROR: KEDA chart" "$w/.gh.log"'
 rc="$(run_step "$w" "$FAIL_STEP" STATUS=2)"
 check "exit 2: the job fails after the sync" '[[ "$rc" != 0 ]]'
+
+# ── No tracker yet: one is created ────────────────────────────────────────
+w="$(new_workdir create 2 "$ERROR_REPORT")"
+run_step "$w" "$RUN_STEP" >/dev/null
+rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
+check "no tracker: the sync step succeeds" '[[ "$rc" == 0 ]]'
+check "no tracker: exactly one write" '[[ "$(writes "$w")" == 1 ]]'
+check "no tracker: it creates the tracker" 'wrote "issue create --title $TITLE --body-file report.md"'
+check "no tracker: no existing issue is edited" '! wrote "issue edit"'
+check "no tracker: the new issue carries the ERROR line" 'grep -q "^  | ERROR: KEDA chart" "$w/.gh.log"'
 
 # ── A clean run passes ────────────────────────────────────────────────────
 w="$(new_workdir clean 0 "$CLEAN_REPORT")"
