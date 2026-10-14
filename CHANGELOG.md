@@ -425,7 +425,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `acme_certificate` stored by 2.x. Upgrading straight to them makes the
   next plan replace the certificate (`key_type = "2048" -> "RSA2048"`),
   which revokes it, orders a new one against Let's Encrypt's rate limits,
-  and rolls the Application Gateway listener to a new Key Vault version.
+  and imports a new Key Vault version, which the Application Gateway
+  listener follows on the next apply.
   Pin acme `3.1.0` in the calling root (`3.0.0` and `3.0.1` also carry the
   migration; one apply with any one of them is enough), then widen the pin; see
   [`modules/tls-letsencrypt/README.md`](./modules/tls-letsencrypt/README.md#upgrading-from-acme-provider-2x).

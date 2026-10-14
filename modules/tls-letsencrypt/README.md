@@ -113,8 +113,19 @@ Vault then leaves the new version untagged
 In that case the next `terraform plan` shows the tags as drift, and the
 next apply restores them. If the tags also change in the same apply,
 the provider sends them after the import. The renewal itself is not
-affected. This behavior is taken from the provider source and the
-upstream issue; it has not been verified live with this module.
+affected. A forced re-issue on a live Let's Encrypt staging run (acme
+3.2.1, azurerm 4.81.0) showed exactly this: the new version had no tags,
+the next plan showed them as drift, the next apply restored them without
+another version, and the plan after that was clean.
+
+The same run showed that the module's `app_gateway_tls_cert_secret_id`
+output is one apply behind a renewal: for the in-place update of the Key
+Vault certificate, the provider plans `secret_id` and `version` as
+unchanged, so after the apply that imported the new version the output
+still pointed at the previous, now revoked, version, and only the next
+apply changed it. An Application Gateway wired to this output keeps
+serving the old certificate until that second apply. This is the provider's
+behavior, seen on acme 2.x as well, not something the 3.x bump changed.
 
 ## Provider configuration
 
@@ -155,8 +166,9 @@ dropped the state migration that renames the stored `key_type` from
 the current certificate first (`revoke_certificate_on_destroy` defaults to
 `true`), then orders a new one, which counts against Let's Encrypt's limit
 of 5 certificates per exact set of names per 7 days. It also imports a new
-Key Vault certificate version, which updates the Application Gateway
-listener.
+Key Vault certificate version; the module output (and so the Application
+Gateway listener) follows that version on the next apply, not the same one
+(see "Tags and renewal").
 
 `3.0.0`, `3.0.1`, and `3.1.0` still carry the migration, and one apply
 with any one of them is enough. The steps below use `3.1.0`:
@@ -164,13 +176,14 @@ with any one of them is enough. The steps below use `3.1.0`:
 1. In the calling root's `required_providers`, pin
    `acme = { source = "vancluever/acme", version = "3.1.0" }` (replacing
    any `2.x` constraint).
-2. Run `terraform init -upgrade`, then `terraform plan`. Expect in-place
-   updates to `acme_certificate.n8n` only, such as the new
-   `match_domains` attribute, and no replacement. Stop if the plan
-   replaces it.
-3. Run `terraform apply`. This rewrites the stored certificate in the 3.x
-   format without ordering a new one, unless renewal was already due
-   (`min_days_remaining`, 30 days by default).
+2. Run `terraform init -upgrade`, then `terraform plan`. Expect `No
+   changes` or in-place updates only (a live run from 2.48.3 to 3.1.0
+   planned `No changes`). Stop if the plan replaces `acme_certificate.n8n`.
+3. Run `terraform apply`, even if the plan said `No changes`: this
+   rewrites the stored certificate in the 3.x format (`key_type` becomes
+   `RSA2048`) without ordering a new one, unless renewal was already due
+   (`min_days_remaining`, 30 days by default). Skipping it leaves `2048`
+   in state, and the next step would plan the replacement described above.
 4. Only now widen the pin to `~> 3.0` (or remove it), run `terraform init
    -upgrade`, and run `terraform plan`. It should show no change to
    `acme_certificate.n8n`.
