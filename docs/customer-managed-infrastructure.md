@@ -190,7 +190,10 @@ fails the plan instead, or the apply if the zone ID is only known then. See
   (see the comment above `data.azurerm_postgresql_flexible_server.current`
   in `database.tf`). The two AGIC `Reader` role assignments are not affected:
   their scope comes from the AGIC identity's resource ID, not a data source,
-  so it stays known at plan time. A live test that created the zones and
+  so once that identity exists `depends_on` cannot make the scope unknown at
+  plan time. On the first apply the scope is unknown until the identity is
+  created, but the assignments are being created too, so nothing is
+  replaced. A live test that created the zones and
   links in the same apply without `depends_on` resolved correctly once the
   apply finished, so prefer an earlier apply over `depends_on`.
 - **Permissions.** The identity running Terraform must be allowed to write

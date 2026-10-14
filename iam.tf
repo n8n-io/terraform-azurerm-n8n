@@ -18,7 +18,9 @@
 # replacement) even though the resource group never changed. A managed
 # resource's ID already in state stays known at plan time, and the UAMI lives
 # in var.resource_group_name, so its ID carries the same
-# /subscriptions/<sub>/resourceGroups/<rg> prefix the lookup returned. On the
+# /subscriptions/<sub>/resourceGroups/<rg> prefix the lookup returned (on
+# azurerm before 4.54.0 the lookup used Azure's stored name casing instead
+# of var.resource_group_name's; see CHANGELOG.md for that upgrade case). On the
 # first apply the UAMI does not exist yet, so the scope is unknown exactly as
 # long as the assignments themselves are being created.
 locals {

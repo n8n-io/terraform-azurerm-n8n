@@ -552,7 +552,7 @@ check "postgres_pool_size_fits_known_max_connections" {
       ") requests up to ${local.n8n_pg_peak_connections} connections, more than the ",
       "${coalesce(local.pg_max_user_connections_known, 0)} user connections Microsoft publishes as the default for ",
       "pg_sku_name = \"${var.pg_sku_name}\". Lower postgres_pool_size or the autoscaler maxima",
-      local.n8n_worker_modeled_max_replicas > var.n8n_worker_keda_max_replicas ? join("", [
+      local.n8n_worker_paused_count_drives_worker_term ? join("", [
         ", or n8n_worker_keda_paused_replica_count (the paused count, ${local.n8n_worker_modeled_max_replicas}, is above ",
         "n8n_worker_keda_max_replicas, ${var.n8n_worker_keda_max_replicas}, and only counts while it stays above it)",
       ]) : "",
