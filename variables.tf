@@ -57,6 +57,18 @@ variable "common_tags" {
   # and per-resource tag-count limits are enforced by the platform at apply.
 }
 
+variable "azure_partner_attribution_id" {
+  description = "Azure Customer Usage Attribution (CUA) tracking ID. When non-empty, the module creates one empty ARM deployment named `pid-<guid>` in `resource_group_name`, which Microsoft uses to associate Azure usage in the customer's subscription with n8n as a partner. Accepts `<guid>`, `pid-<guid>`, or `pid-<guid>-partnercenter`. Empty (the default) creates nothing. It reports usage attribution only: it is separate from n8n licensing and telemetry. Callers can instead set the azurerm provider's `partner_id`."
+  type        = string
+  default     = ""
+  nullable    = false
+
+  validation {
+    condition     = can(regex("(?i)^(|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|pid-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-partnercenter)?)$", var.azure_partner_attribution_id))
+    error_message = "azure_partner_attribution_id must be empty, a GUID, `pid-<guid>`, or `pid-<guid>-partnercenter`."
+  }
+}
+
 # ── BYO networking ────────────────────────────────────────────────────────
 # The module does not create a VNet. The caller supplies a pre-existing VNet
 # and five pre-configured subnets, each scoped to its workload (delegations,

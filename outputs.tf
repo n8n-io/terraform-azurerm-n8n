@@ -227,6 +227,11 @@ output "n8n_test_webhook_path_prefixes" {
   depends_on = [helm_release.n8n]
 }
 
+output "azure_partner_attribution_deployment_name" {
+  description = "Name of the Customer Usage Attribution deployment (`pid-<guid>`) the module created in resource_group_name, or null when azure_partner_attribution_id is empty."
+  value       = local.azure_partner_attribution_name
+}
+
 output "n8n_url" {
   description = "Canonical HTTPS URL for the n8n editor UI (N8N_EDITOR_BASE_URL). This is also the default webhook base unless n8n_webhook_url overrides it — see the n8n_webhook_url output for the effective advertised webhook base."
   value       = "https://${var.n8n_domain}"

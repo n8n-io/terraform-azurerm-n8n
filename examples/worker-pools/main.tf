@@ -283,8 +283,9 @@ module "n8n" {
   create_public_dns_record = true
   public_dns_zone_id       = azurerm_dns_zone.public.id
 
-  n8n_license_key = var.n8n_license_key
-  n8n_image_tag   = var.n8n_image_tag
+  n8n_license_key              = var.n8n_license_key
+  n8n_image_tag                = var.n8n_image_tag
+  azure_partner_attribution_id = var.azure_partner_attribution_id
 
   # ── Chart ───────────────────────────────────────────────────────────────────
   # n8n_chart_version is required by this example: the module default

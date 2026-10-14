@@ -146,3 +146,34 @@ run "small_tier_blob_delete_retention_days_override" {
     error_message = "Setting blob_delete_retention_days must not change unrelated example outputs."
   }
 }
+
+run "partner_attribution_passes_through" {
+  command = plan
+
+  variables {
+    azure_partner_attribution_id = "12345678-1234-1234-1234-123456789abc"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = module.n8n.azure_partner_attribution_deployment_name == "pid-12345678-1234-1234-1234-123456789abc"
+    error_message = "The example must forward azure_partner_attribution_id so the module plans the pid-<guid> deployment."
+  }
+}
+
+run "rejects_malformed_partner_attribution_id" {
+  command = plan
+
+  variables {
+    azure_partner_attribution_id = "not-a-guid"
+  }
+
+  expect_failures = [var.azure_partner_attribution_id]
+}

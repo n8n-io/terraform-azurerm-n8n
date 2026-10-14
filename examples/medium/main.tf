@@ -303,6 +303,8 @@ module "n8n" {
 
   n8n_license_key = var.n8n_license_key
 
+  azure_partner_attribution_id = var.azure_partner_attribution_id
+
   # azurerm_key_vault_key.aks_kms is listed explicitly so terraform destroy
   # always removes the cluster before the KMS key, even after KMS was turned
   # off by setting aks_kms_key_vault_key_id back to null (which removes the
