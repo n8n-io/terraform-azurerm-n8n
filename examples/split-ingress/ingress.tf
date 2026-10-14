@@ -159,6 +159,12 @@ resource "azurerm_application_gateway" "webhook" {
   # AGIC reconciles listeners, routing rules, and backend settings against
   # the live Ingress once its Helm release is up; these mirror the module's
   # own ignore_changes so a plan does not fight the controller.
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "20m"
+  }
+
   lifecycle {
     ignore_changes = [
       backend_address_pool,
@@ -284,6 +290,12 @@ resource "azurerm_application_gateway" "admin" {
   }
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-admin-appgw" })
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "20m"
+  }
 
   lifecycle {
     ignore_changes = [
