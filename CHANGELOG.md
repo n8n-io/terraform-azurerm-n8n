@@ -478,7 +478,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   also needs the `Microsoft.Network/EnableApplicationGatewayNetworkIsolation`
   feature, a subnet delegated to `Microsoft.Network/applicationGateways`, and
   private access to the certificate's Key Vault (a `Microsoft.KeyVault` service
-  endpoint on that subnet or a private endpoint for the vault); without either
+  endpoint on that subnet, or a private endpoint for the vault with its
+  `privatelink.vaultcore.azure.net` zone linked to the VNet); without either
   Azure fails the create with a bare `InternalServerError`. The address is
   required only while `create_ingress = true`: with caller-owned ingress the
   frontend settings are inert, so internal mode without an address plans with
