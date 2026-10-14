@@ -674,9 +674,11 @@ next major bump:
 
 - `terraform validate` finds only the removed and newly required
   arguments. Diff `terraform providers schema -json` between the two
-  versions for every resource type in use, then read the provider source
-  for `ForceNew`, `Default`, `Computed` removals, `CustomizeDiff`, and state
-  upgraders, none of which the schema JSON shows. The 5.0 upgrade guide is
+  versions for every resource type in use: its `required`, `optional`,
+  `computed`, `deprecated`, and `write_only` flags show removed, newly
+  required, and no-longer-computed attributes. Then read the provider
+  source for `ForceNew`, defaults, `CustomizeDiff`, and state upgraders,
+  which the schema JSON does not show. The 5.0 upgrade guide is
   not authoritative either: it documents a `true` default for the WAF
   `file_upload_enforcement` that 5.9.0 does not implement.
 - An argument that is new, ForceNew, and without a state upgrader
@@ -691,9 +693,13 @@ next major bump:
   `getRequiredReplaces`), so it neutralizes the replacement even though the
   provider fills in a schema default.
 - Where 5.x rebuilds an ID-valued argument from the resource's own ID on
-  read, send the exact string it will rebuild. `dns.tf` reconstructs the
-  private zone ID with the lowercased zone name the 4.x record used, and
-  `private_dns_record_zone_id_uses_lowercased_zone_name` pins that.
+  read, send the exact string it will rebuild, and check where 4.x took
+  each segment from. 4.x built private DNS record IDs from the provider's
+  `Account.SubscriptionId`, not from the zone ID, so `dns.tf` reads
+  `data.azurerm_client_config.current` (the same field) and uses its
+  string when the zone ID's subscription matches it ignoring case, plus the
+  lowercased zone name the 4.x record used. The
+  `private_dns_record_zone_id_*` runs pin both.
 - `terraform init -upgrade` upgrades every provider, not just the one being
   bumped. To move only azurerm, delete its block from each
   `.terraform.lock.hcl`, run `terraform init`, then
