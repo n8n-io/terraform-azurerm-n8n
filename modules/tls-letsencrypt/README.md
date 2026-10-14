@@ -140,6 +140,44 @@ endpoint enforces a [duplicate-certificate rate
 limit](https://letsencrypt.org/docs/rate-limits/) of 5 per 7 days per
 exact set of FQDNs, easy to exhaust during iteration.
 
+## Upgrading from acme provider 2.x
+
+This submodule requires `vancluever/acme` `~> 3.0` (it required `~> 2.16`
+before). If your calling root pins the provider to `2.x` in its own
+`required_providers`, widen that constraint, then run `terraform init
+-upgrade`. The `provider "acme"` block above is unchanged in 3.x. The
+3.0 release moved the provider to lego v5, which removed the deprecated
+`azure` DNS-01 provider; this submodule uses its replacement, `azuredns`,
+whose configuration did not change.
+
+A certificate issued with a 2.x provider must not jump straight to acme
+`3.1.1` or later (`3.2.1` is the latest release). Those releases dropped
+the state migration that renames the stored `key_type` from `2048` to
+`RSA2048`, so the next plan shows `key_type = "2048" -> "RSA2048"`
+followed by `# forces replacement`. Applying that plan revokes the current
+certificate first (`revoke_certificate_on_destroy` defaults to `true`),
+then orders a new one, which counts against Let's Encrypt's limit of 5
+certificates per exact set of names per 7 days. It also imports a new
+Key Vault certificate version, which updates the Application Gateway
+listener. Releases `3.0.0` to `3.1.0` still carry the migration, so step
+through one of them:
+
+1. In the calling root's `required_providers`, pin
+   `acme = { source = "vancluever/acme", version = "3.1.0" }`.
+2. Run `terraform init -upgrade`, then `terraform plan`. Expect in-place
+   updates to `acme_certificate.n8n` only, such as the new
+   `match_domains` attribute, and no replacement. Stop if the plan
+   replaces it.
+3. Run `terraform apply`. This rewrites the stored certificate in the 3.x
+   format without ordering a new one, unless renewal was already due
+   (`min_days_remaining`, 30 days by default).
+4. Change the pin to `~> 3.0` (or remove it), run `terraform init
+   -upgrade`, and run `terraform plan`. It should show no change to
+   `acme_certificate.n8n`.
+
+New deployments, and deployments already applied with a 3.x provider,
+need none of this.
+
 ## DNS-01 providers
 
 This submodule's `dns_challenge` block always uses the `azuredns` lego
