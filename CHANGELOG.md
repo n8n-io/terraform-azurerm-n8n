@@ -398,7 +398,15 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   2.x's sorted order to configuration order. The apply runs one Helm
   upgrade per release with unchanged values, which raises each revision
   by one and should not roll any pod. The following plan is clean. 3.x
-  state cannot be read by 2.x, so back up state first. See
+  state cannot be read by 2.x, so back up state first. Exception for
+  callers' own `helm_release` resources (the module and examples set
+  neither): helm provider 3.3.0 bug
+  [hashicorp/terraform-provider-helm#1695](https://github.com/hashicorp/terraform-provider-helm/issues/1695)
+  fails the first plan with "Provider produced invalid plan" for any
+  `keyring` argument, and for `description = ""` when the 2.x state holds
+  no description. Remove those arguments before the first 3.x plan and
+  leave them out until an upstream fix (#1714 or #1739) is released; a
+  non-empty `description` is not affected. See
   [README.md, Moving the helm provider from 2.x to 3.x](./README.md#moving-the-helm-provider-from-2x-to-3x).
 
 - **Breaking: `n8n_image_tag` now defaults to `null`** (was `"2.35.0"`),
