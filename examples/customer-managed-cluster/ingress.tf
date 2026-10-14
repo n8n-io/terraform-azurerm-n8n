@@ -268,30 +268,28 @@ resource "helm_release" "agic" {
   version    = "1.7.5"
   namespace  = kubernetes_namespace.agic.metadata[0].name
 
-  set {
-    name  = "appgw.applicationGatewayID"
-    value = azurerm_application_gateway.n8n.id
-  }
-
-  set {
-    name  = "armAuth.type"
-    value = "workloadIdentity"
-  }
-
-  set {
-    name  = "armAuth.identityClientID"
-    value = azurerm_user_assigned_identity.agic.client_id
-  }
-
-  set {
-    name  = "kubernetes.watchNamespace"
-    value = module.n8n.n8n_namespace
-  }
-
-  set {
-    name  = "rbac.enabled"
-    value = "true"
-  }
+  set = [
+    {
+      name  = "appgw.applicationGatewayID"
+      value = azurerm_application_gateway.n8n.id
+    },
+    {
+      name  = "armAuth.type"
+      value = "workloadIdentity"
+    },
+    {
+      name  = "armAuth.identityClientID"
+      value = azurerm_user_assigned_identity.agic.client_id
+    },
+    {
+      name  = "kubernetes.watchNamespace"
+      value = module.n8n.n8n_namespace
+    },
+    {
+      name  = "rbac.enabled"
+      value = "true"
+    },
+  ]
 
   depends_on = [
     azurerm_role_assignment.agic_appgw_contributor,

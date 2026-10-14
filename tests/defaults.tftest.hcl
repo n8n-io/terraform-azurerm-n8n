@@ -4120,6 +4120,27 @@ run "base_release_outputs_match_chart_service_contract" {
 
 }
 
+# The helm provider 3.x models helm_release.metadata as a single object
+# (2.x used a one-element list read as metadata[0]).
+run "helm_release_revision_output_reads_the_metadata_object" {
+  command = plan
+
+  override_resource {
+    target          = helm_release.n8n
+    override_during = plan
+    values = {
+      metadata = {
+        revision = 7
+      }
+    }
+  }
+
+  assert {
+    condition     = output.n8n_helm_release_revision == 7
+    error_message = "n8n_helm_release_revision must read the revision from helm_release.n8n.metadata, a single object on the helm provider 3.x."
+  }
+}
+
 run "caller_supplied_encryption_key_reaches_the_encryption_secret" {
   command = plan
 
