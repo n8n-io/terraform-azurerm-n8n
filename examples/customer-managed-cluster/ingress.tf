@@ -43,6 +43,7 @@ resource "time_sleep" "n8n_tls_cert_kv_rbac" {
 
 resource "azurerm_application_gateway" "n8n" {
   # checkov:skip=CKV_AZURE_218:Policy tracks the same Azure TLS 1.2-or-later 2022 predefined policy the root module defaults to.
+  # checkov:skip=CKV_AZURE_120:Known gap: this caller-owned gateway hardcodes Standard_v2 with no exposed toggle to opt into WAF_v2, unlike split-ingress's create_webhook_waf_policy variable or the root module's own appgw_sku_name (default "WAF_v2"). This public internet-facing gateway currently runs without a WAF.
   name                = "${var.friendly_name_prefix}-appgw"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
@@ -149,6 +150,7 @@ resource "azurerm_application_gateway" "n8n" {
 # ── Application Gateway subnet NSG ───────────────────────────────────────────
 
 resource "azurerm_network_security_group" "appgw" {
+  # checkov:skip=CKV_AZURE_160:AllowFrontend intentionally opens 80/443 from Internet: this is the public entry point for n8n traffic in this example (frontend_port is in the gateway's lifecycle.ignore_changes list above so AGIC can add an HTTP listener/redirect dynamically), the same posture the root module's own appgw NSG defaults to when appgw_frontend_mode is "public".
   name                = "${var.friendly_name_prefix}-appgw-nsg"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
