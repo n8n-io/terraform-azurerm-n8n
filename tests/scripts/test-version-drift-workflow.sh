@@ -125,8 +125,12 @@ new_workdir() {
   echo "$dir"
 }
 
-# writes <dir>: how many writes the fake gh logged.
-writes() { grep -c '^WRITE:' "$1/.gh.log"; }
+# issue_writes: the issue writes in $w, in order, as "<verb> <number>"
+# joined by commas ("create" has no number), e.g. "edit 57,comment 57".
+# Label writes are not issue writes and are not listed.
+issue_writes() {
+  sed -n 's/^WRITE: issue \([a-z]*\) *\([0-9]*\).*/\1 \2/p' "$w/.gh.log" | sed 's/ $//' | paste -sd, -
+}
 # wrote <text>: some logged write in $w contains <text> (fixed string).
 wrote() { grep -qF "WRITE: $1" "$w/.gh.log"; }
 
@@ -152,7 +156,8 @@ check "exit 2: the step summary has the report" 'grep -q "^ERROR: KEDA chart" "$
 echo "[{\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"old\"}]" >"$w/.issues.json"
 rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
 check "exit 2: the sync step succeeds" '[[ "$rc" == 0 ]]'
-check "existing tracker: exactly one write" '[[ "$(writes "$w")" == 1 ]]'
+# Unlabelled tracker, new findings: label it, replace the body, comment.
+check "existing tracker: every issue write targets 57, in order" '[[ "$(issue_writes)" == "edit 57,edit 57,comment 57" ]]'
 check "existing tracker: it is the body edit of issue 57" 'wrote "issue edit 57 --body-file report.md"'
 check "existing tracker: no duplicate issue is created" '! wrote "issue create"'
 check "exit 2: the ERROR line reaches the tracking issue" 'grep -q "^  | ERROR: KEDA chart" "$w/.gh.log"'
@@ -164,8 +169,8 @@ w="$(new_workdir create 2 "$ERROR_REPORT")"
 run_step "$w" "$RUN_STEP" >/dev/null
 rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
 check "no tracker: the sync step succeeds" '[[ "$rc" == 0 ]]'
-check "no tracker: exactly one write" '[[ "$(writes "$w")" == 1 ]]'
-check "no tracker: it creates the tracker" 'wrote "issue create --title $TITLE --body-file report.md"'
+check "no tracker: the only issue write is one create" '[[ "$(issue_writes)" == "create" ]]'
+check "no tracker: it creates the labelled tracker" 'wrote "issue create --title $TITLE --label version-drift --body-file report.md"'
 check "no tracker: no existing issue is edited" '! wrote "issue edit"'
 check "no tracker: the new issue carries the ERROR line" 'grep -q "^  | ERROR: KEDA chart" "$w/.gh.log"'
 
@@ -186,7 +191,6 @@ check "no report.md: the sync step fails" '[[ "$rc" != 0 ]]'
 check "no report.md: nothing is written to GitHub" '[[ ! -s "$w/.gh.log" ]]'
 
 # ── Tracking-issue lifecycle ──────────────────────────────────────────────
-TITLE="Version drift report (automated)"
 TRUNCATED_REPORT='== Terraform providers (registry.terraform.io) ==
 OK:    random provider [root] pinned at "~> 3.0" (accepts latest 3.9.1)'
 
@@ -198,8 +202,6 @@ sync_case() {
   run_step "$w" "$RUN_STEP" >/dev/null
   rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
 }
-# wrote <text>: some logged write contains <text> (fixed string).
-wrote() { grep -qF "WRITE: $1" "$w/.gh.log"; }
 # touched <number>: some logged write targets that issue.
 touched() { grep -qE "^WRITE: issue [a-z]+ $1( |$)" "$w/.gh.log"; }
 
@@ -208,21 +210,25 @@ sync_case other-labelled 2 "$ERROR_REPORT" "[
   {\"number\":90,\"title\":\"Bump the KEDA chart to 2.21.0\",\"state\":\"OPEN\",\"labels\":[\"version-drift\"],\"body\":\"human\"}]"
 check "another open labelled issue: the tracker is updated" 'wrote "issue edit 57 --body-file"'
 check "another open labelled issue: it is left alone" '! touched 90'
+check "another open labelled issue: issue writes" '[[ "$(issue_writes)" == "edit 57,comment 57" ]]'
 
 sync_case other-closed 2 "$ERROR_REPORT" "[
   {\"number\":57,\"title\":\"$TITLE\",\"state\":\"CLOSED\",\"labels\":[\"version-drift\"],\"body\":\"old\"},
   {\"number\":91,\"title\":\"Bump the helm provider to 3.x\",\"state\":\"CLOSED\",\"labels\":[\"version-drift\"],\"body\":\"human\"}]"
 check "another closed labelled issue: the tracker is reopened" 'wrote "issue reopen 57"'
 check "another closed labelled issue: it is left alone" '! touched 91'
+check "another closed labelled issue: issue writes" '[[ "$(issue_writes)" == "edit 57,reopen 57,comment 57" ]]'
 
 sync_case fuzzy-title 2 "$ERROR_REPORT" "[
   {\"number\":92,\"title\":\"Re: $TITLE is noisy\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"human\"}]"
 check "a title search hit that is not the exact title is not adopted" '! touched 92'
 check "a title search hit that is not the exact title: a tracker is created" 'wrote "issue create --title $TITLE --label version-drift"'
+check "a title search hit that is not the exact title: issue writes" '[[ "$(issue_writes)" == "create" ]]'
 
 sync_case adopt 2 "$ERROR_REPORT" "[
   {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"old\"}]"
 check "an unlabelled tracker is adopted and labelled" 'wrote "issue edit 57 --add-label version-drift"'
+check "an unlabelled tracker: issue writes" '[[ "$(issue_writes)" == "edit 57,edit 57,comment 57" ]]'
 
 sync_case truncated-unlabelled 0 "$TRUNCATED_REPORT" "[
   {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"old\"}]"
@@ -241,6 +247,7 @@ check "clean report, closed tracker: nothing is written" '[[ ! -s "$w/.gh.log" ]
 sync_case clean-open 0 "$CLEAN_REPORT" "[
   {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[\"version-drift\"],\"body\":\"old\"}]"
 check "clean report, open tracker: it is closed" 'wrote "issue close 57"'
+check "clean report, open tracker: issue writes" '[[ "$(issue_writes)" == "edit 57,close 57" ]]'
 
 # An action word the sync step does not know must not get as far as a write.
 w="$(new_workdir unexpected 0 "$CLEAN_REPORT")"
