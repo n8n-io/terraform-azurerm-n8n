@@ -188,9 +188,12 @@ fails the plan instead, or the apply if the zone ID is only known then. See
   on the module block defers the module's data source reads to apply time.
   That weakens the plan-time protection of `pg_storage_drift_guard_enabled`
   (see the comment above `data.azurerm_postgresql_flexible_server.current`
-  in `database.tf`), and with `create_ingress = true` it replaces the two
-  AGIC `Reader` role assignments, whose scope comes from
-  `data.azurerm_resource_group.n8n`. A live test that created the zones and
+  in `database.tf`). The two AGIC `Reader` role assignments are not affected:
+  their scope comes from the AGIC identity's resource ID, not a data source,
+  so once that identity exists `depends_on` cannot make the scope unknown at
+  plan time. On the first apply the scope is unknown until the identity is
+  created, but the assignments are being created too, so nothing is
+  replaced. A live test that created the zones and
   links in the same apply without `depends_on` resolved correctly once the
   apply finished, so prefer an earlier apply over `depends_on`.
 - **Permissions.** The identity running Terraform must be allowed to write

@@ -647,7 +647,7 @@ variable "postgres_managed_ssl_mode" {
 }
 
 variable "postgres_ssl_ca_pem" {
-  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set and the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `verify-ca` or `verify-full`, the module passes it (whitespace-trimmed) to the n8n Helm chart's `database.ssl.ca` value, which the chart renders into its ConfigMap as `DB_POSTGRESDB_SSL_CA` for main, worker, and webhook-processor pods. Because the CA is part of the Helm release, a failed upgrade's rollback restores the previous CA, and changing the CA rolls the pods. Needed for `verify-ca`/`verify-full` unless the pod image's default trust store already trusts the server's issuing CA (for Azure Database for PostgreSQL Flexible Server, Microsoft recommends trusting both current roots: DigiCert Global Root G2 and Microsoft RSA Root CA 2017). In every other mode (`disable`, `allow`, `prefer`, `require`) the module ignores it and a plan-time warning fires. See `docs/postgresql-tls.md`."
+  description = "PEM-encoded CA certificate bundle to trust for the PostgreSQL connection, covering both the managed and external database paths. When set and the effective `ssl_mode` (`postgres_managed_ssl_mode` or `postgres_external_ssl_mode`) is `verify-ca` or `verify-full`, the module passes it (whitespace-trimmed) to the n8n Helm chart's `database.ssl.ca` value, which the chart renders into its ConfigMap as `DB_POSTGRESDB_SSL_CA` for main, worker, and webhook-processor pods. Because the CA is part of the Helm release, a failed upgrade's rollback restores the previous CA, and changing the CA rolls the pods. Needed for `verify-ca`/`verify-full` unless the pod image's default trust store already trusts the server's issuing CA (for Azure Database for PostgreSQL Flexible Server, Microsoft recommends trusting both current roots: DigiCert Global Root G2 and Microsoft RSA Root CA 2017). In every other mode (`disable`, `allow`, `prefer`, `require`) the module ignores it and a plan-time warning fires. The trimmed value must be ASCII and at most 131050 characters: the chart passes it to every n8n container as one environment variable, `DB_POSTGRESDB_SSL_CA`, and Linux refuses to start a process whose single environment string exceeds 131072 bytes (including the name and terminating NUL), failing every pod with `argument list too long`. Trim a concatenated bundle to the roots you need. See `docs/postgresql-tls.md`."
   type        = string
   default     = null
   nullable    = true
@@ -655,6 +655,16 @@ variable "postgres_ssl_ca_pem" {
   validation {
     condition     = var.postgres_ssl_ca_pem == null ? true : length(trimspace(var.postgres_ssl_ca_pem)) > 0
     error_message = "postgres_ssl_ca_pem must be null or a non-empty PEM-encoded CA bundle."
+  }
+
+  validation {
+    condition     = var.postgres_ssl_ca_pem == null ? true : can(regex("^[[:ascii:]]*$", var.postgres_ssl_ca_pem))
+    error_message = "postgres_ssl_ca_pem must contain only ASCII characters; PEM is ASCII (RFC 7468), and the size limit below counts characters as bytes."
+  }
+
+  validation {
+    condition     = var.postgres_ssl_ca_pem == null ? true : length(trimspace(var.postgres_ssl_ca_pem)) <= 131050
+    error_message = "postgres_ssl_ca_pem is ${var.postgres_ssl_ca_pem == null ? 0 : length(trimspace(var.postgres_ssl_ca_pem))} characters after trimming; the limit is 131050. The chart passes it to every n8n container as the single environment variable DB_POSTGRESDB_SSL_CA, and Linux refuses to start a process whose environment string exceeds 131072 bytes (argument list too long). Use a smaller bundle containing only the CA certificates your server chain needs."
   }
 }
 
