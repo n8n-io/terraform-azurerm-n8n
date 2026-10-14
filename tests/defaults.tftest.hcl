@@ -8000,6 +8000,25 @@ run "warns_when_ingress_tuning_is_inert" {
   ]
 }
 
+# Frontend settings are inert without the module-managed gateway, so the
+# private address is required only when create_ingress is true: internal mode
+# with no address must plan with just the inert-tuning warning.
+run "disabled_ingress_does_not_require_a_private_address" {
+  command = plan
+
+  variables {
+    create_ingress      = false
+    appgw_frontend_mode = "internal"
+  }
+
+  expect_failures = [check.ingress_tuning_requires_module_managed_ingress]
+
+  assert {
+    condition     = length(azurerm_application_gateway.n8n) == 0 && output.appgw_private_ip_address == null
+    error_message = "create_ingress = false must create no gateway and expose no private frontend address."
+  }
+}
+
 run "rejects_invalid_application_gateway_inputs" {
   command = plan
 
