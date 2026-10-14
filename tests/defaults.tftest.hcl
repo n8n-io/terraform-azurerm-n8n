@@ -1049,9 +1049,10 @@ run "rewrite_follows_a_caller_owned_namespace_on_an_internal_frontend" {
   command = plan
 
   variables {
-    appgw_frontend_mode = "internal"
-    create_namespace    = false
-    n8n_namespace       = "platform-n8n"
+    appgw_frontend_mode      = "internal"
+    appgw_private_ip_address = "10.0.8.10"
+    create_namespace         = false
+    n8n_namespace            = "platform-n8n"
   }
 
   assert {
@@ -7722,7 +7723,8 @@ run "internal_application_gateway_omits_public_frontend" {
   command = plan
 
   variables {
-    appgw_frontend_mode = "internal"
+    appgw_frontend_mode      = "internal"
+    appgw_private_ip_address = "10.0.8.10"
   }
 
   assert {
@@ -7732,11 +7734,11 @@ run "internal_application_gateway_omits_public_frontend" {
 
   assert {
     condition = (
-      azurerm_application_gateway.n8n[0].frontend_ip_configuration[0].private_ip_address_allocation == "Dynamic" &&
+      azurerm_application_gateway.n8n[0].frontend_ip_configuration[0].private_ip_address_allocation == "Static" &&
       azurerm_application_gateway.n8n[0].frontend_ip_configuration[0].subnet_id == var.appgw_subnet_id &&
       azurerm_application_gateway.n8n[0].frontend_ip_configuration[0].public_ip_address_id == null
     )
-    error_message = "Internal mode must use one dynamically allocated private frontend in appgw_subnet_id."
+    error_message = "Internal mode must use one statically allocated private frontend in appgw_subnet_id."
   }
 
   assert {
@@ -7927,15 +7929,75 @@ run "warns_when_ingress_annotations_override_module_controls" {
   expect_failures = [check.ingress_annotations_override_module_controls]
 }
 
+# Application Gateway v2 rejects a dynamic private frontend (observed live:
+# ApplicationGatewayFrontendIpPrivateIpAddressInvalidAllocationType), so the
+# internal frontend must carry a static address.
+run "internal_frontend_uses_the_static_private_address" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode      = "internal"
+    appgw_private_ip_address = "10.0.8.10"
+  }
+
+  assert {
+    condition = (
+      azurerm_application_gateway.n8n[0].frontend_ip_configuration[0].private_ip_address_allocation == "Static" &&
+      azurerm_application_gateway.n8n[0].frontend_ip_configuration[0].private_ip_address == "10.0.8.10"
+    )
+    error_message = "The internal frontend must be Static at appgw_private_ip_address, never Dynamic."
+  }
+
+  assert {
+    condition     = length(azurerm_public_ip.appgw) == 0
+    error_message = "An internal frontend must not create a public IP."
+  }
+}
+
+run "internal_frontend_requires_a_private_address" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode = "internal"
+  }
+
+  expect_failures = [var.appgw_private_ip_address]
+}
+
+run "rejects_a_malformed_private_address" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode      = "internal"
+    appgw_private_ip_address = "10.0.8.256"
+  }
+
+  expect_failures = [var.appgw_private_ip_address]
+}
+
+run "warns_when_a_private_address_is_set_on_a_public_frontend" {
+  command = plan
+
+  variables {
+    appgw_private_ip_address = "10.0.8.10"
+  }
+
+  expect_failures = [check.appgw_private_ip_requires_internal_frontend]
+}
+
 run "warns_when_ingress_tuning_is_inert" {
   command = plan
 
   variables {
-    create_ingress      = false
-    appgw_frontend_mode = "internal"
+    create_ingress           = false
+    appgw_frontend_mode      = "internal"
+    appgw_private_ip_address = "10.0.8.10"
   }
 
-  expect_failures = [check.ingress_tuning_requires_module_managed_ingress]
+  expect_failures = [
+    check.ingress_tuning_requires_module_managed_ingress,
+    check.appgw_private_ip_requires_internal_frontend,
+  ]
 }
 
 run "rejects_invalid_application_gateway_inputs" {
@@ -8022,6 +8084,7 @@ run "private_azure_dns_routes_internal_frontend" {
 
   variables {
     appgw_frontend_mode       = "internal"
+    appgw_private_ip_address  = "10.0.4.10"
     create_private_dns_record = true
     private_dns_zone_id       = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-dns-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
     n8n_domain                = "n8n.internal.example.com"
@@ -8130,6 +8193,7 @@ run "rejects_dns_zone_and_frontend_mismatches" {
 
   variables {
     appgw_frontend_mode      = "internal"
+    appgw_private_ip_address = "10.0.8.10"
     create_public_dns_record = true
     public_dns_zone_id       = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-dns-rg/providers/Microsoft.Network/dnsZones/example.com"
   }
@@ -8201,6 +8265,7 @@ run "rejects_malformed_private_dns_zone_id" {
 
   variables {
     appgw_frontend_mode       = "internal"
+    appgw_private_ip_address  = "10.0.8.10"
     create_private_dns_record = true
     private_dns_zone_id       = "not-a-private-zone-id"
   }

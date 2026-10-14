@@ -199,7 +199,8 @@ resource "azurerm_application_gateway" "n8n" {
     content {
       name                          = local.appgw_frontend_ip_configuration_name
       subnet_id                     = var.appgw_subnet_id
-      private_ip_address_allocation = "Dynamic"
+      private_ip_address_allocation = "Static"
+      private_ip_address            = var.appgw_private_ip_address
     }
   }
 
@@ -467,6 +468,13 @@ check "ingress_tuning_requires_module_managed_ingress" {
       length(var.ingress_annotations) == 0
     )
     error_message = "Application Gateway mode, SKU, capacity, autoscaling, TLS, WAF, source restrictions, or ingress annotations are customized while create_ingress is false, so those values are inert. Configure equivalent controls on the caller-owned gateways or restore the defaults."
+  }
+}
+
+check "appgw_private_ip_requires_internal_frontend" {
+  assert {
+    condition     = var.appgw_private_ip_address == null || (var.create_ingress && var.appgw_frontend_mode == "internal")
+    error_message = "appgw_private_ip_address is set, but the module-managed Application Gateway has no private frontend (appgw_frontend_mode is public or create_ingress is false), so the address is ignored."
   }
 }
 

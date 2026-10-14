@@ -29,6 +29,17 @@ The root module's `n8n_webhook_url` input (port-aws-040-enhancements section 11)
 
 The public gateway routes every webhook prefix (that is what the mocked tests in `tests/defaults.tftest.hcl` assert), so both n8n's own generated links and a URL you construct yourself against `webhook_base_url` (this example's output, which always matches `n8n_webhook_url`) resolve correctly. This fix only changes what n8n advertises; it does not redesign routing — the public gateway already routed the same five prefixes before this change. The pinned n8n version also uses the configured webhook base for test-webhook and form-trigger URLs in the editor; verify that behavior manually against a real deployment, since it is not covered by the offline chart-rendering check.
 
+## Prerequisites for the private admin gateway
+
+A private-only (no public IP) Application Gateway v2 needs four things, all of which this example sets up except the first:
+
+1. The subscription has `Microsoft.Network/EnableApplicationGatewayNetworkIsolation` registered (`az feature register --namespace Microsoft.Network --name EnableApplicationGatewayNetworkIsolation`, then `az provider register -n Microsoft.Network`). **This is subscription-wide and changes behavior for every Application Gateway v2 in it:** once registered, every v2 gateway must sit in a subnet delegated to `Microsoft.Network/applicationGateways`, including the module's own gateway and the other examples, which do not delegate their subnets.
+2. A subnet delegated to `Microsoft.Network/applicationGateways`. Each gateway gets its own (`appgw-webhook`, `appgw-admin`) and its own NSG, so the VNet-only admin rule cannot be widened by the internet-facing webhook rule.
+3. A static private frontend address; Application Gateway v2 rejects a dynamic one.
+4. A route to Key Vault for the TLS certificate. The gateway has no public IP, so both subnets carry the `Microsoft.KeyVault` service endpoint. Without it Azure fails the create with a bare `InternalServerError`.
+
+See [`docs/troubleshooting.md`](../../docs/troubleshooting.md) for the errors each missing piece produces.
+
 ## Apply
 
 1. Copy `terraform.tfvars.example` to `terraform.tfvars` and replace the placeholders.
@@ -93,7 +104,8 @@ See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for roo
 | [azurerm_federated_identity_credential.agic_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/federated_identity_credential) | resource |
 | [azurerm_federated_identity_credential.agic_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/federated_identity_credential) | resource |
 | [azurerm_key_vault.tls](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/key_vault) | resource |
-| [azurerm_network_security_group.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_security_group) | resource |
+| [azurerm_network_security_group.appgw_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_security_group) | resource |
+| [azurerm_network_security_group.appgw_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_security_group) | resource |
 | [azurerm_public_ip.webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/public_ip) | resource |
 | [azurerm_resource_group.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
 | [azurerm_resource_group.network](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
@@ -101,18 +113,22 @@ See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for roo
 | [azurerm_role_assignment.agic_admin_appgw_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_admin_rg_reader](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_admin_subnet_network_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.agic_admin_tls_identity_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_webhook_appgw_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_webhook_rg_reader](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_webhook_subnet_network_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.agic_webhook_tls_identity_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.key_vault_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.terraform_blob_data_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.webhook_tls_cert_kv_reader](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_subnet.aks](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
-| [azurerm_subnet.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
+| [azurerm_subnet.appgw_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
+| [azurerm_subnet.appgw_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
 | [azurerm_subnet.postgres](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
 | [azurerm_subnet.private_endpoints](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
 | [azurerm_subnet.redis](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
-| [azurerm_subnet_network_security_group_association.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet_network_security_group_association) | resource |
+| [azurerm_subnet_network_security_group_association.appgw_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet_network_security_group_association) | resource |
+| [azurerm_subnet_network_security_group_association.appgw_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet_network_security_group_association) | resource |
 | [azurerm_user_assigned_identity.admin_tls_cert](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
 | [azurerm_user_assigned_identity.agic_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
 | [azurerm_user_assigned_identity.agic_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
