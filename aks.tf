@@ -89,6 +89,13 @@ resource "azurerm_kubernetes_cluster" "n8n" {
     os_disk_size_gb              = var.aks_node_os_disk_size_gb
     only_critical_addons_enabled = var.aks_system_pool_critical_addons_only
 
+    # Follows aks_kubernetes_version unless aks_node_pools_follow_cluster_version
+    # is false (locals.tf). On a version change the provider upgrades the
+    # control plane first and then this pool through the agent pool API,
+    # in one update; orchestrator_version is not a rotation property, so the
+    # pool is surge-upgraded in place, not recreated.
+    orchestrator_version = local.aks_node_pool_orchestrator_version
+
     node_count           = local.aks_system_node_count_min_effective
     auto_scaling_enabled = true
     min_count            = local.aks_system_node_count_min_effective
@@ -264,6 +271,12 @@ resource "azurerm_kubernetes_cluster_node_pool" "n8n_user" {
   zones                       = var.aks_availability_zones
   os_disk_size_gb             = var.aks_node_os_disk_size_gb
   temporary_name_for_rotation = "n8nusrtemp"
+
+  # Same version as the system pool. kubernetes_cluster_id references the
+  # cluster, so Terraform updates this pool only after the cluster update
+  # (control plane, then system pool) has finished; AKS rejects a pool
+  # version the control plane does not run yet.
+  orchestrator_version = local.aks_node_pool_orchestrator_version
 
   node_count           = var.aks_node_count_min
   auto_scaling_enabled = true
