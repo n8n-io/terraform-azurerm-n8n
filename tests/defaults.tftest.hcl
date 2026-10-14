@@ -2669,7 +2669,7 @@ run "managed_postgres_defaults_to_require" {
 
   assert {
     condition     = local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 0
-    error_message = "On the default upstream chart (1.15.0) the chart renders DB_POSTGRESDB_SSL_ENABLED itself, so local.n8n_postgres_ssl_enabled_env must be empty."
+    error_message = "On the default upstream chart (1.16.0) the chart renders DB_POSTGRESDB_SSL_ENABLED itself, so local.n8n_postgres_ssl_enabled_env must be empty."
   }
 }
 
@@ -2800,8 +2800,8 @@ run "postgres_ssl_enabled_env_left_to_the_chart_on_1_15_0" {
   }
 
   assert {
-    condition     = var.n8n_chart_version == "1.15.0" && length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == 0
-    error_message = "On the default upstream chart 1.15.0 config.extraEnv must not carry DB_POSTGRESDB_SSL_ENABLED: the chart renders it from database.ssl.enabled, and a second entry duplicates the name on every container."
+    condition     = var.n8n_chart_version == "1.16.0" && length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == 0
+    error_message = "On the default upstream chart 1.16.0 config.extraEnv must not carry DB_POSTGRESDB_SSL_ENABLED: the chart renders it from database.ssl.enabled, and a second entry duplicates the name on every container."
   }
 }
 
@@ -2896,6 +2896,21 @@ run "chart_renders_postgres_ssl_enabled_skips_prereleases" {
   }
 }
 
+# The default moved past 1.15.0, so pin the floor itself: the first upstream
+# chart that renders DB_POSTGRESDB_SSL_ENABLED must still count as rendering it.
+run "chart_renders_postgres_ssl_enabled_on_chart_1_15_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.15.0"
+  }
+
+  assert {
+    condition     = local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 0
+    error_message = "Upstream chart 1.15.0 renders DB_POSTGRESDB_SSL_ENABLED itself, so local.n8n_postgres_ssl_enabled_env must stay empty there."
+  }
+}
+
 run "chart_renders_postgres_ssl_enabled_on_a_later_major_chart" {
   command = plan
 
@@ -2979,7 +2994,7 @@ run "postgres_ssl_ca_pem_reaches_the_chart_with_ssl_enabled" {
 
   assert {
     condition     = length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == 0
-    error_message = "On the default upstream chart (1.15.0) DB_POSTGRESDB_SSL_ENABLED comes from database.ssl.enabled through the chart's ConfigMap, so config.extraEnv must not carry a second one."
+    error_message = "On the default upstream chart (1.16.0) DB_POSTGRESDB_SSL_ENABLED comes from database.ssl.enabled through the chart's ConfigMap, so config.extraEnv must not carry a second one."
   }
 
   assert {
@@ -4301,8 +4316,8 @@ run "controllers_and_base_n8n_release_in_plan" {
   }
 
   assert {
-    condition     = helm_release.n8n.version == "1.15.0" && var.n8n_image_tag == null && local.n8n_image_known_current && !local.n8n_needs_legacy_webhook_url_env
-    error_message = "The base release must pin chart 1.15.0 and leave n8n_image_tag null, so the chart's appVersion runs, counts as known current, and needs no legacy WEBHOOK_URL."
+    condition     = helm_release.n8n.version == "1.16.0" && var.n8n_image_tag == null && local.n8n_image_known_current && !local.n8n_needs_legacy_webhook_url_env
+    error_message = "The base release must pin chart 1.16.0 and leave n8n_image_tag null, so the chart's appVersion runs, counts as known current, and needs no legacy WEBHOOK_URL."
   }
 
   assert {
@@ -7434,7 +7449,7 @@ run "allows_worker_pause_on_supported_charts" {
 
   assert {
     condition     = local.n8n_worker_keda_pause_supported
-    error_message = "The default chart 1.15.0 must count as pause-capable."
+    error_message = "The default chart 1.16.0 must count as pause-capable."
   }
 }
 
@@ -12121,8 +12136,21 @@ run "capacity_model_drops_main_runner_on_the_default_chart" {
   command = plan
 
   assert {
-    condition     = var.n8n_chart_version == "1.15.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
-    error_message = "Upstream chart 1.15.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
+    condition     = var.n8n_chart_version == "1.16.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
+    error_message = "Upstream chart 1.16.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
+  }
+}
+
+run "capacity_model_drops_main_runner_on_chart_1_15_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.15.0"
+  }
+
+  assert {
+    condition     = local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
+    error_message = "Upstream chart 1.15.0 places runners on workers only and must stay modeled that way after the 1.16.0 bump."
   }
 }
 
@@ -12178,7 +12206,7 @@ run "capacity_model_keeps_main_runner_on_a_mirrored_chart" {
   }
 
   assert {
-    condition     = var.n8n_chart_version == "1.15.0" && !local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 16600
+    condition     = var.n8n_chart_version == "1.16.0" && !local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 16600
     error_message = "A mirrored chart at a verified version must keep the main-sidecar allowance: 16600m expected, got ${local.n8n_peak_cpu_request_millis}m."
   }
 }
@@ -12771,7 +12799,7 @@ run "null_image_tag_on_a_mirrored_chart_warns" {
 
   assert {
     condition     = !local.n8n_image_known_current && local.n8n_needs_legacy_webhook_url_env
-    error_message = "A mirrored chart's default tag cannot be verified even at 1.15.0, so a null tag must not count as known current and must keep WEBHOOK_URL."
+    error_message = "A mirrored chart's default tag cannot be verified even at 1.16.0, so a null tag must not count as known current and must keep WEBHOOK_URL."
   }
 }
 
@@ -12859,7 +12887,7 @@ run "worker_pools_accept_a_null_image_tag_on_a_known_current_chart" {
 
   assert {
     condition     = length(local.n8n_worker_groups) == 1
-    error_message = "On the default upstream chart (appVersion 2.42.4) a null tag meets the 2.39.0 pool floor and must not fail n8n_image_tag."
+    error_message = "On the default upstream chart (appVersion 2.43.5) a null tag meets the 2.39.0 pool floor and must not fail n8n_image_tag."
   }
 }
 

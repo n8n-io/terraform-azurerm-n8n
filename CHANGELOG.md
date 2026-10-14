@@ -613,6 +613,37 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   input has no effect, but an explicit `"1.35"` now triggers the non-failing
   `check.aks_tuning_requires_module_managed_aks` warning; remove it. See
   [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_kubernetes_version-upgrades-only-the-aks-control-plane).
+- **Default `n8n_chart_version` bumped to `1.16.0`** (was `1.15.0`)
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
+  Minor-required: the module sends the same Helm values as on `1.15.0`,
+  but every n8n pod rolls once on the upgrade. With
+  `n8n_image_tag = null` (the default) the upgrade also moves n8n to the
+  chart's new `appVersion`, `2.43.5` (was `2.42.4`), across its database
+  migrations; pin `n8n_image_tag` to upgrade n8n separately. See
+  `docs/upgrading-n8n.md`, "Moving from chart 1.15.0 to 1.16.0", for the
+  post-upgrade checks.
+  - #228: the chart renders no main PodDisruptionBudget while main runs one
+    replica, so single-main (`n8n_main_hpa_min_replicas = 1`) loses its
+    `minAvailable: 0` budget, which already permitted every eviction.
+    Multi-main keeps `minAvailable: 1`. `tests/scripts/smoke-test.sh` now
+    accepts no PDB or `minAvailable: 0` for single-main (it failed on a
+    missing PDB before), tells a missing PDB apart from a failed lookup,
+    and still requires `minAvailable: 1` for multi-main;
+    `tests/scripts/check-n8n-chart.sh` expects no single-main PDB from
+    chart `1.16.0`.
+  - #223: the worker task-runner sidecar gains a liveness probe on the
+    launcher's `/healthz`, port 5680. The module sets nothing that moves
+    that port; `check-n8n-chart.sh` asserts the probe.
+  - #229: more than one main now requires `multiMain.enabled` and a
+    license at render time. Every configuration the module accepts
+    already passes.
+  - The task-runner sidecar moved into a shared template with the same
+    placement and resources, so `1.16.0` joins
+    `local.n8n_chart_has_worker_only_runners`.
+  - #243 `editor.url`, #167 `hostAliases`, #240 image digests and PVC
+    annotations, #236 per-role security contexts, #183
+    `N8N_ENCRYPTION_KEY_FILE`, and `taskRunners.probes` are new and not
+    exposed. The module keeps rendering its own `N8N_EDITOR_BASE_URL`.
 - **Default `n8n_chart_version` bumped to `1.15.0`** (was `1.14.0`), the
   same pin as `terraform-aws-n8n` #190 and `terraform-google-n8n` #39
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).

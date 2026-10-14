@@ -17,9 +17,10 @@
 #       responds.
 #   2.  The n8n namespace exists.
 #   3.  Topology detection: reads the rendered `n8n-main` HPA/Deployment/PDB
-#       to determine single-main (HPA 1/1, `Recreate`, PDB minAvailable 0)
-#       vs. multi-main (HPA floor > 1, rolling update, PDB minAvailable 1) —
-#       never inferred from the current main pod count.
+#       to determine single-main (HPA 1/1, `Recreate`, no main PDB on chart
+#       1.16.0 or newer, PDB minAvailable 0 on older charts) vs. multi-main
+#       (HPA floor > 1, rolling update, PDB minAvailable 1), never
+#       inferred from the current main pod count.
 #   4.  ≥1 (single-main) or ≥2 (multi-main, or the configured floor)
 #       n8n-main pods Ready, ≥1 n8n-worker pod Ready, ≥2
 #       n8n-webhook-processor pods Ready. While the worker `ScaledObject`
@@ -229,12 +230,16 @@ curl_to_n8n() {
 # Missing or inconsistent HPA/Deployment/PDB settings fail the check.
 # Deployment strategy and PDB minAvailable are read as consistency
 # cross-checks against that same topology, not as a second source of truth.
+# Single-main accepts either no main PDB (chart 1.16.0 and newer skip it while
+# main runs one replica, n8n-hosting #228) or the minAvailable 0 budget older
+# charts render: both permit every voluntary eviction. --ignore-not-found
+# keeps a missing PDB (empty output, exit 0) apart from a failed lookup.
 # Defined here (rather than inline where it's called) so the self-test block
 # below can exercise it against fixtures without duplicating the logic.
 detect_topology() {
   TOPOLOGY="unknown"
 
-  local main_hpa_min main_hpa_max main_strategy main_pdb_min
+  local main_hpa_min main_hpa_max main_strategy main_pdb main_pdb_state main_pdb_min=""
   local fail_before="$FAIL"
   main_hpa_min=$(kubectl get hpa n8n-main -n "$NAMESPACE" \
     -o jsonpath='{.spec.minReplicas}' 2>/dev/null || true)
@@ -242,8 +247,17 @@ detect_topology() {
     -o jsonpath='{.spec.maxReplicas}' 2>/dev/null || true)
   main_strategy=$(kubectl get deployment n8n-main -n "$NAMESPACE" \
     -o jsonpath='{.spec.strategy.type}' 2>/dev/null || true)
-  main_pdb_min=$(kubectl get pdb n8n-main -n "$NAMESPACE" \
-    -o jsonpath='{.spec.minAvailable}' 2>/dev/null || true)
+  if main_pdb=$(kubectl get pdb n8n-main -n "$NAMESPACE" --ignore-not-found \
+    -o jsonpath='{.metadata.name}|{.spec.minAvailable}' 2>/dev/null); then
+    if [[ -z "$main_pdb" ]]; then
+      main_pdb_state="absent"
+    else
+      main_pdb_state="present"
+      main_pdb_min="${main_pdb#*|}"
+    fi
+  else
+    main_pdb_state="error"
+  fi
 
   if [[ ! "$main_hpa_min" =~ ^[1-9][0-9]*$ || ! "$main_hpa_max" =~ ^[1-9][0-9]*$ ]]; then
     fail "n8n-main HPA bounds are missing or invalid: min='${main_hpa_min:-<unset>}' max='${main_hpa_max:-<unset>}'"
@@ -266,10 +280,14 @@ detect_topology() {
       fail "n8n-main deployment strategy is '${main_strategy:-<unset>}', expected Recreate for single-main"
     fi
 
-    if [[ "$main_pdb_min" == "0" ]]; then
+    if [[ "$main_pdb_state" == "absent" ]]; then
+      pass "n8n-main has no PDB (chart 1.16.0+ skips a single-replica budget; voluntary eviction permitted, matches single-main)"
+    elif [[ "$main_pdb_state" == "present" && "$main_pdb_min" == "0" ]]; then
       pass "n8n-main PDB minAvailable=0 (voluntary eviction permitted, matches single-main)"
+    elif [[ "$main_pdb_state" == "error" ]]; then
+      fail "n8n-main PDB lookup failed; expected no PDB (chart 1.16.0+) or minAvailable 0 for single-main"
     else
-      fail "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected 0 for single-main"
+      fail "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected no PDB (chart 1.16.0+) or minAvailable 0 for single-main"
     fi
   else
     TOPOLOGY="multi-main"
@@ -282,10 +300,12 @@ detect_topology() {
       fail "n8n-main deployment strategy is '${main_strategy:-<unset>}', expected RollingUpdate for multi-main"
     fi
 
-    if [[ "$main_pdb_min" == "1" ]]; then
+    if [[ "$main_pdb_state" == "present" && "$main_pdb_min" == "1" ]]; then
       pass "n8n-main PDB minAvailable=1 (protects one replica during voluntary disruption, matches multi-main)"
-    else
+    elif [[ "$main_pdb_state" == "present" ]]; then
       fail "n8n-main PDB minAvailable='${main_pdb_min:-<unset>}', expected 1 for multi-main"
+    else
+      fail "n8n-main PDB is ${main_pdb_state/error/unreadable}, expected minAvailable=1 for multi-main"
     fi
   fi
 
@@ -444,7 +464,10 @@ if [[ "${SMOKE_TEST_SELF_TEST:-0}" == "1" ]]; then
   }
 
   # Fixture-driven stub replacing the real kubectl for the duration of the
-  # self-test. FIXTURE_HPA_MIN/MAX, FIXTURE_STRATEGY, FIXTURE_PDB_MIN, and
+  # self-test. FIXTURE_PDB_MIN is a minAvailable value, "absent" (no PDB:
+  # empty output with --ignore-not-found, a NotFound exit 1 without it, as the
+  # real kubectl does), or "error" (a failed lookup). FIXTURE_HPA_MIN/MAX,
+  # FIXTURE_STRATEGY, FIXTURE_PDB_MIN, and
   # FIXTURE_MAIN_READY/FIXTURE_MAIN_DESIRED drive every call detect_topology()
   # and check_deployment() make; anything else (e.g. the bad-pods listing)
   # returns an empty, successful result.
@@ -463,7 +486,11 @@ if [[ "${SMOKE_TEST_SELF_TEST:-0}" == "1" ]]; then
       esac
       return 0
     elif [[ "$1" == "get" && "$2" == "pdb" && "$3" == "n8n-main" ]]; then
-      echo "$FIXTURE_PDB_MIN"
+      case "$FIXTURE_PDB_MIN" in
+        absent) [[ "$*" == *--ignore-not-found* ]]; return ;;
+        error) return 1 ;;
+      esac
+      echo "n8n-main|$FIXTURE_PDB_MIN"
       return 0
     fi
     return 0
@@ -476,6 +503,19 @@ if [[ "${SMOKE_TEST_SELF_TEST:-0}" == "1" ]]; then
   assert_eq "single-main topology" "single-main" "$TOPOLOGY"
   assert_eq "single-main floor" "1" "$MAIN_MIN"
   check_deployment "n8n-main" "$MAIN_MIN" "n8n-main"
+
+  echo "== Self-test: single-main without a PDB (chart 1.16.0 or newer) =="
+  before_fail="$FAIL"
+  FIXTURE_HPA_MIN=1 FIXTURE_HPA_MAX=1 FIXTURE_STRATEGY="Recreate" FIXTURE_PDB_MIN=absent \
+    FIXTURE_MAIN_READY=1 FIXTURE_MAIN_DESIRED=1
+  detect_topology || true
+  assert_eq "single-main topology without a PDB" "single-main" "$TOPOLOGY"
+  if [[ "$FAIL" -eq "$before_fail" ]]; then
+    pass "single-main without a PDB raised no topology failures"
+  else
+    fail "single-main without a PDB unexpectedly raised a topology failure"
+    self_test_failures=$((self_test_failures + 1))
+  fi
 
   echo "== Self-test: healthy multi-main =="
   before_fail="$FAIL"
@@ -534,11 +574,14 @@ unclamped single-main|1|6|RollingUpdate|1
 single-main rolling update|1|1|RollingUpdate|0
 single-main missing strategy|1|1||0
 single-main wrong PDB|1|1|Recreate|1
-single-main missing PDB|1|1|Recreate|
+single-main PDB without minAvailable|1|1|Recreate|
+single-main PDB lookup error|1|1|Recreate|error
 multi-main recreate|2|6|Recreate|1
 multi-main missing strategy|2|6||1
 multi-main wrong PDB|2|6|RollingUpdate|0
-multi-main missing PDB|2|6|RollingUpdate|
+multi-main PDB without minAvailable|2|6|RollingUpdate|
+multi-main absent PDB|2|6|RollingUpdate|absent
+multi-main PDB lookup error|2|6|RollingUpdate|error
 FIXTURES
 
   echo ""

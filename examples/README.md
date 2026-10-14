@@ -30,7 +30,7 @@ Main-floor selection and Azure storage entitlements are independent. A license w
 
 ## Pinning the n8n version
 
-`small`, `medium`, and `large` expose `n8n_image_tag`, a passthrough to the root module's variable of the same name. Null (the default) sends no image tag, so the chart's appVersion runs (`2.42.4` at the module's default chart `1.15.0`). That version moves whenever the module's `n8n_chart_version` moves, so upgrading the module can also upgrade n8n across its forward-only database migrations. Pin a concrete version in production and upgrade it deliberately; see [`docs/upgrading-n8n.md`](../docs/upgrading-n8n.md). `worker-pools` keeps its own pinned default (`2.39.0`, the pool floor). The other examples leave the root module default in place.
+`small`, `medium`, and `large` expose `n8n_image_tag`, a passthrough to the root module's variable of the same name. Null (the default) sends no image tag, so the chart's appVersion runs (`2.43.5` at the module's default chart `1.16.0`). That version moves whenever the module's `n8n_chart_version` moves, so upgrading the module can also upgrade n8n across its forward-only database migrations. Pin a concrete version in production and upgrade it deliberately; see [`docs/upgrading-n8n.md`](../docs/upgrading-n8n.md). `worker-pools` keeps its own pinned default (`2.39.0`, the pool floor). The other examples leave the root module default in place.
 
 ## Topology examples
 

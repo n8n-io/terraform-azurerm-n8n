@@ -187,7 +187,7 @@ resource "kubernetes_secret" "n8n_task_runners" {
 }
 
 # ── Helm release ──────────────────────────────────────────────────────────────
-# The chart is pinned to 1.15.0 (see var.n8n_chart_version for the delta
+# The chart is pinned to 1.16.0 (see var.n8n_chart_version for the delta
 # since 1.11.0). The application and task-runner images share one n8n
 # version, n8n_image_tag when set, else the chart's appVersion, so storage and
 # runner protocol changes cannot drift between pod families. Explicit multiMain.setup, wait, atomic, cleanup, and timeout
@@ -226,7 +226,7 @@ resource "helm_release" "n8n" {
       },
     )
 
-    # spec.replicas ownership differs per Deployment on chart 1.15.0:
+    # spec.replicas ownership differs per Deployment on chart 1.16.0:
     # - main: the chart renders it unconditionally (multiMain.replicas or
     #   replicaCount, selected by multiMain.enabled), so it is set to the HPA
     #   floor and a Helm upgrade at the floor never scales main down first.
@@ -289,7 +289,7 @@ resource "helm_release" "n8n" {
       disableProductionWebhooksOnMainProcess = true
 
       # The chart renders executions.data only on main and worker pods
-      # (re-checked on 1.15.0: tests/scripts/check-n8n-chart.sh's duplicate
+      # (re-checked on 1.16.0: tests/scripts/check-n8n-chart.sh's duplicate
       # detector fails if the chart ever adds them to webhook pods too).
       # The webhook process also decides retention when a queued run finishes,
       # so it must receive the same defaults. Keep these role-specific to avoid
@@ -587,7 +587,10 @@ resource "helm_release" "n8n" {
 
     # Single-main allows voluntary eviction (minAvailable = 0) because
     # Recreate already accepts the resulting downtime; multi-main protects
-    # one available replica during voluntary disruption.
+    # one available replica during voluntary disruption. Charts from 1.16.0
+    # render no main PDB at all while main runs one replica (chart #228),
+    # which permits eviction the same way; older charts, including the
+    # 1.11.0-based worker-pools preview, still render the minAvailable 0 budget.
     pdb = {
       enabled      = true
       minAvailable = local.n8n_main_multi_enabled ? 1 : 0
@@ -793,7 +796,7 @@ check "custom_task_runner_repository_needs_an_explicit_tag" {
 check "custom_image_repository_needs_an_explicit_tag" {
   assert {
     condition     = var.n8n_image_repository == null || var.n8n_image_tag != null
-    error_message = "n8n_image_repository is set but n8n_image_tag is null, so the chart appends its own default tag (its appVersion on upstream charts from 1.12.0, such as 2.42.4 for chart 1.15.0). That tag moves with n8n_chart_version, and the repository must already carry it, or every n8n pod fails with ImagePullBackOff and the Helm release rolls back. Pin n8n_image_tag to a tag the repository publishes."
+    error_message = "n8n_image_repository is set but n8n_image_tag is null, so the chart appends its own default tag (its appVersion on upstream charts from 1.12.0, such as 2.43.5 for chart 1.16.0). That tag moves with n8n_chart_version, and the repository must already carry it, or every n8n pod fails with ImagePullBackOff and the Helm release rolls back. Pin n8n_image_tag to a tag the repository publishes."
   }
 }
 

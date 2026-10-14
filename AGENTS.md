@@ -697,8 +697,15 @@ only with `verify = true`) until upstream PR #1714 or #1739 is released.
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
 This section records the 1.11.0 to 1.13.0 bump. The current default is
-`1.15.0` (`feat/chart-1.15.0`, issue #57: see `docs/upgrading-n8n.md`). That
-chart renders `database.ssl.enabled` as `DB_POSTGRESDB_SSL_ENABLED` itself
+`1.16.0` (`feat/chart-1.16.0`, issue #57: see `docs/upgrading-n8n.md`),
+which renders no main PDB while main runs one replica (n8n-hosting #228).
+The module still sends `pdb.minAvailable = 0` for single-main, for older
+charts; `check-n8n-chart.sh` expects no single-main PDB from chart `1.16.0`
+(a bash major.minor compare on the pinned version, rendering the whole
+chart because `helm template --show-only` errors on an empty template), and
+`smoke-test.sh` accepts a missing single-main PDB, read with
+`--ignore-not-found` so a failed lookup still fails. Before that, `1.15.0`
+(`feat/chart-1.15.0`) renders `database.ssl.enabled` as `DB_POSTGRESDB_SSL_ENABLED` itself
 (n8n-hosting #175), a name the module had always set through
 `config.extraEnv` to work around the older `DB_POSTGRESDB_SSL` key, so
 `local.n8n_chart_renders_postgres_ssl_enabled` (`locals.tf`: upstream
@@ -743,7 +750,7 @@ task-runner sidecar, its env, and the launcher ConfigMap mount on main only
 in standalone mode; this module always runs queue mode, so only workers
 carry the sidecar, `scaling.tf`'s capacity model drops the sidecar request
 from the main ceiling only for the verified upstream charts `1.12.0`,
-`1.13.0`, `1.14.0`, and `1.15.0` served from the upstream repository
+`1.13.0`, `1.14.0`, `1.15.0`, and `1.16.0` served from the upstream repository
 (`local.n8n_chart_has_worker_only_runners`, the same repository- and
 version-gated shape as `terraform-aws-n8n`, keyed on
 `local.n8n_chart_is_upstream` since `n8n_chart_repository` made the
