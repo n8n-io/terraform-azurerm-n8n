@@ -64,6 +64,16 @@ fi
 
 cd "$REPO_ROOT"
 
+# On checkov 3.3.20 a single exported TF_VAR_* (even one this module has no
+# input for) makes checkov ignore --var-file, so pass 2 reports the same counts
+# as pass 1 and never evaluates the count-gated opt-in resources; the coverage
+# check below then fails with a message that points at the wrong cause. Shells
+# that export deployment defaults (TF_VAR_location, ...) hit this. CI exports
+# none. Diagnosed in terraform-aws-n8n#199.
+while IFS= read -r var; do
+  unset "$var"
+done < <(compgen -e | grep '^TF_VAR_' || true)
+
 SCAN=(checkov -d . --framework terraform --config-file .checkov.yaml --compact)
 
 # Pass 1: the module and every example exactly as written. --quiet prints
@@ -88,24 +98,13 @@ OPT_IN_RESOURCES=(
   "kubernetes_service_v1.redis_exporter[0]"
 )
 
-echo "checkov pass 2/2: opt-in resources (--var-file $OPT_IN_TFVARS, root module only)"
+echo "checkov pass 2/2: opt-in resources (--var-file $OPT_IN_TFVARS)"
 # Not --quiet: PASSED lines are what prove the scan reached each resource.
 # The full listing is kept in a temp file and only the summary is echoed.
-#
-# The root module is scanned directly, with examples/ skipped. In a scan of
-# the whole tree checkov reaches the root only as `module.n8n.<address>`
-# through each example's call, evaluates it without the --var-file toggle, and
-# reports no `[0]` address at all, so the coverage check below can fail even
-# though the toggle is wired correctly. Scanning the root alone is what makes
-# the `[0]` addresses appear. --skip-path on the command line replaces the
-# list in .checkov.yaml instead of extending it, so every path that file skips
-# is repeated here (tests/fixtures calls the root with its own settings and
-# would draw findings that belong to a fixture, not to this module).
 OPT_IN_REPORT="$(mktemp)"
 trap 'rm -f "$OPT_IN_REPORT"' EXIT
 set +e
-"${SCAN[@]}" --skip-path examples --skip-path tests --skip-path openspec --skip-path .agents \
-  --var-file "$OPT_IN_TFVARS" > "$OPT_IN_REPORT"
+"${SCAN[@]}" --var-file "$OPT_IN_TFVARS" > "$OPT_IN_REPORT"
 rc=$?
 set -e
 
