@@ -461,8 +461,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   unchanged. In 2.21 a `ScaledObject`'s `Ready` condition no longer
   reflects HPA health, which moved to a new `HPAActive` condition. KEDA is
   cluster-wide, so with `create_aks = false` the upgrade also affects every
-  other `ScaledObject` and `ScaledJob` in the cluster; on a cluster below
-  1.34 pin `"2.20.2"` (1.33) or `"2.19.0"` (1.32) as a temporary hold. See
+  other `ScaledObject` and `ScaledJob` in the cluster. On any cluster below
+  1.34, module-managed (`aks_kubernetes_version`) or caller-managed, pin
+  `"2.20.2"` (1.33) or `"2.19.0"` (1.32) as a temporary hold, noting that
+  both are inside the affected range (`<= 2.20.2`) of KEDA's critical
+  security advisory
+  [GHSA-637c-6jxx-4rwm](https://github.com/kedacore/keda/security/advisories/GHSA-637c-6jxx-4rwm),
+  which lists no patched version (the `2.21.0` default is outside that
+  range). See
   `docs/upgrading-n8n.md`, "Moving from KEDA chart 2.15.0 to 2.21.0"
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`

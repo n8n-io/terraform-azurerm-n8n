@@ -33,7 +33,7 @@ variable "keda_chart_repository" {
 }
 
 variable "keda_chart_version" {
-  description = "KEDA Helm chart version from keda_chart_repository. Pinning the controller keeps the CRD shape any TriggerAuthentication or ScaledObject caller relies on deterministic. KEDA tests the 2.21.0 default on Kubernetes 1.34 through 1.36 (https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility); on an older cluster pin a release whose tested window covers it (2.20.2 on 1.33, 2.19.0 on 1.32) as a temporary hold, after checking the KEDA release notes for security fixes that release lacks. Ignored when install_keda = false."
+  description = "KEDA Helm chart version from keda_chart_repository. Pinning the controller keeps the CRD shape any TriggerAuthentication or ScaledObject caller relies on deterministic. KEDA tests the 2.21.0 default on Kubernetes 1.34 through 1.36 (https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility); on any cluster outside that window pin a release whose tested window covers it (2.20.2 on 1.33, 2.19.0 on 1.32) as a temporary hold. Both of those releases are inside the affected range (<= 2.20.2) of KEDA's critical security advisory GHSA-637c-6jxx-4rwm (https://github.com/kedacore/keda/security/advisories/GHSA-637c-6jxx-4rwm), which lists no patched version; the 2.21.0 default is outside that range. Ignored when install_keda = false."
   type        = string
   default     = "2.21.0"
   nullable    = false
