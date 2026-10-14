@@ -253,10 +253,12 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   #
   # `storage_type` arrived in azurerm 5.4.0 as a ForceNew argument defaulting
   # to Premium_LRS, with no state migration, and the provider stores it only
-  # when the API response carries one. A server created by azurerm 4.x (or a
-  # `-refresh=false` plan) can therefore hold an empty value and plan a
-  # replacement that destroys the database. The module never sets it and only
-  # supports Premium_LRS, so new servers still get the default.
+  # when the API response carries one. A normal refresh fills it in from Azure
+  # (a live azurerm 4.81.0 server read back as Premium_LRS and planned no
+  # replacement), but a `-refresh=false` plan, or an API response without a
+  # storage type, leaves it empty and plans a replacement that destroys the
+  # database; ignoring it is the safeguard for those cases. The module never
+  # sets it and only supports Premium_LRS, so new servers still get the default.
   lifecycle {
     ignore_changes = [
       zone,
