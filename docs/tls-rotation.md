@@ -135,9 +135,12 @@ The acme provider runs the DNS-01 challenge again, Let's Encrypt issues
 a fresh PKCS#12, and the submodule's
 `azurerm_key_vault_certificate.letsencrypt` uploads it as a new version
 of its Key Vault certificate. The submodule's
-`app_gateway_tls_cert_secret_id` output gets a new versioned URI;
-`module.n8n` re-reads it and the same apply updates the App Gateway
-listener's `ssl_certificate` to that version.
+`app_gateway_tls_cert_secret_id` output gets the new versioned URI one
+apply later: a live run showed that after the apply that imported the new
+version the output still pointed at the previous one, because the provider
+plans the secret ID as unchanged for an in-place certificate update. Run
+`terraform apply` a second time, and `module.n8n` then updates the App
+Gateway listener's `ssl_certificate` to the new version.
 
 **To rotate the ACME account key** (separate from the cert — the account
 key authenticates to Let's Encrypt):
