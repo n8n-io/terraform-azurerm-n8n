@@ -194,6 +194,17 @@ run "split_ingress_plan" {
     error_message = "Both Ingress objects must match the root module's 300 s request timeout and 30 s connection draining instead of AGIC's 30 s timeout and no draining."
   }
 
+  # The helm provider 3.x takes `set` as a list of objects, not blocks.
+  assert {
+    condition = (
+      { for s in helm_release.agic_webhook.set : s.name => s.value }["kubernetes.ingressClass"] == kubernetes_ingress_v1.webhook_public.metadata[0].annotations["kubernetes.io/ingress.class"] &&
+      { for s in helm_release.agic_admin.set : s.name => s.value }["kubernetes.ingressClass"] == kubernetes_ingress_v1.admin_internal.metadata[0].annotations["kubernetes.io/ingress.class"] &&
+      { for s in helm_release.agic_webhook.set : s.name => s.value }["appgw.applicationGatewayID"] == azurerm_application_gateway.webhook.id &&
+      { for s in helm_release.agic_admin.set : s.name => s.value }["appgw.applicationGatewayID"] == azurerm_application_gateway.admin.id
+    )
+    error_message = "Each AGIC release must watch its own ingress class and Application Gateway through its set list."
+  }
+
   # Each AGIC identity is scoped to only its own Application Gateway.
   assert {
     condition     = azurerm_role_assignment.agic_webhook_appgw_contributor.scope == azurerm_application_gateway.webhook.id

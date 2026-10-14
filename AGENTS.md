@@ -660,6 +660,29 @@ own validation fails, checks that read that variable are not evaluated, so
 such a run lists only the variable (see
 `worker_pools_reject_a_null_image_tag_on_the_preview_chart`).
 
+## Helm provider 3.x (`feat/helm3`, issue #57)
+
+The `hashicorp/helm` requirement is `~> 3.0` (Plugin Framework). Provider
+`kubernetes`/`exec`/`experiments` are attributes (`= { ... }`), `registry`
+blocks are a `registries` list, `helm_release` `set`/`set_list`/
+`set_sensitive` are lists of objects, `postrender` is an object, and
+`metadata` is a single object (`metadata.revision`, never `metadata[0]`).
+`tests/defaults.tftest.hcl` (`helm_release_revision_output_reads_the_metadata_object`)
+and the split-ingress `set` assertion guard those shapes. The first 3.x plan
+against 2.x state is an expected one-time in-place update of every
+`helm_release`, verified against a real helm 2.17.0 apply on a local
+kube-apiserver: the provider's `recomputeMetadata` sees the upgraded state's
+`set`/`set_list`/`set_sensitive = []` against null config and marks
+`metadata` unknown, and 2.x stored `set` sorted by name. The apply is a Helm
+upgrade with unchanged manifests (revision +1, no object changes) and the
+next plan is clean. Upstream issue hashicorp/terraform-provider-helm#1695
+("planned an invalid value for ... keyring") fires only when the state holds
+a non-null `keyring` or the config sets `keyring`/`description` explicitly; a
+real 2.17.0 state stores both as null (SDKv2's DiffSuppressFunc drops the
+`keyring` default on create), so do not set either on a `helm_release` until
+upstream PRs #1714/#1739 ship. A hand-built state with the default keyring
+path reproduces the error and is not what 2.x writes.
+
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
 This section records the 1.11.0 to 1.13.0 bump. The current default is

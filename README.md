@@ -134,7 +134,7 @@ provider "kubernetes" {
 }
 ```
 
-Setting `var.aks_entra_rbac` changes that output. Azure then returns an Entra ID (kubelogin `exec`) kubeconfig whose `client_certificate` and `client_key` are empty, even while local accounts stay enabled. `var.aks_local_account_disabled = true` additionally stops Azure from issuing static admin credentials. Once Entra ID integration is on, authenticate all three Kubernetes-side providers with a `kubelogin` `exec` block against `host` and `cluster_ca_certificate`. Provider blocks do not share authentication, so repeat the block on `kubernetes`, `helm`, and `kubectl`. The identity running `terraform apply` also needs Kubernetes permissions. The module creates namespaces and installs KEDA cluster-wide, so with `azure_rbac_enabled = true` (the default) grant that identity "Azure Kubernetes Service RBAC Cluster Admin" (or an equivalent custom role) scoped to the cluster. Create the grant before the Kubernetes-side resources apply; Azure role assignments can take a few minutes to propagate. With `azure_rbac_enabled = false`, add the identity to a group in `admin_group_object_ids` instead.
+Setting `var.aks_entra_rbac` changes that output. Azure then returns an Entra ID (kubelogin `exec`) kubeconfig whose `client_certificate` and `client_key` are empty, even while local accounts stay enabled. `var.aks_local_account_disabled = true` additionally stops Azure from issuing static admin credentials. Once Entra ID integration is on, authenticate all three Kubernetes-side providers with a `kubelogin` `exec` block against `host` and `cluster_ca_certificate`. Provider blocks do not share authentication, so repeat the block on `kubernetes`, `helm`, and `kubectl`. The `helm` provider (3.x) takes `kubernetes` and its nested `exec` as attributes (`kubernetes = { ... }`, `exec = { ... }`), not blocks. The identity running `terraform apply` also needs Kubernetes permissions. The module creates namespaces and installs KEDA cluster-wide, so with `azure_rbac_enabled = true` (the default) grant that identity "Azure Kubernetes Service RBAC Cluster Admin" (or an equivalent custom role) scoped to the cluster. Create the grant before the Kubernetes-side resources apply; Azure role assignments can take a few minutes to propagate. With `azure_rbac_enabled = false`, add the identity to a group in `admin_group_object_ids` instead.
 
 ```hcl
 locals {
@@ -158,11 +158,11 @@ provider "kubernetes" {
 }
 
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     host                   = module.n8n.aks_kube_config[0].host
     cluster_ca_certificate = base64decode(module.n8n.aks_kube_config[0].cluster_ca_certificate)
 
-    exec {
+    exec = {
       api_version = local.aks_exec.api_version
       command     = local.aks_exec.command
       args        = local.aks_exec.args
@@ -572,6 +572,9 @@ unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
   one. The bump plans only the two known cosmetic "Deprecated Resource"
   warnings on unversioned resource types (`kubernetes_namespace`, three
   `kubernetes_secret` resources), no resource replacement.
+- **Helm provider:** `~> 3.0`. Bumped from `~> 2.12`, breaking for
+  callers: the provider configuration syntax changes. See
+  [Moving the helm provider from 2.x to 3.x](#moving-the-helm-provider-from-2x-to-3x).
 - **`time` provider:** `~> 0.14`.
 - **n8n Helm chart:** default `1.15.0` (matches the pin of
   `terraform-aws-n8n` #190 and `terraform-google-n8n` #39; see `n8n_chart_version`'s description for what changed
@@ -585,6 +588,57 @@ unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
 - See [`docs/versioning.md`](./docs/versioning.md) for the full pin
   inventory (every provider, the n8n chart, PostgreSQL, Redis, and the CI
   toolchain), which file each lives in, and its bump tier.
+
+### Moving the helm provider from 2.x to 3.x
+
+This module now requires `hashicorp/helm` `~> 3.0`. The 3.x provider moved to
+the Terraform Plugin Framework, so blocks became attributes. Change your root
+module before running `terraform init -upgrade`:
+
+1. Widen your own `helm` constraint, if you declare one, to `~> 3.0`.
+2. In `provider "helm"`, write `kubernetes = { ... }` instead of
+   `kubernetes { ... }`, and `exec = { ... }` inside it instead of an
+   `exec { ... }` block. `registry { ... }` blocks become one
+   `registries = [{ ... }]` list, and `experiments { ... }` becomes
+   `experiments = { ... }`.
+3. In your own `helm_release` resources, `set`, `set_list`, and
+   `set_sensitive` blocks become lists of objects
+   (`set = [{ name = "...", value = "..." }]`), and a `postrender { ... }`
+   block becomes `postrender = { ... }`. Read `metadata.revision` (and the
+   other metadata fields) instead of `metadata[0].revision`.
+
+```hcl
+# Before (helm provider 2.x)
+provider "helm" {
+  kubernetes {
+    host = module.n8n.aks_kube_config[0].host
+    # ...
+  }
+}
+
+# After (helm provider 3.x)
+provider "helm" {
+  kubernetes = {
+    host = module.n8n.aks_kube_config[0].host
+    # ...
+  }
+}
+```
+
+Existing state needs no manual step. The 3.x provider upgrades each
+`helm_release` from the 2.x schema on the first plan and prints an
+`UpgradeState Triggered` warning. That first plan also shows every
+`helm_release` (`helm_release.n8n`, `module.controllers.helm_release.keda[0]`,
+and your own) as "updated in-place": `metadata` and `id` become
+`(known after apply)`, and `postrender`, `set_list`, `set_sensitive`, and
+`set_wo_revision` go to null. A release with `set` entries also shows them
+reordered, because 2.x stored `set` sorted by name and 3.x keeps your order.
+No `helm_release` is replaced. Applying runs one Helm upgrade per release with
+unchanged values, so each release's revision (and the
+`n8n_helm_release_revision` output) goes up by one. The n8n and KEDA charts
+render the same manifests from the same values, so no pods should roll. The
+next plan is clean. There is no supported
+way back to 2.x once 3.x has written the state, so back up the state first.
 
 ## Support
 
@@ -621,7 +675,7 @@ This module does not:
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.13 |
 | <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | >= 4.39.0, < 5.0.0 |
-| <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.12 |
+| <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 3.0 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
 | <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
@@ -632,7 +686,7 @@ This module does not:
 | Name | Version |
 | ---- | ------- |
 | <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | >= 4.39.0, < 5.0.0 |
-| <a name="provider_helm"></a> [helm](#provider\_helm) | ~> 2.12 |
+| <a name="provider_helm"></a> [helm](#provider\_helm) | ~> 3.0 |
 | <a name="provider_kubectl"></a> [kubectl](#provider\_kubectl) | >= 1.14 |
 | <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
 | <a name="provider_random"></a> [random](#provider\_random) | ~> 3.0 |
@@ -803,7 +857,7 @@ This module does not:
 | <a name="input_n8n_additional_domains"></a> [n8n\_additional\_domains](#input\_n8n\_additional\_domains) | Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n\_domain. n8n\_domain remains canonical for N8N\_HOST and the editor URL, and supplies the default N8N\_WEBHOOK\_URL unless n8n\_webhook\_url overrides it. The supplied Key Vault certificate must cover every name. | `list(string)` | `[]` | no |
 | <a name="input_n8n_available_binary_data_modes"></a> [n8n\_available\_binary\_data\_modes](#input\_n8n\_available\_binary\_data\_modes) | Removed after 0.1.0. Must stay null; kept for one release only so a configuration that still sets it fails with migration guidance instead of a bare "Unsupported argument" error. n8n 2.x never reads N8N\_AVAILABLE\_BINARY\_DATA\_MODES, which this input rendered. If the list contained azure and neither n8n\_binary\_data\_storage\_mode nor n8n\_execution\_data\_storage\_mode is azure, set azure\_blob\_retain\_read\_access = true in the same change, or the Azure connection (and, with workload-identity authentication, the Blob role assignment) is removed and n8n can no longer read the retained Azure objects. | `list(string)` | `null` | no |
 | <a name="input_n8n_binary_data_storage_mode"></a> [n8n\_binary\_data\_storage\_mode](#input\_n8n\_binary\_data\_storage\_mode) | Where n8n writes new binary data. `azure` (the default) writes to the private module-managed Blob container and requires the separate `feat:binaryDataAz` Enterprise entitlement. `database` stores binary data in PostgreSQL and is the durable queue-mode fallback when that entitlement is unavailable. 0.1.0 does not support the inline-memory `default` mode or a shared-filesystem mode. Changing this value does not move existing objects; n8n reads each object from the backend recorded in its ID, so when moving writes from azure to database set azure\_blob\_retain\_read\_access = true until the Azure objects expire or are migrated. | `string` | `"azure"` | no |
-| <a name="input_n8n_chart_repository"></a> [n8n\_chart\_repository](#input\_n8n\_chart\_repository) | Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Terraform's Helm provider fetches the chart from wherever `terraform apply` runs, not from inside the AKS cluster, so point this at a private mirror, e.g. an ACR OCI repository, when the machine running Terraform (not the cluster) has no egress to ghcr.io. This does not affect runtime container images pulled by the cluster's nodes; use n8n\_image\_repository (and n8n\_task\_runner\_image\_repository) to mirror those separately. The mirror must serve the exact chart version named by n8n\_chart\_version; this module does not verify that a mirrored repository actually carries it. Authenticate the Terraform runner to a private OCI mirror outside this module, through a registry block in the caller's helm provider configuration; never embed credentials in this URL, which is stored in plans and state and is rejected when it carries user:password@ userinfo. Basic-auth https:// chart repositories are not supported. Any value other than the exact default counts as a mirror whose chart this module cannot verify: check.graceful\_shutdown\_fits\_grace\_period and check.worker\_keda\_pause\_requires\_a\_supported\_chart (n8n.tf) are skipped, the advisory capacity model keeps the task-runner sidecar allowance on main pods regardless of n8n\_chart\_version, and while PostgreSQL TLS is on (effective ssl\_mode other than disable) the module keeps its own DB\_POSTGRESDB\_SSL\_ENABLED entry in config.extraEnv even at 1.15.0 or newer, so a mirrored chart that also renders the name gives each n8n container two entries with the same value (see docs/upgrading-n8n.md). | `string` | `"oci://ghcr.io/n8n-io/n8n-helm-chart"` | no |
+| <a name="input_n8n_chart_repository"></a> [n8n\_chart\_repository](#input\_n8n\_chart\_repository) | Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Terraform's Helm provider fetches the chart from wherever `terraform apply` runs, not from inside the AKS cluster, so point this at a private mirror, e.g. an ACR OCI repository, when the machine running Terraform (not the cluster) has no egress to ghcr.io. This does not affect runtime container images pulled by the cluster's nodes; use n8n\_image\_repository (and n8n\_task\_runner\_image\_repository) to mirror those separately. The mirror must serve the exact chart version named by n8n\_chart\_version; this module does not verify that a mirrored repository actually carries it. Authenticate the Terraform runner to a private OCI mirror outside this module, through the registries attribute of the caller's helm provider configuration; never embed credentials in this URL, which is stored in plans and state and is rejected when it carries user:password@ userinfo. Basic-auth https:// chart repositories are not supported. Any value other than the exact default counts as a mirror whose chart this module cannot verify: check.graceful\_shutdown\_fits\_grace\_period and check.worker\_keda\_pause\_requires\_a\_supported\_chart (n8n.tf) are skipped, the advisory capacity model keeps the task-runner sidecar allowance on main pods regardless of n8n\_chart\_version, and while PostgreSQL TLS is on (effective ssl\_mode other than disable) the module keeps its own DB\_POSTGRESDB\_SSL\_ENABLED entry in config.extraEnv even at 1.15.0 or newer, so a mirrored chart that also renders the name gives each n8n container two entries with the same value (see docs/upgrading-n8n.md). | `string` | `"oci://ghcr.io/n8n-io/n8n-helm-chart"` | no |
 | <a name="input_n8n_chart_version"></a> [n8n\_chart\_version](#input\_n8n\_chart\_version) | n8n Helm chart version, fetched from n8n\_chart\_repository (default oci://ghcr.io/n8n-io/n8n-helm-chart). The version-dependent behavior below describes the upstream charts; a mirror must serve this exact version. The default 1.15.0 matches the pin of terraform-aws-n8n #190 and terraform-google-n8n #39. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner, and the first upgrade from an older chart resets the worker count to 1, terminating any surplus worker pods, until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount are usable (added in chart 1.12.0 by #177, reliable only from 1.13.0; see n8n\_worker\_keda\_pause). With n8n\_image\_tag null (the default) the chart's appVersion is the running n8n version (2.42.4 for 1.15.0), so a chart bump is also an n8n upgrade across its database migrations. Inert here: the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject), and 1.14.0's WEBHOOK\_URL to N8N\_WEBHOOK\_URL rename (chart #184), S3-only N8N\_AVAILABLE\_BINARY\_DATA\_MODES removal (chart #185), and aggregated values-validation errors (chart #209): this module sets neither webhook.url nor ingress nor s3 and renders its own N8N\_WEBHOOK\_URL. 1.15.0 renders database.ssl.enabled as DB\_POSTGRESDB\_SSL\_ENABLED, the name n8n reads, instead of DB\_POSTGRESDB\_SSL (chart #175); on the upstream repository at a numbered 1.15.0 or newer the module stops setting DB\_POSTGRESDB\_SSL\_ENABLED itself so no container carries it twice, and keeps setting it for older charts, prereleases, and mirrors while PostgreSQL TLS is on (effective ssl\_mode other than disable; with disable neither the chart nor the module sets it). 1.15.0's new extraObjects and database.ssl.existingSecret values (chart #219, #222) are not exposed. | `string` | `"1.15.0"` | no |
 | <a name="input_n8n_community_packages_prevent_loading"></a> [n8n\_community\_packages\_prevent\_loading](#input\_n8n\_community\_packages\_prevent\_loading) | Prevent installed community packages from loading at runtime without uninstalling them. | `bool` | `false` | no |
 | <a name="input_n8n_community_packages_registry"></a> [n8n\_community\_packages\_registry](#input\_n8n\_community\_packages\_registry) | Optional HTTP or HTTPS npm registry used for community-package installation. Null leaves n8n on its public registry default. Custom registries require the matching Enterprise entitlement. | `string` | `null` | no |
