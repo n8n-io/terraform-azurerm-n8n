@@ -8477,6 +8477,13 @@ run "private_dns_record_zone_id_uses_lowercased_zone_name" {
     n8n_domain                = "n8n.internal.example.com"
   }
 
+  override_data {
+    target = data.azurerm_client_config.current[0]
+    values = {
+      subscription_id = "11111111-1111-1111-1111-111111111111"
+    }
+  }
+
   override_resource {
     target          = azurerm_application_gateway.n8n[0]
     override_during = plan
@@ -8496,6 +8503,82 @@ run "private_dns_record_zone_id_uses_lowercased_zone_name" {
   assert {
     condition     = azurerm_private_dns_a_record.n8n["n8n.internal.example.com"].name == "n8n"
     error_message = "The record name must be relative to the lowercased zone name."
+  }
+}
+
+# azurerm 4.x built every private DNS record ID from the provider's
+# subscription ID (client_config.subscription_id), never from the zone ID, and
+# 5.x rebuilds private_dns_zone_id verbatim from that record ID on refresh. A
+# zone ID whose subscription differs from the provider's only in letter case
+# must therefore send the provider's string, or every record is replaced.
+run "private_dns_record_zone_id_uses_the_provider_subscription_casing" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode       = "internal"
+    create_private_dns_record = true
+    private_dns_zone_id       = "/subscriptions/AAAAAAAA-1111-1111-1111-111111111111/resourceGroups/n8ntest-dns-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    n8n_domain                = "n8n.internal.example.com"
+  }
+
+  override_data {
+    target = data.azurerm_client_config.current[0]
+    values = {
+      subscription_id = "aaaaaaaa-1111-1111-1111-111111111111"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/applicationGateways/n8ntest-appgw"
+      frontend_ip_configuration = {
+        private_ip_address = "10.0.4.10"
+      }
+    }
+  }
+
+  assert {
+    condition     = azurerm_private_dns_a_record.n8n["n8n.internal.example.com"].private_dns_zone_id == "/subscriptions/aaaaaaaa-1111-1111-1111-111111111111/resourceGroups/n8ntest-dns-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    error_message = "When the zone ID's subscription matches the provider's ignoring case, the record must use the provider's subscription string, which is what azurerm 4.x wrote into the record ID."
+  }
+}
+
+# A zone in another subscription is addressed through that subscription:
+# azurerm 5.x supports it, and no 4.x record can exist there (4.x always
+# wrote into the provider's subscription).
+run "private_dns_record_zone_id_keeps_a_different_subscription" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode       = "internal"
+    create_private_dns_record = true
+    private_dns_zone_id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    n8n_domain                = "n8n.internal.example.com"
+  }
+
+  override_data {
+    target = data.azurerm_client_config.current[0]
+    values = {
+      subscription_id = "11111111-1111-1111-1111-111111111111"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/applicationGateways/n8ntest-appgw"
+      frontend_ip_configuration = {
+        private_ip_address = "10.0.4.10"
+      }
+    }
+  }
+
+  assert {
+    condition     = azurerm_private_dns_a_record.n8n["n8n.internal.example.com"].private_dns_zone_id == "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    error_message = "A private DNS zone in a different subscription must keep that subscription in the record's zone ID."
   }
 }
 

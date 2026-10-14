@@ -60,7 +60,7 @@ The module **expects a pre-existing VNet** and five pre-sized subnets (AKS, Appl
 ## Prerequisites
 
 - **Terraform** `>= 1.13` (1.12 is the first release that short-circuits `||` and `&&`, which the module's `var.x == null || var.x.attr` validations need; on 1.11 and earlier they fail whenever such an input is left null. 1.13 stops `terraform test` leaking one provider process per run block, which would exhaust a CI runner as the suite grows. `postgres_admin_password_wo` uses ephemeral input variables (added in 1.10) and write-only arguments (added in 1.11), and 1.9 added the cross-variable validation this module also relies on, e.g. `var.app_gateway_keyvault_id` against `var.app_gateway_keyvault_role_assignment_enabled`).
-- **`hashicorp/azurerm`** `>= 4.39.0, < 5.0.0` (see `versions.tf` for why 4.39.0). The recommended `persist_id_on_create_before_polling_for_completion` provider feature in the usage snippet below needs `>= 4.75.0`; the examples require that version.
+- **`hashicorp/azurerm`** `>= 5.5.0, < 6.0.0` (see `versions.tf` for why 5.5.0). Upgrading an existing deployment from 4.x: [`docs/upgrading-azurerm-5.md`](./docs/upgrading-azurerm-5.md).
 - **Azure CLI** `>= 2.50` (`az login`, plus the few imperative steps in the docs under `docs/`); `>= 2.75` to run `tests/scripts/preflight-region-check.sh`, which parses the newer `az postgres flexible-server list-skus` payload and uses the `redisenterprise` extension.
 - **jq** (used by `tests/scripts/preflight-region-check.sh` and the offline chart check; the module itself never shells out to it).
 - **Region preflight (recommended before the first `apply` in a new region or subscription):** run `tests/scripts/preflight-region-check.sh` from your root. It reads the region, sizing, and SKUs from your own `terraform plan` and checks AKS zone support, subscription vCPU quota headroom against the worst case of every node pool at its effective `max_count` (the user pool's `aks_node_vm_size` x `aks_node_count_max`, plus the system pool's effective VM size x effective `max_count`, which default to the same values but can be overridden independently via `aks_system_node_vm_size` / `aks_system_node_count_max`), PostgreSQL Flexible Server version/SKU availability, and (with `--probe-redis`) Azure Managed Redis capacity, the four gaps that otherwise fail 10-20 minutes into an apply. See the first four entries of [`docs/troubleshooting.md`](./docs/troubleshooting.md) and...
@@ -528,6 +528,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 
 - [`docs/sandbox.md`](./docs/sandbox.md) — a cheaper single-main evaluation profile layered on `examples/small/`, plus the PostgreSQL connection-budget arithmetic that `check.postgres_pool_size_fits_known_max_connections` warns about at plan time.
 - [`docs/post-deployment.md`](./docs/post-deployment.md) — DNS verification, encryption-key backup, license activation, post-apply health checks.
+- [`docs/upgrading-azurerm-5.md`](./docs/upgrading-azurerm-5.md): moving an existing deployment from azurerm 4.x to 5.x, the plan to expect per resource, and a live checklist.
 - [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md): bumping `n8n_image_tag` or `n8n_chart_version` on an existing deployment, per-chart-version upgrade notes (the main task-runner sidecar removal on `1.12.0`, the one-time worker reset to 1 replica on `1.13.0`, which can interrupt running executions, the `N8N_AVAILABLE_BINARY_DATA_MODES` removal on `1.14.0`, the chart taking over `DB_POSTGRESDB_SSL_ENABLED` on `1.15.0`, and the dropped single-main PodDisruptionBudget on `1.16.0`), rollback.
 - [`docs/troubleshooting.md`](./docs/troubleshooting.md) — symptom → root cause → fix for the failure modes observed in real `terraform apply` runs.
 - [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md) — manual recovery for stuck namespace finalizers, half-uninstalled Helm releases, and App Gateway frontend-IP release.
@@ -566,6 +567,10 @@ unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
 
 ## Compatibility
 
+- **azurerm provider:** `>= 5.5.0, < 6.0.0`. Moved from `>= 4.39.0,
+  < 5.0.0`, breaking for callers; see
+  [`docs/upgrading-azurerm-5.md`](./docs/upgrading-azurerm-5.md) before
+  upgrading an existing deployment.
 - **Kubernetes provider:** `~> 3.0`. Bumped from `~> 2.0` in
   `port-aws-050-enhancements`, breaking for callers pinned to the previous
   major; widen your own `kubernetes` provider constraint if you declare
@@ -797,6 +802,7 @@ This module does not:
 | [time_sleep.aks_kms_kv_crypto_user_rbac_propagation](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
 | [time_sleep.appgw_kv_secrets_user_rbac_propagation](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
 | [time_sleep.n8n_helm_settle](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
+| [azurerm_client_config.current](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/client_config) | data source |
 | [azurerm_kubernetes_cluster.existing](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/kubernetes_cluster) | data source |
 | [azurerm_postgresql_flexible_server.current](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/postgresql_flexible_server) | data source |
 

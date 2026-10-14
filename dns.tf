@@ -12,6 +12,13 @@
 # remains configured. The caller then owns both ingress and application DNS;
 # check.dns_requires_module_managed_ingress reports the inert zone setting.
 
+# The provider's own subscription ID, exactly as azurerm 4.x used it when it
+# created private DNS records (it ignored the zone ID's subscription and
+# built the record ID from this value). Read only on the private DNS path.
+data "azurerm_client_config" "current" {
+  count = local.private_dns_records_managed ? 1 : 0
+}
+
 locals {
   public_dns_zone_name = var.public_dns_zone_id == null ? null : lower(reverse(split("/", var.public_dns_zone_id))[0])
   public_dns_zone_resource_group_name = var.public_dns_zone_id == null ? null : split(
@@ -25,13 +32,21 @@ locals {
     var.private_dns_zone_id,
   )[4]
   # azurerm 5.x addresses a private DNS record by zone ID, and that argument
-  # forces replacement. Rebuild the ID with the lowercased zone name the
-  # record has always used, so a zone ID supplied with different casing does
-  # not replace records created by azurerm 4.x (whose refreshed state derives
-  # the zone ID from the record's own ID).
+  # forces replacement with an exact string compare. On refresh, 5.x rebuilds
+  # the zone ID verbatim from the record's own ID, which azurerm 4.x created
+  # from the provider's subscription ID, the zone ID's resource group segment,
+  # and the lowercased zone name. Rebuild the same string, so records created
+  # by 4.x are not replaced when the caller's zone ID differs only in casing.
+  # A zone in another subscription keeps that subscription: 5.x can target it
+  # (4.x always wrote into the provider's subscription).
+  private_dns_zone_subscription_id = var.private_dns_zone_id == null ? null : (
+    local.private_dns_records_managed && lower(split("/", var.private_dns_zone_id)[2]) == lower(try(data.azurerm_client_config.current[0].subscription_id, ""))
+    ? data.azurerm_client_config.current[0].subscription_id
+    : split("/", var.private_dns_zone_id)[2]
+  )
   private_dns_zone_canonical_id = var.private_dns_zone_id == null ? null : format(
     "/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/privateDnsZones/%s",
-    split("/", var.private_dns_zone_id)[2],
+    local.private_dns_zone_subscription_id,
     local.private_dns_zone_resource_group_name,
     local.private_dns_zone_name,
   )
