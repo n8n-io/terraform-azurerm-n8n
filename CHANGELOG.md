@@ -411,7 +411,13 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   created without `orchestrator_version` already stores the cluster's
   `kubernetes_version`. A cluster whose control plane was upgraded before
   this change, with pools left behind, plans only the two pool upgrades.
-  Set `aks_node_pools_follow_cluster_version = false` to keep the
+  Observed live on 2026-10-14 (`examples/small`, `swedencentral`, 1.35 to
+  1.36): the plan was the two in-place updates above, the apply took
+  21m52s (control plane, then the system pool, then `n8nuser`), each pool
+  grew by one surge node, `/readyz` and HTTPS `/healthz` never failed in
+  169 samples, one main pod stayed ready, the single worker was
+  unavailable for about 100 seconds, every node ended on `v1.36.4`, and
+  the next plans were clean. Set `aks_node_pools_follow_cluster_version = false` to keep the
   control-plane-only behavior and upgrade the pools out of band; switching
   to `false` plans no change. With `create_aks = false` the input has no
   effect, and `false` triggers the non-failing
@@ -661,18 +667,18 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   note:** a module-managed cluster (`create_aks = true`) that does not pin
   `aks_kubernetes_version` upgrades from `1.35` to `1.36` on the next apply.
   With the new `aks_node_pools_follow_cluster_version` default (`true`, see
-  below) the plan shows three in-place updates, `kubernetes_version` and
-  `default_node_pool[0].orchestrator_version` on
-  `azurerm_kubernetes_cluster.n8n` and `orchestrator_version` on
-  `azurerm_kubernetes_cluster_node_pool.n8n_user`, and the apply upgrades
-  the control plane, then the system pool, then the user pool: a surge
-  upgrade that drains every node and restarts n8n pods. The API server can
-  be briefly unavailable during the control plane step, so apply it on its
-  own: to take the rest of this release first, pin
-  `aks_kubernetes_version = "1.35"`, then remove the pin in a separate
-  apply. With `aks_node_pools_follow_cluster_version = false` only the
-  control plane moves: observed live on 2026-10-14 (`examples/small`,
-  `swedencentral`, `azurerm` 4.81.0; see
+  the entry above) the plan shows two in-place updates (`2 to change`):
+  `kubernetes_version` and `default_node_pool[0].orchestrator_version` on
+  `azurerm_kubernetes_cluster.n8n`, and `orchestrator_version` on
+  `azurerm_kubernetes_cluster_node_pool.n8n_user`. The apply upgrades the
+  control plane, then the system pool, then the user pool: a surge upgrade
+  that drains every node and restarts n8n pods (observed live, see the
+  entry above). The API server can be briefly unavailable during the
+  control plane step, so apply it on its own: to take the rest of this
+  release first, pin `aks_kubernetes_version = "1.35"`, then remove the pin
+  in a separate apply. With `aks_node_pools_follow_cluster_version = false`
+  only the control plane moves: observed live on 2026-10-14
+  (`examples/small`, `swedencentral`, `azurerm` 4.81.0; see
   `docs/qualification-runs/2026-10-14-aks-1.36-swedencentral.md`), the plan
   was one in-place change, `kubernetes_version` `1.35` to `1.36`, the apply
   took 177 s, both pools and every node stayed on `1.35.8`, and the next
