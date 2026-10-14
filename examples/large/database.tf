@@ -17,11 +17,10 @@ resource "azurerm_private_dns_zone" "postgres" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  name                  = "${var.friendly_name_prefix}-postgres-link"
-  resource_group_name   = azurerm_resource_group.n8n.name
-  private_dns_zone_name = azurerm_private_dns_zone.postgres.name
-  virtual_network_id    = azurerm_virtual_network.n8n.id
-  tags                  = local.common_tags
+  name                = "${var.friendly_name_prefix}-postgres-link"
+  private_dns_zone_id = azurerm_private_dns_zone.postgres.id
+  virtual_network_id  = azurerm_virtual_network.n8n.id
+  tags                = local.common_tags
 }
 
 resource "azurerm_postgresql_flexible_server" "n8n" {
@@ -60,9 +59,12 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   tags = local.common_tags
 
   lifecycle {
+    # storage_type (azurerm 5.4.0) is ForceNew with no state migration; see
+    # the module's database.tf for why a 4.x-created server must ignore it.
     ignore_changes = [
       zone,
       high_availability[0].standby_availability_zone,
+      storage_type,
     ]
   }
 }

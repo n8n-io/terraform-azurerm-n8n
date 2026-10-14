@@ -47,6 +47,11 @@ run "small_tier_plan" {
   }
 
   assert {
+    condition     = length(azurerm_subnet.postgres.service_endpoint) == 1 && azurerm_subnet.postgres.service_endpoint[0].service == "Microsoft.Storage"
+    error_message = "The PostgreSQL subnet must keep its single Microsoft.Storage service endpoint (the azurerm 5.x service_endpoint block)."
+  }
+
+  assert {
     condition     = azurerm_subnet.redis.private_endpoint_network_policies == "Disabled" && azurerm_subnet.private_endpoints.private_endpoint_network_policies == "Disabled"
     error_message = "Both private-endpoint subnets must disable private endpoint network policies."
   }

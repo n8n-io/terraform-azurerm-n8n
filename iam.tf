@@ -57,13 +57,12 @@ resource "azurerm_role_assignment" "agic_addon_rg_reader" {
 # Subject string format is fixed by the AKS workload identity contract:
 #   system:serviceaccount:<namespace>:<serviceaccount-name>
 #
-# Two azurerm v5 forward-compat notes carried
-# over from modules/infra/iam.tf:
-#   1. `resource_group_name` is OMITTED — deprecated in azurerm 4.x; the
-#      credential is scoped to its parent UAMI (`user_assigned_identity_id`)
-#      which itself carries the RG.
+# Two azurerm notes carried over from modules/infra/iam.tf:
+#   1. `resource_group_name` is OMITTED: deprecated in azurerm 4.x and
+#      removed in 5.0; the credential is scoped to its parent UAMI
+#      (`user_assigned_identity_id`), which itself carries the RG.
 #   2. `parent_id` was renamed to `user_assigned_identity_id` in azurerm
-#      4.x; the v5-stable name is `user_assigned_identity_id`.
+#      4.x and removed in 5.0, where `user_assigned_identity_id` is required.
 resource "azurerm_federated_identity_credential" "n8n_workload" {
   name                      = "${var.friendly_name_prefix}-n8n-workload-fed"
   user_assigned_identity_id = azurerm_user_assigned_identity.n8n_workload.id

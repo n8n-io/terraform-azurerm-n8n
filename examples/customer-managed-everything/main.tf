@@ -66,7 +66,10 @@ resource "azurerm_subnet" "postgres" {
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
   address_prefixes     = ["10.0.9.0/24"]
-  service_endpoints    = ["Microsoft.Storage"]
+
+  service_endpoint {
+    service = "Microsoft.Storage"
+  }
 
   delegation {
     name = "postgres-flexible-server"
@@ -106,6 +109,10 @@ resource "azurerm_kubernetes_cluster" "existing" {
 
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
+
+  node_provisioning_profile {
+    mode = "Manual"
+  }
 
   identity {
     type = "SystemAssigned"
@@ -158,10 +165,9 @@ resource "azurerm_private_dns_zone" "postgres" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  name                  = "${var.friendly_name_prefix}-postgres-dns-link"
-  resource_group_name   = azurerm_resource_group.n8n.name
-  private_dns_zone_name = azurerm_private_dns_zone.postgres.name
-  virtual_network_id    = azurerm_virtual_network.n8n.id
+  name                = "${var.friendly_name_prefix}-postgres-dns-link"
+  private_dns_zone_id = azurerm_private_dns_zone.postgres.id
+  virtual_network_id  = azurerm_virtual_network.n8n.id
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-postgres-dns-link" })
 }
@@ -188,9 +194,12 @@ resource "azurerm_postgresql_flexible_server" "existing" {
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-shared-pg" })
 
   lifecycle {
+    # storage_type (azurerm 5.4.0) is ForceNew with no state migration; see
+    # the module's database.tf for why a 4.x-created server must ignore it.
     ignore_changes = [
       zone,
       high_availability[0].standby_availability_zone,
+      storage_type,
     ]
   }
 }
@@ -211,11 +220,10 @@ resource "azurerm_private_dns_zone" "redis" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
-  name                  = "${var.friendly_name_prefix}-redis-dns-link"
-  resource_group_name   = azurerm_resource_group.n8n.name
-  private_dns_zone_name = azurerm_private_dns_zone.redis.name
-  virtual_network_id    = azurerm_virtual_network.n8n.id
-  tags                  = local.common_tags
+  name                = "${var.friendly_name_prefix}-redis-dns-link"
+  private_dns_zone_id = azurerm_private_dns_zone.redis.id
+  virtual_network_id  = azurerm_virtual_network.n8n.id
+  tags                = local.common_tags
 }
 
 resource "azurerm_managed_redis" "existing" {
@@ -273,6 +281,7 @@ resource "random_string" "storage_suffix" {
 }
 
 resource "azurerm_storage_account" "existing" {
+  # checkov:skip=CKV_AZURE_59:Public network access is disabled through public_network_access = "Disabled" (azurerm 5.5.0+); checkov still inspects only the deprecated public_network_access_enabled, which azurerm removes in 6.0.
   name                = substr("${var.friendly_name_prefix}st${random_string.storage_suffix.result}", 0, 24)
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
@@ -284,7 +293,7 @@ resource "azurerm_storage_account" "existing" {
   allow_nested_items_to_be_public = false
   https_traffic_only_enabled      = true
   min_tls_version                 = "TLS1_2"
-  public_network_access_enabled   = false
+  public_network_access           = "Disabled"
   shared_access_key_enabled       = false
 
   blob_properties {
@@ -326,11 +335,10 @@ resource "azurerm_private_dns_zone" "blob" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
-  name                  = "${var.friendly_name_prefix}-blob-vnet-link"
-  resource_group_name   = azurerm_resource_group.n8n.name
-  private_dns_zone_name = azurerm_private_dns_zone.blob.name
-  virtual_network_id    = azurerm_virtual_network.n8n.id
-  registration_enabled  = false
+  name                 = "${var.friendly_name_prefix}-blob-vnet-link"
+  private_dns_zone_id  = azurerm_private_dns_zone.blob.id
+  virtual_network_id   = azurerm_virtual_network.n8n.id
+  registration_enabled = false
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-blob-vnet-link" })
 }

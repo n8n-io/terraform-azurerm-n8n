@@ -65,7 +65,10 @@ resource "azurerm_subnet" "postgres" {
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
   address_prefixes     = ["10.0.9.0/24"]
-  service_endpoints    = ["Microsoft.Storage"]
+
+  service_endpoint {
+    service = "Microsoft.Storage"
+  }
 
   delegation {
     name = "postgres-flexible-server"
@@ -110,6 +113,10 @@ resource "azurerm_kubernetes_cluster" "existing" {
 
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
+
+  node_provisioning_profile {
+    mode = "Manual"
+  }
 
   identity {
     type = "SystemAssigned"

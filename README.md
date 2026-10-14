@@ -59,7 +59,7 @@ The module **expects a pre-existing VNet** and five pre-sized subnets (AKS, Appl
 ## Prerequisites
 
 - **Terraform** `>= 1.12` (the first release that short-circuits `||` and `&&`, which the module's `var.x == null || var.x.attr` validations need; on 1.11 and earlier they fail whenever such an input is left null. `postgres_admin_password_wo` uses ephemeral input variables (added in 1.10) and write-only arguments (added in 1.11), and 1.9 added the cross-variable validation this module also relies on, e.g. `var.app_gateway_keyvault_id` against `var.app_gateway_keyvault_role_assignment_enabled`).
-- **`hashicorp/azurerm`** `>= 4.39.0, < 5.0.0` (see `versions.tf` for why 4.39.0).
+- **`hashicorp/azurerm`** `>= 5.5.0, < 6.0.0` (see `versions.tf` for why 5.5.0). Upgrading an existing deployment from 4.x: [`docs/upgrading-azurerm-5.md`](./docs/upgrading-azurerm-5.md).
 - **Azure CLI** `>= 2.50` (`az login`, plus the few imperative steps in the docs under `docs/`); `>= 2.75` to run `tests/scripts/preflight-region-check.sh`, which parses the newer `az postgres flexible-server list-skus` payload and uses the `redisenterprise` extension.
 - **jq** (used by `tests/scripts/preflight-region-check.sh` and the offline chart check; the module itself never shells out to it).
 - **Region preflight (recommended before the first `apply` in a new region or subscription):** run `tests/scripts/preflight-region-check.sh` from your root. It reads the region, sizing, and SKUs from your own `terraform plan` and checks AKS zone support, subscription vCPU quota headroom against the worst case of every node pool at its effective `max_count` (the user pool's `aks_node_vm_size` x `aks_node_count_max`, plus the system pool's effective VM size x effective `max_count`, which default to the same values but can be overridden independently via `aks_system_node_vm_size` / `aks_system_node_count_max`), PostgreSQL Flexible Server version/SKU availability, and (with `--probe-redis`) Azure Managed Redis capacity, the four gaps that otherwise fail 10-20 minutes into an apply. See the first four entries of [`docs/troubleshooting.md`](./docs/troubleshooting.md) and...
@@ -441,6 +441,7 @@ Public or private Azure DNS A-records are optional and mutually exclusive (`crea
 
 - [`docs/sandbox.md`](./docs/sandbox.md) — a cheaper single-main evaluation profile layered on `examples/small/`, plus the PostgreSQL connection-budget arithmetic that `check.postgres_pool_size_fits_known_max_connections` warns about at plan time.
 - [`docs/post-deployment.md`](./docs/post-deployment.md) — DNS verification, encryption-key backup, license activation, post-apply health checks.
+- [`docs/upgrading-azurerm-5.md`](./docs/upgrading-azurerm-5.md): moving an existing deployment from azurerm 4.x to 5.x, the plan to expect per resource, and a live checklist.
 - [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md): bumping `n8n_image_tag` or `n8n_chart_version` on an existing deployment, per-chart-version upgrade notes (the main task-runner sidecar removal on `1.12.0`, the one-time worker reset to 1 replica on `1.13.0`, which can interrupt running executions, and the `N8N_AVAILABLE_BINARY_DATA_MODES` removal on `1.14.0`), rollback.
 - [`docs/troubleshooting.md`](./docs/troubleshooting.md) — symptom → root cause → fix for the failure modes observed in real `terraform apply` runs.
 - [`docs/destroy-cleanup.md`](./docs/destroy-cleanup.md) — manual recovery for stuck namespace finalizers, half-uninstalled Helm releases, and App Gateway frontend-IP release.
@@ -479,6 +480,10 @@ unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
 
 ## Compatibility
 
+- **azurerm provider:** `>= 5.5.0, < 6.0.0`. Moved from `>= 4.39.0,
+  < 5.0.0`, breaking for callers; see
+  [`docs/upgrading-azurerm-5.md`](./docs/upgrading-azurerm-5.md) before
+  upgrading an existing deployment.
 - **Kubernetes provider:** `~> 3.0`. Bumped from `~> 2.0` in
   `port-aws-050-enhancements`, breaking for callers pinned to the previous
   major; widen your own `kubernetes` provider constraint if you declare
@@ -609,7 +614,7 @@ This module does not:
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.12 |
-| <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | >= 4.39.0, < 5.0.0 |
+| <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | >= 5.5.0, < 6.0.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 3.0 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.14 |
 | <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
@@ -620,7 +625,7 @@ This module does not:
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | >= 4.39.0, < 5.0.0 |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | >= 5.5.0, < 6.0.0 |
 | <a name="provider_helm"></a> [helm](#provider\_helm) | ~> 3.0 |
 | <a name="provider_kubectl"></a> [kubectl](#provider\_kubectl) | >= 1.14 |
 | <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
@@ -698,6 +703,7 @@ This module does not:
 | [time_sleep.aks_kms_kv_crypto_user_rbac_propagation](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
 | [time_sleep.appgw_kv_secrets_user_rbac_propagation](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
 | [time_sleep.n8n_helm_settle](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
+| [azurerm_client_config.current](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/client_config) | data source |
 | [azurerm_kubernetes_cluster.existing](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/kubernetes_cluster) | data source |
 | [azurerm_postgresql_flexible_server.current](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/postgresql_flexible_server) | data source |
 | [azurerm_resource_group.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/resource_group) | data source |
@@ -937,7 +943,7 @@ This module does not:
 | <a name="input_redis_sku_name"></a> [redis\_sku\_name](#input\_redis\_sku\_name) | Azure Managed Redis SKU. Restricted to the SKUs documented at 25 GB or smaller — the size ceiling for the `NoCluster` clustering policy this module always uses (https://learn.microsoft.com/en-us/azure/redis/architecture#cluster-policies). Larger SKUs (`Balanced_B50` and up, `ComputeOptimized_X50` and up, `MemoryOptimized_M50` and up, all `FlashOptimized_*`) only support `OSSCluster` or `EnterpriseCluster` and are not offered here. Ignored when `create_redis = false`. | `string` | `"Balanced_B1"` | no |
 | <a name="input_redis_subnet_id"></a> [redis\_subnet\_id](#input\_redis\_subnet\_id) | Resource ID of the subnet the Azure Managed Redis private endpoint attaches to. Must have `private_endpoint_network_policies` disabled (Azure refuses to create a private endpoint when network policies are enforced on the subnet). No subnet delegation required. Format: /subscriptions/<sub>/.../subnets/<name>. | `string` | n/a | yes |
 | <a name="input_resource_group_name"></a> [resource\_group\_name](#input\_resource\_group\_name) | Name of an existing Azure resource group all resources this module creates land in. The module does NOT create the resource group — the caller provisions it (or supplies one) so its lifecycle is decoupled from this module. | `string` | n/a | yes |
-| <a name="input_storage_account_replication_type"></a> [storage\_account\_replication\_type](#input\_storage\_account\_replication\_type) | Replication type for the module-managed StorageV2 account used by Azure Blob: LRS, ZRS, GRS, RAGRS, GZRS, or RAGZRS. The default LRS minimizes cost; production deployments that need zone or regional durability should select a replication type available in their Azure region. Changing between a non-zonal type (LRS, GRS, RAGRS) and a zone-redundant type (ZRS, GZRS, RAGZRS) makes Terraform replace the storage account, losing the data in it; changes within one group update in place. See docs/build-time-decisions.md. | `string` | `"LRS"` | no |
+| <a name="input_storage_account_replication_type"></a> [storage\_account\_replication\_type](#input\_storage\_account\_replication\_type) | Replication type for the module-managed StorageV2 account used by Azure Blob: LRS, ZRS, GRS, RAGRS, GZRS, or RAGZRS. The default LRS minimizes cost; production deployments that need zone or regional durability should select a replication type available in their Azure region. Changes within one group (LRS, GRS, RAGRS or ZRS, GZRS, RAGZRS) update in place, and so do the paired moves LRS/ZRS, GRS/GZRS and RAGRS/RAGZRS, which azurerm 5.x submits as an Azure storage account migration that can take a long time. Any other move between the non-zonal and zone-redundant groups, for example LRS to GZRS, makes Terraform replace the storage account, losing the data in it. See docs/build-time-decisions.md. | `string` | `"LRS"` | no |
 | <a name="input_vnet_id"></a> [vnet\_id](#input\_vnet\_id) | Resource ID of the VNet n8n will deploy into. The module creates `privatelink.postgres.database.azure.com` and Redis / Blob private DNS zones and links them to this VNet so managed services resolve to private IPs, except for any zone whose create\_*\_private\_dns\_zone switch is false; that zone and its link are the caller's. Format: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<name>. | `string` | n/a | yes |
 
 ## Outputs

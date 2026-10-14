@@ -97,6 +97,11 @@ run "customer_managed_cluster_plan" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster.existing.node_provisioning_profile[0].mode == "Manual"
+    error_message = "The stand-in cluster must send node_provisioning_profile mode Manual, required since azurerm 5.0."
+  }
+
+  assert {
     condition     = azurerm_kubernetes_cluster.existing.default_node_pool[0].upgrade_settings[0].max_surge == "10%"
     error_message = "The caller-owned AKS stand-in must declare Azure's default upgrade surge to remain idempotent after creation."
   }

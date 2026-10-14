@@ -12,6 +12,7 @@
 # (design.md decision 4).
 
 resource "azurerm_storage_account" "n8n" {
+  # checkov:skip=CKV_AZURE_59:Public network access is disabled through public_network_access = "Disabled" (azurerm 5.5.0+); checkov still inspects only the deprecated public_network_access_enabled, which azurerm removes in 6.0.
   # checkov:skip=CKV_AZURE_33:The module uses Blob only; enabling Queue service logging for an unused data plane would create noise and does not protect n8n storage operations.
   # checkov:skip=CKV_AZURE_206:Replication is caller-configurable because ZRS/GZRS availability differs by region. LRS remains the portable default; production examples select stronger replication where their documented regions support it.
   count = var.create_blob_storage ? 1 : 0
@@ -27,7 +28,7 @@ resource "azurerm_storage_account" "n8n" {
   allow_nested_items_to_be_public = false
   https_traffic_only_enabled      = true
   min_tls_version                 = "TLS1_2"
-  public_network_access_enabled   = false
+  public_network_access           = "Disabled"
   shared_access_key_enabled = (
     var.azure_blob_connection_string != null ||
     var.azure_blob_account_key != null
@@ -78,11 +79,10 @@ resource "azurerm_private_dns_zone" "blob" {
 resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
   count = var.create_blob_storage && var.create_blob_private_dns_zone ? 1 : 0
 
-  name                  = "${var.friendly_name_prefix}-blob-vnet-link"
-  resource_group_name   = var.resource_group_name
-  private_dns_zone_name = azurerm_private_dns_zone.blob[0].name
-  virtual_network_id    = var.vnet_id
-  registration_enabled  = false
+  name                 = "${var.friendly_name_prefix}-blob-vnet-link"
+  private_dns_zone_id  = azurerm_private_dns_zone.blob[0].id
+  virtual_network_id   = var.vnet_id
+  registration_enabled = false
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-blob-vnet-link" })
 }

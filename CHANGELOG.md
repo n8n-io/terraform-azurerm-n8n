@@ -431,6 +431,42 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   migration; one apply with any one of them is enough), then widen the pin; see
   [`modules/tls-letsencrypt/README.md`](./modules/tls-letsencrypt/README.md#upgrading-from-acme-provider-2x).
   New deployments are not affected.
+- **Breaking (minor-required): the `azurerm` provider requirement is now
+  `>= 5.5.0, < 6.0.0`** (was `>= 4.39.0, < 5.0.0`; locks resolve `5.9.0`;
+  [#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). No
+  configuration works on both majors, so move the module and the provider
+  together. 5.5.0 is the first release with
+  `azurerm_storage_account.public_network_access`. The module now addresses
+  its private DNS VNet links and the private DNS A record by
+  `private_dns_zone_id` (the A record's zone ID is rebuilt the way 4.x
+  stored it: the provider's subscription ID when the zone ID's subscription
+  matches it ignoring case, and the zone name lowercased), sets AKS
+  `node_provisioning_profile { mode = "Manual" }` (required in 5.0), uses
+  `public_network_access = "Disabled"` on the storage account, ignores PostgreSQL `storage_type`
+  (new in 5.4.0, ForceNew with no state migration: a refreshed plan fills it
+  in from Azure, but a `-refresh=false` plan would otherwise plan a
+  replacement that destroys the database), and pins
+  the WAF policy's `file_upload_enforcement = false`, the value 4.x always
+  sent. The examples make the same changes to the resources they own, use
+  the subnet `service_endpoint` block, and list
+  `resource_providers_to_register` because 5.x registers no resource
+  providers by default. `modules/tls-letsencrypt` and
+  `modules/tls-self-signed` accept `>= 4.0, < 6.0.0`. **Upgrade steps:**
+  back up state (`terraform state pull`), since 4.x cannot read state 5.x
+  writes; allow `>= 5.5.0, < 6.0.0` in your root and run `terraform init
+  -upgrade`; register the resource providers listed in the examples (or set
+  `resource_provider_registrations = "legacy"`) on a fresh subscription;
+  fix your own azurerm resources against the provider's 5.0 upgrade guide;
+  then run `terraform plan` with a normal refresh. Never use
+  `-refresh=false` for this plan: without a refresh, every private DNS link
+  (and any private DNS A record) shows as replaced, because the new
+  `private_dns_zone_id` is only filled in from Azure on refresh. The
+  refreshed plan shows no such replacement. The expected plan is no
+  changes, or one in-place AKS update; do not apply anything that replaces
+  a resource. See
+  [docs/upgrading-azurerm-5.md](./docs/upgrading-azurerm-5.md) for the
+  expected plan per resource and a live checklist.
+
 - **Breaking: `n8n_image_tag` now defaults to `null`** (was `"2.35.0"`),
   matching terraform-aws-n8n and terraform-google-n8n
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). With
