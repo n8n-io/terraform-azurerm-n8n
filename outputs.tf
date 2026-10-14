@@ -229,7 +229,7 @@ output "n8n_test_webhook_path_prefixes" {
 
 output "azure_partner_attribution_deployment_name" {
   description = "Name of the Customer Usage Attribution deployment (`pid-<guid>`) the module created in resource_group_name, or null when azure_partner_attribution_id is empty."
-  value       = local.azure_partner_attribution_name
+  value       = try(azurerm_resource_group_template_deployment.partner_attribution[0].name, null)
 }
 
 output "n8n_url" {

@@ -23,8 +23,10 @@ Partner Center for Marketplace apps (`pid-<guid>-partnercenter`). The provider's
    64-character deployment-name limit.
 5. **Resource group.** `var.resource_group_name`, the group the module already
    requires; it exists for every topology including `create_aks = false`.
-6. **Single deployment per module call.** CUA associates by deployment name
-   within the scope; one record suffices. Not gated on `create_*` switches.
+6. **Single deployment per module call, best-effort.** One record per call,
+   not gated on `create_*` switches. It is not established that a standalone
+   empty deployment attributes resources created by other deployments
+   (see Risks); do not claim it does.
 7. **Examples pass `null` by default.** `nullable = false` on the module input
    turns a `null` module-call argument into the module default, so an example
    needs no edit when the default flips. The variable-parity script requires
@@ -35,10 +37,14 @@ Partner Center for Marketplace apps (`pid-<guid>-partnercenter`). The provider's
 
 ## Risks
 
-- A deployment record is the only artefact; whether Microsoft attributes
-  usage of resources *not* created by that deployment (AKS, PostgreSQL) to the
-  GUID depends on Partner Center's scoping rules. Confirm with Partnerships
-  and in the Partner Center usage report during the live test.
+- **Attribution scope is unproven (review P1).** Microsoft documents template
+  attribution as the `pid-` deployment inside the main deployment that creates
+  the resources, and Terraform attribution as the provider's `partner_id`
+  (user agent). A standalone empty deployment in the same resource group may
+  not associate the AKS, PostgreSQL and Redis resources, which other
+  Terraform resources create. Confirm in the Partner Center usage report;
+  if it does not attribute, replace this with documentation plus
+  `partner_id` in the examples' provider blocks (the caller's route).
 - `terraform destroy` deletes the deployment record only; attribution history
   is kept by Microsoft.
 

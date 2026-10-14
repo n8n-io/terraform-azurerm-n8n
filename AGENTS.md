@@ -683,14 +683,16 @@ deployment-name based, not tag based. `azure_partner_attribution_id` (root
 `attribution.tf`) creates one empty `azurerm_resource_group_template_deployment`
 named `pid-<guid>` in `resource_group_name`; the default is `""` (nothing)
 until n8n's GUID is issued and Partnerships confirms the default policy
-(on by default vs opt-in; stay opt-in until then). Changing the default is a
-one-line change plus
+(on by default vs opt-in; stay opt-in until then). Any default change needs
 a CHANGELOG upgrade note. Every example declares the input with default `null`
 so the module default applies (`nullable = false` turns a null module-call
 argument into the default); the example variable-parity check requires all nine
-to match. Do not port AWS #200's node launch-template tagging: AKS propagates
-cluster and node-pool `tags` to the node resource group, which still needs
-live confirmation (tasks 4.1 to 4.3 in the change).
+to match. Do not port AWS #200's node launch-template tagging: AKS applies
+cluster `tags` to the node resource group's resources and node-pool `tags` to
+the VMSS, two separate scopes, and `aks.tf` sets both. Live confirmation is
+still outstanding (tasks 4.1 to 4.3 in the change). The standalone `pid-`
+deployment's attribution scope is itself unproven (see the change's design.md
+Risks).
 
 ## What this repo is
 

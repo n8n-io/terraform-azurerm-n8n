@@ -58,7 +58,7 @@ variable "common_tags" {
 }
 
 variable "azure_partner_attribution_id" {
-  description = "Azure Customer Usage Attribution (CUA) tracking ID. When non-empty, the module creates one empty ARM deployment named `pid-<guid>` in `resource_group_name`, which Microsoft uses to associate Azure usage in the customer's subscription with n8n as a partner. Accepts `<guid>`, `pid-<guid>`, or `pid-<guid>-partnercenter`. Empty (the default) creates nothing. It reports usage attribution only: it is separate from n8n licensing and telemetry. Callers can instead set the azurerm provider's `partner_id`."
+  description = "Azure Customer Usage Attribution (CUA) tracking ID. When non-empty, the module creates one empty ARM deployment named `pid-<guid>` in `resource_group_name`, a Customer Usage Attribution marker for n8n as a partner. Whether it attributes resources created by other deployments is unverified; the azurerm provider's `partner_id` is Microsoft's documented Terraform route. Accepts `<guid>`, `pid-<guid>`, or `pid-<guid>-partnercenter`. Empty (the default) creates nothing. It reports usage attribution only: it is separate from n8n licensing and telemetry. Callers can instead set the azurerm provider's `partner_id`."
   type        = string
   default     = ""
   nullable    = false
