@@ -935,7 +935,7 @@ variable "azure_blob_container_stores_execution_data" {
 }
 
 variable "storage_account_replication_type" {
-  description = "Replication type for the module-managed StorageV2 account used by Azure Blob: LRS, ZRS, GRS, RAGRS, GZRS, or RAGZRS. The default LRS minimizes cost; production deployments that need zone or regional durability should select a replication type available in their Azure region. Changing between a non-zonal type (LRS, GRS, RAGRS) and a zone-redundant type (ZRS, GZRS, RAGZRS) makes Terraform replace the storage account, losing the data in it; changes within one group update in place. See docs/build-time-decisions.md."
+  description = "Replication type for the module-managed StorageV2 account used by Azure Blob: LRS, ZRS, GRS, RAGRS, GZRS, or RAGZRS. The default LRS minimizes cost; production deployments that need zone or regional durability should select a replication type available in their Azure region. Changes within one group (LRS, GRS, RAGRS or ZRS, GZRS, RAGZRS) update in place, and so do the paired moves LRS/ZRS, GRS/GZRS and RAGRS/RAGZRS, which azurerm 5.x submits as an Azure storage account migration that can take a long time. Any other move between the non-zonal and zone-redundant groups, for example LRS to GZRS, makes Terraform replace the storage account, losing the data in it. See docs/build-time-decisions.md."
   type        = string
   default     = "LRS"
 

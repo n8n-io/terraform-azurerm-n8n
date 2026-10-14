@@ -4,6 +4,22 @@
 provider "azurerm" {
   storage_use_azuread = true
 
+  # azurerm 5.x registers no resource providers by default. Register the ones
+  # this deployment uses, so a fresh subscription behaves as it did on 4.x.
+  # Registering an unregistered provider needs the
+  # Microsoft.Resources/subscriptions/providers/register/action permission.
+  resource_providers_to_register = [
+    "Microsoft.Authorization",
+    "Microsoft.Cache",
+    "Microsoft.Compute",
+    "Microsoft.ContainerService",
+    "Microsoft.DBforPostgreSQL",
+    "Microsoft.KeyVault",
+    "Microsoft.ManagedIdentity",
+    "Microsoft.Network",
+    "Microsoft.Storage",
+  ]
+
   features {
     # Write a resource's ID to state before polling its create to completion.
     # A resource whose create fails on the Azure side (for example an

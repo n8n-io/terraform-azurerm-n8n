@@ -238,8 +238,9 @@ hide a real misconfiguration as well.
 
 Plan this change in its own apply, save and review the plan before
 applying, and back up the n8n encryption key and the database first. The
-behavior below follows from the `hashicorp/azurerm` v4.81.0 source,
-Microsoft's documentation, and one live test of `examples/small` that moved
+behavior below follows from the `hashicorp/azurerm` v4.81.0 source
+(rechecked unchanged in v5.9.0), Microsoft's documentation, and one live
+test of `examples/small` on azurerm 4.x that moved
 all three services to caller-owned zones with the same names and back
 again. Timings from that test are a guide, not a guarantee. There are two
 cases.
@@ -844,7 +845,7 @@ writes the administrator password through
 `azurerm_postgresql_flexible_server.n8n`'s write-only
 `administrator_password_wo` argument instead of generating one with
 `random_password.postgres_admin`. This needs Terraform >= 1.11 and azurerm
->= 4.39.0, both already required by this module's `versions.tf`. Feed the
+>= 4.39.0, both already met by this module's `versions.tf`. Feed the
 actual value in through `postgres_admin_password_wo`, an `ephemeral` module
 variable, so this module never writes it to a plan or state file. Increment
 `postgres_admin_password_wo_version` whenever you rotate it: Terraform only
