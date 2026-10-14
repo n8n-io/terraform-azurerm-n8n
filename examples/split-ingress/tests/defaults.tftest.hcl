@@ -235,6 +235,27 @@ run "split_ingress_plan" {
     )
     error_message = "The rewrite must set X-Forwarded-For to {var_add_x_forwarded_for_proxy} so upstream proxy entries survive and the port is dropped."
   }
+
+  # Private-only Application Gateway v2 needs a delegated subnet, a static
+  # frontend address, and (so the VNet-only admin rule cannot be widened by the
+  # internet-facing webhook rule) its own subnet and NSG.
+  assert {
+    condition = alltrue([
+      for s in [azurerm_subnet.appgw_webhook, azurerm_subnet.appgw_admin] :
+      s.delegation[0].service_delegation[0].name == "Microsoft.Network/applicationGateways"
+    ])
+    error_message = "Both gateway subnets must be delegated to Microsoft.Network/applicationGateways."
+  }
+
+  assert {
+    condition     = azurerm_application_gateway.admin.frontend_ip_configuration[0].private_ip_address_allocation == "Static" && azurerm_application_gateway.admin.frontend_ip_configuration[0].private_ip_address == "10.0.12.10"
+    error_message = "The private-only admin gateway must use a static private frontend address inside its own subnet."
+  }
+
+  assert {
+    condition     = length([for r in azurerm_network_security_group.appgw_admin.security_rule : r if r.source_address_prefix == "Internet"]) == 0 && length([for r in azurerm_network_security_group.appgw_webhook.security_rule : r if r.source_address_prefix == "Internet"]) == 1
+    error_message = "Only the webhook gateway's NSG may admit the Internet; the admin gateway's NSG must not."
+  }
 }
 
 run "waf_policy_omitted_uses_standard_v2" {

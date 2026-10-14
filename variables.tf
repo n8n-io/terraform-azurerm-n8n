@@ -939,7 +939,7 @@ variable "blob_delete_retention_days" {
 }
 
 variable "appgw_subnet_id" {
-  description = "Resource ID of the subnet the Application Gateway attaches to. Must be dedicated to Application Gateway (no other workloads), with a /24 or larger CIDR per Azure App Gateway sizing guidance. No subnet delegation required. Format: /subscriptions/<sub>/.../subnets/<name>."
+  description = "Resource ID of the subnet the Application Gateway attaches to. Must be dedicated to Application Gateway (no other workloads), with a /24 or larger CIDR per Azure App Gateway sizing guidance. No subnet delegation is required unless the subscription has the Microsoft.Network/EnableApplicationGatewayNetworkIsolation preview feature registered (it is required for private-only gateways); then Azure rejects every v2 gateway outside a subnet delegated to Microsoft.Network/applicationGateways with ApplicationGatewayNetworkIsolationRequiresSubnetDelegation, so delegate the subnet first (see docs/troubleshooting.md). A private-only gateway (appgw_frontend_mode = internal) has no public IP, so it needs private access to the Key Vault holding the TLS certificate named by app_gateway_tls_cert_secret_id: either the Microsoft.KeyVault service endpoint on this subnet, or a private endpoint for the vault with the privatelink.vaultcore.azure.net private DNS zone linked to this subnet's VNet (a private endpoint without that link fails the same way). Without either, Azure fails the gateway create with a bare InternalServerError. Format: /subscriptions/<sub>/.../subnets/<name>."
   type        = string
 
   validation {
@@ -962,7 +962,7 @@ variable "create_ingress" {
 }
 
 variable "appgw_frontend_mode" {
-  description = "Frontend exposure for the module-managed Application Gateway: public creates a static Standard public IP, while internal creates only a dynamically allocated private frontend in appgw_subnet_id. Ignored when create_ingress is false."
+  description = "Frontend exposure for the module-managed Application Gateway: public creates a static Standard public IP, while internal creates only a private frontend with the static address appgw_private_ip_address in appgw_subnet_id. Application Gateway v2 rejects a dynamic private frontend, and a private-only gateway needs the Microsoft.Network/EnableApplicationGatewayNetworkIsolation feature registered on the subscription, a subnet delegated to Microsoft.Network/applicationGateways, and private access to the Key Vault holding the TLS certificate, through either a Microsoft.KeyVault service endpoint on that subnet or a private endpoint for the vault whose privatelink.vaultcore.azure.net zone is linked to the VNet (see appgw_subnet_id and docs/troubleshooting.md). Ignored when create_ingress is false."
   type        = string
   default     = "public"
   nullable    = false
@@ -970,6 +970,22 @@ variable "appgw_frontend_mode" {
   validation {
     condition     = contains(["public", "internal"], var.appgw_frontend_mode)
     error_message = "appgw_frontend_mode must be either public or internal."
+  }
+}
+
+variable "appgw_private_ip_address" {
+  description = "Static private IPv4 address of the Application Gateway frontend in appgw_subnet_id. Required when create_ingress is true and appgw_frontend_mode = internal, because Application Gateway v2 rejects a dynamically allocated private frontend. It must lie inside appgw_subnet_id, must not be in use, and must not be one of the five addresses Azure reserves in every subnet (the first four and the last), so in 10.0.8.0/24 the assignable range is 10.0.8.4 through 10.0.8.254 (for example 10.0.8.10). Ignored, with a plan-time warning, when appgw_frontend_mode = public or create_ingress is false."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.create_ingress || var.appgw_frontend_mode != "internal" || var.appgw_private_ip_address != null
+    error_message = "appgw_private_ip_address is required when create_ingress is true and appgw_frontend_mode = internal: Application Gateway v2 only accepts a static private frontend address."
+  }
+
+  validation {
+    condition     = var.appgw_private_ip_address == null ? true : can(regex("^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$", var.appgw_private_ip_address))
+    error_message = "appgw_private_ip_address must be a dotted-quad IPv4 address."
   }
 }
 

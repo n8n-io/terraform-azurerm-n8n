@@ -57,6 +57,74 @@ The empty list is the tell: Flexible Server offers *no* PostgreSQL versions to t
 
 Pick a region where `az postgres flexible-server list-skus -l <region> --query "[0].supportedServerVersions[].name"` lists your `pg_version` (and `pg_sku_name` under `supportedServerEditions`), or set `create_database = false` and point the module at an existing PostgreSQL endpoint. The preflight script checks both the version and the SKU. Resources created before the failure are reused on the next apply.
 
+## `terraform apply`: Application Gateway fails with `ApplicationGatewayNetworkIsolationRequiresSubnetDelegation`
+
+**Symptom**
+
+```text
+Error: creating Application Gateway ... unexpected status 400 (400 Bad Request) with error:
+ApplicationGatewayNetworkIsolationRequiresSubnetDelegation: Application Gateway ... with
+NetworkIsolation requires subnet delegation. Please delegate subnet ...
+```
+
+**Root cause**
+
+The subscription has the `Microsoft.Network/EnableApplicationGatewayNetworkIsolation` preview feature registered. Azure requires that feature for private-only (no public IP) Application Gateway v2 deployments, and once it is on, [every v2 gateway in the subscription](https://learn.microsoft.com/azure/application-gateway/application-gateway-private-deployment) must sit in a subnet delegated to `Microsoft.Network/applicationGateways`, public ones included. The sizing examples' gateway subnets are not delegated, because without the feature they do not need to be. A private-only gateway (`appgw_frontend_mode = "internal"`) additionally needs a static private frontend address (`appgw_private_ip_address`) and a route to Key Vault, covered in the next entry.
+
+**Fix**
+
+Check the feature, and delegate the gateway subnet before the gateway is created:
+
+```bash
+az feature show --namespace Microsoft.Network --name EnableApplicationGatewayNetworkIsolation --query properties.state -o tsv
+```
+
+```hcl
+resource "azurerm_subnet" "appgw" {
+  # ...
+  delegation {
+    name = "application-gateways"
+
+    service_delegation {
+      name    = "Microsoft.Network/applicationGateways"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
+}
+```
+
+`examples/split-ingress` is the worked example (delegated subnet and NSG per gateway, static admin address).
+
+## `terraform apply`: a private-only Application Gateway fails with a bare `InternalServerError`
+
+**Symptom**
+
+```text
+Error: creating Application Gateway ...: polling after CreateOrUpdate: polling failed:
+Status: "InternalServerError"  Message: "An error occurred."
+```
+
+The gateway is left in `provisioningState: Failed`, usually about 6 minutes after the create started. The error carries no detail.
+
+**Root cause**
+
+Seen live with `appgw_frontend_mode = "internal"`, a delegated subnet, and a static private address. A private-only gateway has no public IP and therefore no route to the internet, but it still has to read its TLS certificate from the Key Vault named by `app_gateway_tls_cert_secret_id`. With the vault reachable only over its public endpoint, Azure fails the create with this generic error. Adding the `Microsoft.KeyVault` service endpoint to the gateway subnet fixed the same configuration (the gateway then created and served traffic); a private endpoint for the vault is the other route, and it works only with the `privatelink.vaultcore.azure.net` private DNS zone linked to the gateway's VNet. Verified live with no service endpoint: a private endpoint with the zone linked created the gateway, while the identical setup with the zone present but not linked failed with the same `InternalServerError` (the gateway cannot resolve the vault to its private address and has no route to the public one). Microsoft lists Key Vault access without a private or service endpoint as a scenario that needs a public IP.
+
+**Fix**
+
+```hcl
+resource "azurerm_subnet" "appgw" {
+  # ...
+  service_endpoints = ["Microsoft.KeyVault"]
+}
+```
+
+Delete the failed gateway before re-applying, because a `Failed` gateway left outside Terraform state blocks both the next create and the subnet delete:
+
+```bash
+az network application-gateway delete -g <rg> -n <name>
+```
+
 ## `terraform apply`: Azure Managed Redis fails with `InsufficientCapacity`
 
 **Symptom**
