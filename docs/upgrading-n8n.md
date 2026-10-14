@@ -73,10 +73,10 @@ The default `keda_chart_version` (root module and `modules/controllers`)
 moved from `2.15.0` to `2.21.0`
 ([KEDA v2.21.0](https://github.com/kedacore/keda/releases/tag/v2.21.0)),
 matching `terraform-aws-n8n` #159 and `terraform-google-n8n` #37. KEDA
-2.15 is tested only on Kubernetes 1.28 to 1.30, so the module default
-`aks_kubernetes_version = "1.35"` ran it outside its tested window; 2.21 is
-tested on 1.34 to 1.36 ([compatibility matrix](https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility)),
-which covers 1.35 and the next AKS minor.
+2.15 is tested only on Kubernetes 1.28 to 1.30, so the module's
+`aks_kubernetes_version` default at the time (`1.35`) ran it outside its
+tested window; 2.21 is tested on 1.34 to 1.36 ([compatibility matrix](https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility)),
+which covers both `1.35` and the current default, `1.36`, but not `1.37`.
 
 - **What the next apply does.** A caller that does not pin
   `keda_chart_version` plans one in-place change,

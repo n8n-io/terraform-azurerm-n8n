@@ -92,7 +92,7 @@ variable "aks_subnet_id" {
 # AKS controls" requirement).
 
 variable "aks_kubernetes_version" {
-  description = "Kubernetes version for the AKS cluster (e.g. 1.36, 1.36.5). Must be a version Azure currently supports on the standard plan in the target region; check with `az aks get-versions --location <region>` and the AKS support-plan matrix at https://learn.microsoft.com/azure/aks/supported-kubernetes-versions. Defaults to 1.36; bump deliberately. Changing it on an existing cluster upgrades only the control plane: both node pools keep their Kubernetes version (see docs/troubleshooting.md). Versions outside the standard support window are LTS-only and require a Premium-tier cluster to provision."
+  description = "Kubernetes version for the AKS cluster (e.g. 1.36, 1.36.5). Must be a version Azure currently supports on the standard plan in the target region; check with `az aks get-versions --location <region>` and the AKS support-plan matrix at https://learn.microsoft.com/azure/aks/supported-kubernetes-versions. Defaults to 1.36; bump deliberately. Changing it on an existing cluster is expected to upgrade only the control plane, leaving both node pools on their Kubernetes version (see docs/troubleshooting.md). Versions outside the standard support window are LTS-only and require a Premium-tier cluster to provision."
   type        = string
   default     = "1.36"
 
