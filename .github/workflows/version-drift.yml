@@ -37,40 +37,69 @@ jobs:
         with:
           version: "v3.16.4"
 
-      # `shell: bash` adds `-o pipefail`, which the default shell lacks. The
-      # script itself exits 0 by design, so this only matters if it crashes;
-      # without pipefail `tee` would hide that and the step below would sync a
-      # truncated report to the tracking issue as if it were complete.
+      # The script exits 2 when any lookup failed. Record the exit code
+      # instead of failing here, so the sync step still runs and the ERROR
+      # lines reach the tracking issue; the last step fails the job. (Piping
+      # the script straight into `tee` under `shell: bash`'s errexit and
+      # pipefail would end this step at the script's exit 2, with the report
+      # cut short and the sync skipped.)
       # The script prints plain text, not Markdown, so fence it; otherwise the
       # issue body and step summary collapse each section into one paragraph.
       # The header line records when and where the report was produced, since
       # an issue edit sends no notification and the body is replaced weekly.
       - name: run tests/scripts/check-version-drift.sh
+        id: drift
         shell: bash
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          status=0
+          tests/scripts/check-version-drift.sh >drift.txt 2>&1 || status=$?
+          echo "status=${status}" >>"$GITHUB_OUTPUT"
           {
             echo "Generated $(date -u +%Y-%m-%dT%H:%MZ) by [workflow run](${RUN_URL})."
             echo
             echo '```text'
-            tests/scripts/check-version-drift.sh
+            cat drift.txt
             echo '```'
-          } | tee -a report.md "$GITHUB_STEP_SUMMARY"
+          } >report.md
+          cat report.md >>"$GITHUB_STEP_SUMMARY"
+          cat drift.txt
 
-      # The script never fails the build (see its own header): every pin it
-      # flags is release-sized work per docs/versioning.md, not something CI
-      # should auto-bump or gate on. Sync the report to a single tracking
-      # issue so a stale pin shows up where every other piece of repo work
-      # does, instead of only in a scheduled run's job summary.
+      # Drift never fails the build: every pin it flags is release-sized work
+      # per docs/versioning.md, not something CI should auto-bump or gate on.
+      # Sync the report to a single tracking issue so a stale pin shows up
+      # where every other piece of repo work does, instead of only in a
+      # scheduled run's job summary. Runs even when a lookup failed, so the
+      # ERROR lines are synced too.
       - name: sync tracking issue
+        if: always()
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ ! -f report.md ]]; then
+            echo "::error::no report was produced; leaving the tracking issue unchanged"
+            exit 1
+          fi
           title="Version drift report (automated)"
           existing="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
           if [[ -n "$existing" ]]; then
             gh issue edit "$existing" --body-file report.md
           else
             gh issue create --title "$title" --body-file report.md
+          fi
+
+      # A failed lookup fails the job, after the sync above, so it is not
+      # mistaken for "nothing changed".
+      - name: fail on lookup errors
+        if: always()
+        shell: bash
+        env:
+          STATUS: ${{ steps.drift.outputs.status }}
+        run: |
+          if [[ "$STATUS" != "0" ]]; then
+            echo "::error::check-version-drift.sh exited ${STATUS:-without running}; see the ERROR lines in the report"
+            exit 1
           fi
