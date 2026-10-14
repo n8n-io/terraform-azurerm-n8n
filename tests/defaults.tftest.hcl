@@ -838,6 +838,11 @@ run "capacity_warns_when_paused_replica_count_exceeds_node_capacity" {
     error_message = "A paused count of 100 above the worker max must size the capacity model's worker term, got ${local.n8n_worker_modeled_max_replicas}."
   }
 
+  assert {
+    condition     = local.n8n_worker_paused_count_drives_worker_term
+    error_message = "A paused count above the worker max drives the worker term, so both checks' advice must name n8n_worker_keda_paused_replica_count."
+  }
+
   expect_failures = [
     check.autoscaling_maxima_fit_aks_capacity,
     check.postgres_pool_size_fits_known_max_connections,
@@ -856,6 +861,23 @@ run "capacity_keeps_worker_max_for_lower_paused_replica_count" {
   assert {
     condition     = local.n8n_worker_modeled_max_replicas == var.n8n_worker_keda_max_replicas
     error_message = "A paused count below the worker max must leave the worker term at the maximum."
+  }
+}
+
+# A paused count equal to the worker max does not raise the worker term, so
+# lowering it would not help and the advice must not name it.
+run "paused_replica_count_equal_to_worker_max_does_not_drive_worker_term" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 10
+    n8n_worker_keda_max_replicas         = 10
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == 10 && !local.n8n_worker_paused_count_drives_worker_term
+    error_message = "A paused count equal to the worker max must leave the worker term at the maximum without naming the paused count in the advice."
   }
 }
 

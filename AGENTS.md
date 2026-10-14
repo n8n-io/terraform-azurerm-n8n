@@ -305,16 +305,22 @@ expression spanning several heredoc lines and instead reports
 "Missing expression" once the input ends mid-expression. Any script
 building a `jsonencode({...})` fixture through `terraform console` must
 keep that whole expression on a single line. Separately, `terraform
-console` (and `terraform plan`) does not require live provider
-credentials merely because the configuration declares a data source:
-an unconfigured provider's data-source read (e.g. `data.azurerm_postgresql_flexible_server.current`
-in `database.tf`) is deferred and reported as `(known after apply)` rather than
-erroring the whole plan, as long as the console expression being
-evaluated doesn't itself depend on that unresolved value. This is what
-lets a chart-check script pull real `var.*`/`local.*` values from the
-root module via `terraform console` without any Azure auth, provided the
-expression only touches plan-time-known inputs (variables and literals,
-not managed-resource attributes like a Flexible Server FQDN). Section 4
+console` against an empty state (the chart-check script passes a throwaway
+`-state`) neither configures providers nor reads data sources: every
+resource and data-source reference, even the `length()` of one whose
+`count` is 0, evaluates to `(known after apply)`, so it needs no Azure
+credentials. This is what lets a chart-check script pull real
+`var.*`/`local.*` values from the root module via `terraform console`,
+provided the expression only touches plan-time-known inputs (variables and
+literals, not managed-resource attributes like a Flexible Server FQDN or
+data-source attributes like `data.azurerm_postgresql_flexible_server.current`,
+which exists only when `create_database` and
+`pg_storage_drift_guard_enabled` are both true). `terraform plan` does not
+share this property: it fails at the root without a provider block
+(azurerm "requires explicit configuration"), and it reads a data source
+during planning unless the read depends directly on a managed resource,
+uses an argument only known at apply, or has a custom condition that
+depends on a managed resource changing in the same plan. Section 4
 added the three nullable `n8n_queue_worker_*` Bull timing inputs, composed
 into one `local.n8n_queue_worker_settings` map merged into the chart's
 `redis.worker` block only when non-empty. The pinned chart's own

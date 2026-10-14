@@ -319,6 +319,12 @@ locals {
     var.n8n_worker_keda_pause ? coalesce(var.n8n_worker_keda_paused_replica_count, 0) : 0,
   )
 
+  # True only when the paused count, not the KEDA maximum, sets the worker
+  # term. The capacity and connection-budget messages name
+  # n8n_worker_keda_paused_replica_count only then, because lowering an
+  # autoscaler maximum does not shrink a term the paused count drives.
+  n8n_worker_paused_count_drives_worker_term = local.n8n_worker_modeled_max_replicas > var.n8n_worker_keda_max_replicas
+
   # Use the effective main ceiling (locals.tf) rather than the raw configured
   # maximum so a higher unused main maximum in single-main mode does not
   # inflate modeled demand, since the chart never schedules more than one main
@@ -375,7 +381,12 @@ check "autoscaling_maxima_fit_aks_capacity" {
         "less ${local.aks_system_node_kube_reserved_cpu_millis}m AKS reservation per node), ",
       ]),
       "less ${local.aks_node_daemon_cpu_millis}m daemon requests per node, ",
-      "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima (including any n8n_worker_pools max_replicas) or CPU requests, or raise ",
+      "plus ${local.aks_cluster_control_cpu_millis}m cluster control requests. Lower autoscaler maxima (including any n8n_worker_pools max_replicas) or CPU requests",
+      local.n8n_worker_paused_count_drives_worker_term ? join("", [
+        ", or n8n_worker_keda_paused_replica_count (the paused count, ${local.n8n_worker_modeled_max_replicas}, is above ",
+        "n8n_worker_keda_max_replicas, ${var.n8n_worker_keda_max_replicas}, and only counts while it stays above it)",
+      ]) : "",
+      ", or raise ",
       var.aks_system_pool_critical_addons_only ? "aks_node_count_max or aks_node_vm_size (the tainted system pool's size adds no n8n capacity)" : "aks_node_count_max, aks_node_vm_size, aks_system_node_count_max, or aks_system_node_vm_size",
       ". This diagnostic is advisory and does not fail the plan.",
     ])
