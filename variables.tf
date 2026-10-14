@@ -962,7 +962,7 @@ variable "create_ingress" {
 }
 
 variable "appgw_frontend_mode" {
-  description = "Frontend exposure for the module-managed Application Gateway: public creates a static Standard public IP, while internal creates only a private frontend with the static address appgw_private_ip_address in appgw_subnet_id. Application Gateway v2 rejects a dynamic private frontend, and a private-only gateway needs the Microsoft.Network/EnableApplicationGatewayNetworkIsolation feature registered on the subscription, a subnet delegated to Microsoft.Network/applicationGateways, and a Key Vault service endpoint on that subnet (see appgw_subnet_id and docs/troubleshooting.md). Ignored when create_ingress is false."
+  description = "Frontend exposure for the module-managed Application Gateway: public creates a static Standard public IP, while internal creates only a private frontend with the static address appgw_private_ip_address in appgw_subnet_id. Application Gateway v2 rejects a dynamic private frontend, and a private-only gateway needs the Microsoft.Network/EnableApplicationGatewayNetworkIsolation feature registered on the subscription, a subnet delegated to Microsoft.Network/applicationGateways, and private access to the Key Vault holding the TLS certificate, through either a Microsoft.KeyVault service endpoint on that subnet or a private endpoint for the vault (see appgw_subnet_id and docs/troubleshooting.md). Ignored when create_ingress is false."
   type        = string
   default     = "public"
   nullable    = false
@@ -974,13 +974,13 @@ variable "appgw_frontend_mode" {
 }
 
 variable "appgw_private_ip_address" {
-  description = "Static private IPv4 address of the Application Gateway frontend in appgw_subnet_id. Required when appgw_frontend_mode = internal, because Application Gateway v2 rejects a dynamically allocated private frontend. It must lie inside appgw_subnet_id, must not be one of the five addresses Azure reserves in every subnet, and must not be in use; the fifth usable address (for example 10.0.8.10 in 10.0.8.0/24) is a common choice. Ignored, with a plan-time warning, when appgw_frontend_mode = public."
+  description = "Static private IPv4 address of the Application Gateway frontend in appgw_subnet_id. Required when create_ingress is true and appgw_frontend_mode = internal, because Application Gateway v2 rejects a dynamically allocated private frontend. It must lie inside appgw_subnet_id, must not be in use, and must not be one of the five addresses Azure reserves in every subnet (the first four and the last), so in 10.0.8.0/24 the assignable range is 10.0.8.4 through 10.0.8.254 (for example 10.0.8.10). Ignored, with a plan-time warning, when appgw_frontend_mode = public or create_ingress is false."
   type        = string
   default     = null
 
   validation {
-    condition     = var.appgw_frontend_mode != "internal" || var.appgw_private_ip_address != null
-    error_message = "appgw_private_ip_address is required when appgw_frontend_mode = internal: Application Gateway v2 only accepts a static private frontend address."
+    condition     = !var.create_ingress || var.appgw_frontend_mode != "internal" || var.appgw_private_ip_address != null
+    error_message = "appgw_private_ip_address is required when create_ingress is true and appgw_frontend_mode = internal: Application Gateway v2 only accepts a static private frontend address."
   }
 
   validation {

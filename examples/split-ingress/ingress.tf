@@ -183,7 +183,7 @@ resource "azurerm_application_gateway" "webhook" {
 
 # ── Admin Application Gateway (private) ──────────────────────────────────────
 # No public IP: the frontend_ip_configuration below binds a static private
-# address inside the appgw subnet instead (Application Gateway v2 rejects a
+# address inside the appgw-admin subnet instead (Application Gateway v2 rejects a
 # dynamic one), so this gateway is reachable only from inside the VNet or
 # whatever is peered/VPN-attached to it.
 

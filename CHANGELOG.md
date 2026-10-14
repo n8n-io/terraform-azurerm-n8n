@@ -477,8 +477,12 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   live), so the internal mode had never been qualified. A private-only gateway
   also needs the `Microsoft.Network/EnableApplicationGatewayNetworkIsolation`
   feature, a subnet delegated to `Microsoft.Network/applicationGateways`, and
-  a `Microsoft.KeyVault` service endpoint on that subnet; without the endpoint
-  Azure fails the create with a bare `InternalServerError`. Verified live: the
+  private access to the certificate's Key Vault (a `Microsoft.KeyVault` service
+  endpoint on that subnet or a private endpoint for the vault); without either
+  Azure fails the create with a bare `InternalServerError`. The address is
+  required only while `create_ingress = true`: with caller-owned ingress the
+  frontend settings are inert, so internal mode without an address plans with
+  only the existing inert-tuning warning. Verified live: the
   gateway created at the static address with no public IP, served HTTPS from
   inside the VNet, and carried the `X-Forwarded-For` rewrite. Callers who
   never used the internal mode are unaffected

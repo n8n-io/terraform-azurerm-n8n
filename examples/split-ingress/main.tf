@@ -26,9 +26,8 @@ locals {
 
 # ── Azure foundations ────────────────────────────────────────────────────────
 # Same shape as examples/small, sized identically since this example does not
-# introduce its own sizing tier. The appgw subnet is unchanged from small's
-# /24: two Application Gateways with dynamic private frontend allocation both
-# fit comfortably within it.
+# introduce its own sizing tier, except that each Application Gateway gets its
+# own delegated /24 subnet (see below) instead of small's single appgw subnet.
 
 resource "azurerm_resource_group" "network" {
   name     = "${var.friendly_name_prefix}-network-rg"

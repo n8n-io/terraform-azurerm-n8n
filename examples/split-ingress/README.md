@@ -15,7 +15,7 @@ AKS's built-in `ingress_application_gateway` addon binds to exactly one Applicat
 
 - Its own Application Gateway (`azurerm_application_gateway.webhook` / `.admin`).
 - Its own AKS workload-identity user-assigned identity, federated to its own Kubernetes namespace (`agic-webhook` / `agic-admin`) and the chart's fixed `ingress-azure` service account name.
-- `Contributor` on only its own gateway (never both — crossing these would let one controller reconfigure the other gateway), `Reader` on the resource group, and `Network Contributor` on the shared `appgw` subnet.
+- `Contributor` on only its own gateway (never both — crossing these would let one controller reconfigure the other gateway), `Reader` on the resource group, and `Network Contributor` on only its own gateway subnet (`appgw-webhook` / `appgw-admin`).
 - A distinct `kubernetes.io/ingress.class` value (`azure/application-gateway-webhook` / `azure/application-gateway-admin`) so each install reconciles only the Ingress object that names it.
 
 Both gateways issue lab-grade self-signed certificates from `modules/tls-self-signed`, one per hostname, imported into one shared Key Vault. Replace both with real certificates before production use.
@@ -36,7 +36,7 @@ A private-only (no public IP) Application Gateway v2 needs four things, all of w
 1. The subscription has `Microsoft.Network/EnableApplicationGatewayNetworkIsolation` registered (`az feature register --namespace Microsoft.Network --name EnableApplicationGatewayNetworkIsolation`, then `az provider register -n Microsoft.Network`). **This is subscription-wide and changes behavior for every Application Gateway v2 in it:** once registered, every v2 gateway must sit in a subnet delegated to `Microsoft.Network/applicationGateways`, including the module's own gateway and the other examples, which do not delegate their subnets.
 2. A subnet delegated to `Microsoft.Network/applicationGateways`. Each gateway gets its own (`appgw-webhook`, `appgw-admin`) and its own NSG, so the VNet-only admin rule cannot be widened by the internet-facing webhook rule.
 3. A static private frontend address; Application Gateway v2 rejects a dynamic one.
-4. A route to Key Vault for the TLS certificate. The gateway has no public IP, so both subnets carry the `Microsoft.KeyVault` service endpoint. Without it Azure fails the create with a bare `InternalServerError`.
+4. A route to Key Vault for the TLS certificate. The gateway has no public IP, so both subnets carry the `Microsoft.KeyVault` service endpoint (a private endpoint for the vault is the other supported route). Without either Azure fails the create with a bare `InternalServerError`.
 
 See [`docs/troubleshooting.md`](../../docs/troubleshooting.md) for the errors each missing piece produces.
 
@@ -44,7 +44,7 @@ See [`docs/troubleshooting.md`](../../docs/troubleshooting.md) for the errors ea
 
 1. Copy `terraform.tfvars.example` to `terraform.tfvars` and replace the placeholders.
 2. Run `terraform init` and `terraform apply`. AGIC needs both role assignments and the RBAC propagation gates to settle before it can reconcile either gateway; the first Ingress admission can take a few minutes after `apply` reports success.
-3. Point your own DNS at `webhook_appgw_fqdn` (public) and `admin_appgw_private_ip` (private, once AGIC assigns it) once you are ready to move off the self-signed certificates.
+3. Point your own DNS at `webhook_appgw_fqdn` (public) and `admin_appgw_private_ip` (private, the static address this example assigns) once you are ready to move off the self-signed certificates.
 
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
 
@@ -171,7 +171,7 @@ See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for roo
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_admin_appgw_private_ip"></a> [admin\_appgw\_private\_ip](#output\_admin\_appgw\_private\_ip) | Private IPv4 address of the internal admin Application Gateway's frontend, once AGIC provisions it. Null until then. |
+| <a name="output_admin_appgw_private_ip"></a> [admin\_appgw\_private\_ip](#output\_admin\_appgw\_private\_ip) | Static private IPv4 address of the internal admin Application Gateway's frontend, assigned in the appgw-admin subnet. |
 | <a name="output_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#output\_blob\_delete\_retention\_days) | Effective Blob soft-delete retention window, in days, passed to the root module's blob\_delete\_retention\_days. Null leaves soft delete disabled. |
 | <a name="output_kubectl_config_command"></a> [kubectl\_config\_command](#output\_kubectl\_config\_command) | Command that writes the AKS context into the local kubeconfig. |
 | <a name="output_main_hpa_min_replicas"></a> [main\_hpa\_min\_replicas](#output\_main\_hpa\_min\_replicas) | Effective main-topology floor passed to the root module's n8n\_main\_hpa\_min\_replicas. See module.n8n.n8n\_url for confirmation the module accepted it. |
