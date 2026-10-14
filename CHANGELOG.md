@@ -551,6 +551,19 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   configure eviction on your own Redis
   ([#18](https://github.com/n8n-io/terraform-azurerm-n8n/issues/18)).
 
+- `tests/scripts/check-version-drift.sh` (contributor tooling, no module
+  change) now evaluates each provider constraint against the latest
+  registry release instead of printing both side by side, so a constraint
+  that already admits the latest release reports `OK` and only a release
+  outside it reports `DRIFT`. It also covers the `modules/controllers` and
+  `modules/tls-*` constraints and the KEDA chart, reads AKS support dates
+  from endoflife.date instead of scraping every `1.2x`-`1.4x` string from
+  Microsoft's HTML page, prints `DRIFT:`/`OK:`/`ERROR:`/`INFO:` lines with a
+  summary, and exits 2 when a lookup fails instead of printing
+  `unavailable` and exiting 0. It no longer needs python3. The new offline
+  `tests/scripts/test-version-drift-constraints.sh` runs in CI
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
+
 ## [0.1.0] - 2026-09-29
 
 Initial release of `terraform-azurerm-n8n`: a single resource-bearing
