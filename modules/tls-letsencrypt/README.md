@@ -184,6 +184,12 @@ with any one of them is enough. The steps below use `3.1.0`:
    `RSA2048`) without ordering a new one, unless renewal was already due
    (`min_days_remaining`, 30 days by default). Skipping it leaves `2048`
    in state, and the next step would plan the replacement described above.
+   If this apply did renew the certificate (the apply output shows the
+   Key Vault certificate changing), the module output and the Application
+   Gateway listener still point at the previous version until a further
+   apply (see "Tags and renewal"): run `terraform apply` once more, and
+   confirm the listener serves the new certificate, before you treat the
+   upgrade as complete.
 4. Only now widen the pin to `~> 3.0` (or remove it), run `terraform init
    -upgrade`, and run `terraform plan`. It should show no change to
    `acme_certificate.n8n`.
