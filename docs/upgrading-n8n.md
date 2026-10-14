@@ -158,10 +158,12 @@ carries none):
 
 **Check after the upgrade** (namespace `n8n` unless you changed it):
 
-1. `helm history n8n -n n8n`: the newest revision is `deployed` with chart
-   `n8n-1.15.0`, and no `failed` or rolled-back revision came after the
-   previous one (`atomic = true` rolls a failed upgrade back, so a
-   successful-looking apply that left `1.14.0` deployed means it failed).
+1. `helm history n8n -n n8n`: the newest revision is `deployed` with the
+   chart you selected in `n8n_chart_version` (`n8n-1.15.0` for the
+   default; a prerelease or mirrored chart shows its own version), and no
+   `failed` or rolled-back revision came after the previous one
+   (`atomic = true` rolls a failed upgrade back, so a successful-looking
+   apply that left `1.14.0` deployed means it failed).
 2. `kubectl rollout status deploy/n8n-main deploy/n8n-worker deploy/n8n-webhook-processor -n n8n`.
 3. For each of those Deployments, the n8n container's
    `DB_POSTGRESDB_SSL_ENABLED` entries match the table row for your chart
