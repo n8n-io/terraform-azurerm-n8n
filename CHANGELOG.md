@@ -412,8 +412,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 - **Breaking: `modules/tls-letsencrypt` requires the `vancluever/acme`
   provider `~> 3.0`** (was `~> 2.16`; latest is `3.2.1`)
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). A
-  calling root that pins acme `2.x` must widen its constraint and run
-  `terraform init -upgrade`. The `provider "acme"` block and every module
+  calling root that pins acme `2.x` must widen its constraint; with an
+  existing 2.x certificate, follow the upgrade note below before widening
+  it to `~> 3.0`. The `provider "acme"` block and every module
   input are unchanged. Of the 3.0 breaking changes, only the `key_type`
   rename (`2048` to `RSA2048`) touches this module; it never set
   `disable_complete_propagation` (now `disable_authoritative_propagation`),
@@ -425,7 +426,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   next plan replace the certificate (`key_type = "2048" -> "RSA2048"`),
   which revokes it, orders a new one against Let's Encrypt's rate limits,
   and rolls the Application Gateway listener to a new Key Vault version.
-  Pin acme `3.1.0` in the calling root, apply once, then lift the pin; see
+  Pin acme `3.1.0` in the calling root (`3.0.0` and `3.0.1` also carry the
+  migration; one apply with any one of them is enough), then widen the pin; see
   [`modules/tls-letsencrypt/README.md`](./modules/tls-letsencrypt/README.md#upgrading-from-acme-provider-2x).
   New deployments are not affected.
 - **Breaking: `n8n_image_tag` now defaults to `null`** (was `"2.35.0"`),

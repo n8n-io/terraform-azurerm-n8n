@@ -109,7 +109,8 @@ by default — Terraform reissues the cert 30 days before expiry on the
 next apply.
 
 Upgrading a deployment whose certificate was issued with acme provider
-2.x? Follow the two-step provider upgrade in
+2.x? Follow the staged provider upgrade (one apply with acme `3.1.0`, then
+`~> 3.0`) in
 [`modules/tls-letsencrypt/README.md`](../modules/tls-letsencrypt/README.md#upgrading-from-acme-provider-2x)
 first. A direct jump to acme `3.1.1` or later revokes and re-issues the
 certificate.
