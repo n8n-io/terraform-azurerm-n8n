@@ -585,10 +585,14 @@ pairing is a `validation` block on `n8n_image_tag` (2.39.0 floor while
 `n8n_worker_pools` is non-empty), next to the existing 2.19 and 2.29 floors
 on the same variable. It was first drafted as an advisory `check` on the
 AWS sibling's premise that `n8n_image_tag` is usually `null` (the chart's
-floating `stable` tag); in this module the variable defaults to a pinned
-version and its regex validation rejects `null`, so the floor is fully
-decidable at plan time and there was no reason to let it through as a
-warning. An old image does not fail loudly: it silently accepts and ignores
+floating `stable` tag). At the time this module pinned a version by default
+and rejected `null`; since `n8n_image_tag` defaults to `null` (see "Null
+`n8n_image_tag`" below) the floor stays a hard stop anyway: an explicit tag
+is compared directly, and a null tag passes only when
+`local.n8n_chart_default_image_current` proves the chart's default meets
+it, so the preview chart (floating `stable`) and any mirror fail the plan
+until the tag is pinned. AWS and GCP skip the floor for a null tag; do not
+copy that. An old image does not fail loudly: it silently accepts and ignores
 `N8N_WORKER_POOLS_ENABLED` and `N8N_WORKER_POOL_NAME`, so pool workers come
 up healthy while consuming the default queue and every pool queue stays
 empty (wrong capacity, not a no-op). `tests/scripts/verify-worker-pools.sh`
@@ -627,6 +631,35 @@ The AWS sibling's `db_postgresdb_pool_size_fits_known_max_connections`
 `db.t3.small` value and 7-slot reserve subtraction are RDS-specific and do
 not apply here: the Azure table already excludes the 15 reserved slots.
 
+## Null `n8n_image_tag` (issue #57)
+
+`n8n_image_tag` defaults to `null`, as in the AWS and GCP siblings, so the
+chart's `appVersion` runs. `n8n.tf` then omits the `image.tag` and
+`taskRunners.image.tag` keys entirely; never send `tag: null`, because Helm
+deletes a null key and the worker-pools preview chart (which reads
+`.Values.image.tag` directly) would render `n8n:` with an empty tag. There
+is no appVersion table: `local.n8n_chart_default_image_current`
+(`locals.tf`) is the AWS sibling's `n8n_image_known_current` predicate
+(upstream repository, numbered chart `>= 1.12`) plus a prerelease
+exclusion, because every floor this module checks (2.19, 2.29, 2.30, 2.39)
+sits at or below chart 1.12.0's `appVersion` 2.39.6.
+`tests/scripts/check-n8n-chart.sh` proves that premise for the pinned chart
+(concrete `appVersion >= 2.39`, rendered `n8n:<appVersion>` and
+`runners:<appVersion>`) without hard-pinning the version. Two durable
+Terraform lessons came out of it. First, a variable `validation` cannot read
+a local derived from the same variable (`Error: Cycle: var.n8n_image_tag
+(validation) -> local...`), so `n8n_image_tag`'s validations keep parsing
+`var.n8n_image_tag` inline and read only tag-independent locals such as
+`local.n8n_chart_default_image_current`; derived locals like
+`local.n8n_image_known_current` are for checks and rendering only. Second,
+in `terraform test` an unexpected `check` failure fails the run, so a run
+that plans an unverifiable chart (older, prerelease, mirror) with the null
+default must either pin `n8n_image_tag` or list
+`check.n8n_image_version_is_known` in `expect_failures`. When a variable's
+own validation fails, checks that read that variable are not evaluated, so
+such a run lists only the variable (see
+`worker_pools_reject_a_null_image_tag_on_the_preview_chart`).
+
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
 This section records the 1.11.0 to 1.13.0 bump. The current default is
@@ -650,8 +683,9 @@ stays declared for one release as a tombstone (null-only validation plus a
 `tflint-ignore`); delete it with its two `rejects_removed_*` runs in the
 release after. Like the AWS sibling, `WEBHOOK_URL` is sent only to
 `n8n_image_tag` versions below 2.30.0 (`local.n8n_needs_legacy_webhook_url_env`),
-the first release that reads `N8N_WEBHOOK_URL`; since this module always
-pins a concrete tag, it needs none of AWS's null-tag fallbacks. At the time, `n8n_chart_version` defaulted to
+the first release that reads `N8N_WEBHOOK_URL`. At the time this module
+always pinned a concrete tag and needed none of AWS's null-tag fallbacks;
+it now has them (see "Null `n8n_image_tag`" below). At the time, `n8n_chart_version` defaulted to
 `1.13.0`, matching the AWS sibling after `terraform-aws-n8n` #145. Run
 `tests/scripts/chart-values-diff.sh
 <candidate>` before any future bump, but also diff `templates/` directly:

@@ -157,18 +157,22 @@ locals {
   # deprecated from that release. An older image reads only WEBHOOK_URL and
   # otherwise builds webhook URLs from N8N_PROTOCOL://N8N_HOST:N8N_PORT, which
   # here is the internal http://<n8n_domain>:5678/. So the legacy name is sent
-  # only to images older than 2.30.0. n8n_image_tag's own validation
-  # guarantees a leading major.minor.patch version, so the regex always
-  # matches. Same cut-over as terraform-aws-n8n's
-  # n8n_needs_legacy_webhook_url_env, without its null-tag and custom-image
-  # fallbacks: this module never leaves the tag to the chart.
-  n8n_image_version_parts = regex("^([0-9]+)\\.([0-9]+)\\.", var.n8n_image_tag)
-  n8n_needs_legacy_webhook_url_env = (
+  # only to images older than 2.30.0. Same cut-over as terraform-aws-n8n's
+  # n8n_needs_legacy_webhook_url_env. With n8n_image_tag null the module sends
+  # no image.tag and the chart's own default runs
+  # (local.n8n_chart_default_image_current). An unknown version still gets
+  # WEBHOOK_URL: harmless on 2.30.0+, required below it. try() keeps a
+  # malformed tag from erroring here, so n8n_image_tag's own validation
+  # reports it instead.
+  n8n_image_known_current   = var.n8n_image_tag == null && local.n8n_chart_default_image_current
+  n8n_image_version_unknown = var.n8n_image_tag == null && !local.n8n_chart_default_image_current
+  n8n_image_version_parts   = var.n8n_image_tag == null ? null : try(regex("^([0-9]+)\\.([0-9]+)\\.", var.n8n_image_tag), null)
+  n8n_needs_legacy_webhook_url_env = local.n8n_image_version_parts != null ? (
     tonumber(local.n8n_image_version_parts[0]) < 2 || (
       tonumber(local.n8n_image_version_parts[0]) == 2 &&
       tonumber(local.n8n_image_version_parts[1]) < 30
     )
-  )
+  ) : !local.n8n_image_known_current
   n8n_webhook_url_env = concat(
     [{ name = "N8N_WEBHOOK_URL", value = local.n8n_effective_webhook_url }],
     local.n8n_needs_legacy_webhook_url_env ? [{ name = "WEBHOOK_URL", value = local.n8n_effective_webhook_url }] : [],
@@ -474,6 +478,26 @@ locals {
       (
         tonumber(local.n8n_chart_version_core[0]) == 1 &&
         tonumber(local.n8n_chart_version_core[1]) >= 15
+      )
+    )
+  )
+
+  # True when the chart's own image default is a concrete n8n version at or
+  # above every floor this module checks (2.19, 2.29, 2.30, 2.39): an upstream,
+  # numbered chart from 1.12.0 (appVersion 1.12.0: 2.39.6, 1.13.0: 2.40.5,
+  # 1.14.0: 2.41.4, 1.15.0: 2.42.4). Charts before 1.12.0 and the 1.11.0-based
+  # worker-pools preview default to the floating stable tag; a prerelease or a
+  # custom n8n_chart_repository cannot be verified. Same predicate as
+  # terraform-aws-n8n's n8n_image_known_current, plus the prerelease
+  # exclusion. Tag-independent on purpose: n8n_image_tag's own validations read
+  # it, and a validation reading a local derived from its own variable is a
+  # graph cycle.
+  n8n_chart_default_image_current = (
+    local.n8n_chart_is_upstream &&
+    !strcontains(var.n8n_chart_version, "-") && (
+      tonumber(local.n8n_chart_version_core[0]) > 1 || (
+        tonumber(local.n8n_chart_version_core[0]) == 1 &&
+        tonumber(local.n8n_chart_version_core[1]) >= 12
       )
     )
   )

@@ -58,6 +58,23 @@ chart_version=$(console <<< 'var.n8n_chart_version')
 echo "== Pulling n8n chart ${chart_version} =="
 helm pull "oci://ghcr.io/n8n-io/n8n-helm-chart/n8n" --version "$chart_version" --untar --untardir "$tmp"
 
+# local.n8n_chart_default_image_current (locals.tf) treats a null n8n_image_tag
+# on an upstream numbered chart from 1.12.0 as meeting every n8n floor the
+# module checks (2.19, 2.29, 2.30, 2.39). Prove that premise for the pinned
+# chart: its appVersion must be a concrete version, not a floating tag such as
+# stable, and at least 2.39.0. No exact version is pinned here, so a chart
+# bump needs no edit to this script.
+app_version=$(awk '/^appVersion:/ { gsub(/["\047]/, "", $2); print $2 }' "$tmp/n8n/Chart.yaml")
+if [[ ! "$app_version" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+  echo "FAIL: chart ${chart_version} appVersion \"${app_version}\" is not a plain major.minor.patch version, so a null n8n_image_tag would run an unverifiable tag; revisit local.n8n_chart_default_image_current" >&2
+  exit 1
+fi
+if (( BASH_REMATCH[1] < 2 || (BASH_REMATCH[1] == 2 && BASH_REMATCH[2] < 39) )); then
+  echo "FAIL: chart ${chart_version} appVersion ${app_version} is below 2.39.0, the highest n8n floor local.n8n_chart_default_image_current vouches for" >&2
+  exit 1
+fi
+echo "PASS: chart ${chart_version} appVersion ${app_version} is a concrete version at or above 2.39.0"
+
 # Worker pools (early alpha) render only on a chart that carries
 # queueMode.workerGroups, which no numbered release does yet; the official
 # preview build is the only public chart that exercises worker-pools.tf's
@@ -239,6 +256,24 @@ jq -e '(.spec | has("replicas")) | not' "$tmp/multi-main-deployment-worker.json"
 
 jq -e --argjson n "$webhook_min" '.spec.replicas == $n' "$tmp/multi-main-deployment-webhook-processor.json" >/dev/null \
   || { echo "FAIL: deployment-webhook-processor.spec.replicas != n8n_webhook_hpa_min_replicas" >&2; exit 1; }
+
+# The default fixture leaves n8n_image_tag null: the module must send no
+# image.tag or taskRunners.image.tag, and the chart must fall back to its
+# appVersion on every n8n container and on the worker's runner sidecar.
+image_values=$(console <<< "jsonencode({ image = yamldecode(file(\"$tmp/multi-main-values.json\")).image, runners = yamldecode(file(\"$tmp/multi-main-values.json\")).taskRunners.image })")
+jq -e '(.image | has("tag") | not) and (.runners | has("tag") | not)' <<< "$image_values" >/dev/null \
+  || { echo "FAIL: the default fixture (n8n_image_tag null) must not send image.tag or taskRunners.image.tag, got ${image_values}" >&2; exit 1; }
+for template in deployment-main deployment-worker deployment-webhook-processor; do
+  jq -e --arg image "docker.n8n.io/n8nio/n8n:${app_version}" '
+    [.spec.template.spec.containers[] | select(.name != "task-runner") | .image] | (length > 0 and all(. == $image))
+  ' "$tmp/multi-main-${template}.json" >/dev/null \
+    || { echo "FAIL: ${template} must run docker.n8n.io/n8nio/n8n:${app_version} (the chart appVersion) with n8n_image_tag null" >&2; exit 1; }
+done
+jq -e --arg image "n8nio/runners:${app_version}" '
+  [.spec.template.spec.containers[] | select(.name == "task-runner") | .image] == [$image]
+' "$tmp/multi-main-deployment-worker.json" >/dev/null \
+  || { echo "FAIL: the worker's task-runner sidecar must run n8nio/runners:${app_version} (the chart appVersion) with n8n_image_tag null" >&2; exit 1; }
+echo "PASS: with n8n_image_tag null the n8n and runner images follow the chart appVersion ${app_version}"
 
 jq -e --argjson mn "$main_min" --argjson mx "$main_max" --argjson cpu "$main_cpu" \
   '.spec.minReplicas == $mn and .spec.maxReplicas == $mx and (.spec.metrics[0].resource.target.averageUtilization == $cpu)' \

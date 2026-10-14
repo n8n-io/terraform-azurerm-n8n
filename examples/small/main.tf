@@ -202,6 +202,7 @@ module "n8n" {
   n8n_license_key             = var.n8n_license_key
   n8n_license_cert_secret_ref = var.n8n_license_cert_secret_ref
   n8n_extra_env               = var.n8n_extra_env
+  n8n_image_tag               = var.n8n_image_tag
 
   depends_on = [
     time_sleep.storage_rbac,

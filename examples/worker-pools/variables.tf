@@ -223,7 +223,7 @@ variable "n8n_worker_pools_chart_verified" {
 }
 
 variable "n8n_image_tag" {
-  description = "Pinned n8n application version, passed to the module's n8n_image_tag. Defaults to 2.39.0, the first n8n release that reads N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME; an older image accepts both and silently ignores them once local.worker_pools is wired in, so the pods come up healthy with the feature doing nothing. The root module's own default (2.35.0) predates that floor, which is why this example pins its own default rather than leaving the module default in place."
+  description = "Pinned n8n application version, passed to the module's n8n_image_tag. Defaults to 2.39.0, the first n8n release that reads N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME; an older image accepts both and silently ignores them once local.worker_pools is wired in, so the pods come up healthy with the feature doing nothing. The root module's default (null) resolves to the floating stable tag on the preview chart, which the plan cannot verify against that floor, which is why this example pins its own default rather than leaving the module default in place."
   type        = string
   default     = "2.39.0"
   nullable    = false
