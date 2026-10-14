@@ -1,8 +1,9 @@
 # Deliberately no `skip-check`. Every accepted finding is annotated at its
 # resource with an inline `checkov:skip=<ID>:<reason>` comment, so the
 # reasoning sits next to the code and the check stays live everywhere else.
-# A repo-wide skip would silence the same ID on code written later, which
-# the hard-fail gate in tests/scripts/check-checkov.sh exists to prevent.
+# A repo-wide skip would silence the same ID on code written later. Nothing
+# in tests/scripts/check-checkov.sh rejects a `skip-check` entry, so this is
+# kept by review: do not add one.
 framework:
   - terraform
 skip-path:
