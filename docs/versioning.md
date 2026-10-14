@@ -70,10 +70,15 @@ when any lookup failed. The constraint evaluator and tag selection live in
 
 `.github/workflows/version-drift.yml` runs it every Monday (and on manual
 dispatch) and syncs the report to a single "Version drift report (automated)"
-tracking issue. A report with `ERROR:` lines is synced too, and the run then
-fails, so a failed lookup is visible both in the issue and as a red run
-(`tests/scripts/test-version-drift-workflow.sh` runs the workflow's own steps
-offline to check this). Run it locally any time:
+tracking issue labelled `version-drift`. The issue body is always the latest
+report. A comment is posted only when the set of `DRIFT:`/`ERROR:` lines
+changes (a body edit notifies nobody), the issue is closed when a report has
+neither, and reopened when findings come back. A report with `ERROR:` lines is
+synced too, and the run then fails, so a failed lookup is visible both in the
+issue and as a red run. The decision logic is
+`tests/scripts/drift-issue-sync.sh`, whose offline self-test runs on every pull
+request; `tests/scripts/test-version-drift-workflow.sh` runs the workflow's own
+steps offline. Run the report locally any time:
 
 ```bash
 tests/scripts/check-version-drift.sh

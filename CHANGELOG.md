@@ -569,6 +569,16 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   own steps to check this
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
 
+- `.github/workflows/version-drift.yml` (contributor tooling) labels the
+  tracking issue `version-drift`, comments only when the set of `DRIFT:` or
+  `ERROR:` lines changes (it used to edit the body silently every week),
+  closes the issue when a report is clean, and reopens it when findings
+  return instead of opening a duplicate. The sync now runs even when a
+  lookup failed, and the run fails afterwards; an incomplete report leaves
+  the issue untouched. The decision lives in
+  `tests/scripts/drift-issue-sync.sh`, whose offline self-test runs in CI
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
+
 ## [0.1.0] - 2026-09-29
 
 Initial release of `terraform-azurerm-n8n`: a single resource-bearing
