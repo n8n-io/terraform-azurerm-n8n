@@ -101,7 +101,8 @@ are gone before applying a freshly reviewed plan with
 `n8n_main_hpa_min_replicas = 1`. A direct live change is unsupported.
 
 **Expected outcome:** The destination has one ready main, HPA bounds 1/1,
-`Recreate`, and PDB minimum 0. No source main overlaps with the destination.
+`Recreate`, and no main PDB (chart `1.16.0` and later; PDB minimum 0 on older
+charts). No source main overlaps with the destination.
 Before restoring business workflows, a temporary scheduled fixture completes
 at least three healthy ticks. Reconcile canonical scheduled times, execution
 IDs, queue jobs, and all main/worker logs; successful execution counts alone
@@ -142,7 +143,8 @@ recovery plan before restarting either topology.
 synthetic load.
 
 **Expected outcome:** Evicted pods reschedule onto remaining nodes; the main
-PDB (`minAvailable = 1` in multi-main, `0` in single-main) governs how many
+PDB (`minAvailable = 1` in multi-main; none in single-main on chart `1.16.0`
+and later, `0` on older charts) governs how many
 main pods the drain can evict at once. n8n continues serving requests
 throughout (multi-main) or experiences the same brief interruption as a
 `Recreate` rollout (single-main).
@@ -173,7 +175,7 @@ manual `kubectl rollout restart`.
 (by design — the module never reads either payload). After the manual
 restart, main/worker/webhook pods reflect the new credential-overwrite data;
 worker task-runner sidecars reflect the new launcher allow-list (main pods
-carry no sidecar in queue mode on chart 1.15.0).
+carry no sidecar in queue mode on chart 1.16.0).
 
 **Result:** _______________________________________________
 
