@@ -124,9 +124,9 @@ ownership, the worker `ScaledObject`, and task-runner placement are as on
   `DB_POSTGRESDB_SSL_ENABLED`, a `configMapKeyRef` to the chart's ConfigMap
   key of the same name (value `"true"`), and no `DB_POSTGRESDB_SSL`;
   `tests/scripts/check-n8n-chart.sh` verifies this offline. The live pods
-  are expected to match after the upgrade, keeping the effective value
-  `"true"` so n8n's TLS behavior does not change, but no live Helm upgrade
-  from `1.14.0` has confirmed it yet (see below).
+  match after the upgrade, keeping the effective value `"true"` so n8n's
+  TLS behavior does not change (verified on a live in-place upgrade from
+  `1.14.0`, see below).
 - **`extraObjects`** (n8n-hosting #219) renders extra Kubernetes objects
   inside the release, and **`database.ssl.existingSecret`** (n8n-hosting
   #222) sources a CA, client certificate, or client key from a Secret.
@@ -136,17 +136,21 @@ ownership, the worker `ScaledObject`, and task-runner placement are as on
 The chart's `appVersion` moved to `2.42.4`; inert here because
 `n8n_image_tag` always sets the image.
 
-**What the upgrade from `1.14.0` is expected to do (not yet verified
-live).** On `1.14.0` the chart's entry is `DB_POSTGRESDB_SSL` and the
-module's is `DB_POSTGRESDB_SSL_ENABLED`, so no container carries a
-duplicate name before or after. Helm's three-way strategic merge patch
-keys env entries by `name`, so it is expected to replace the module's
-`value: "true"` literal with the chart's `configMapKeyRef` in place and
-delete `DB_POSTGRESDB_SSL`. That outcome is reasoned from how the patch
-works, not observed: until a live Helm upgrade from `1.14.0` confirms the
-literal is removed without leaving `value` and `valueFrom` together on the
-same entry, run the checks below on every upgraded deployment, against the
-expected shape for your chart source.
+**What the upgrade from `1.14.0` does (verified live once).** On `1.14.0`
+the chart's entry is `DB_POSTGRESDB_SSL` and the module's is
+`DB_POSTGRESDB_SSL_ENABLED`, so no container carries a duplicate name
+before or after. Helm's three-way strategic merge patch keys env entries
+by `name`, so it replaces the module's `value: "true"` literal with the
+chart's `configMapKeyRef` in place and deletes `DB_POSTGRESDB_SSL`. This
+was observed on a live `examples/small` upgrade in swedencentral (upstream
+repository, chart `1.14.0` to `1.15.0`, TLS on, multi-main): the Helm
+release went to revision 2 as `deployed` with no rollback and no
+`value`/`valueFrom` error, main, worker and webhook-processor stayed at
+their replica floors, each n8n container carried exactly one
+`DB_POSTGRESDB_SSL_ENABLED` from ConfigMap `n8n`, and `printenv` in a main
+pod printed `true`. It is one run on one chart source: run the checks below
+on every upgraded deployment, against the expected shape for your chart
+source.
 
 Duplicates can only arise where the module cannot verify the chart: a
 custom `n8n_chart_repository` or a prerelease at `1.15.0` or newer keeps

@@ -495,10 +495,11 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
     stays `"true"` whenever TLS is on, and
     `tests/scripts/check-n8n-chart.sh` now fails if any n8n container
     carries the name other than exactly once, from the source that gate
-    selects. The in-place Helm upgrade from `1.14.0` is expected to swap
-    the module's literal for the chart's `configMapKeyRef` but has not yet
-    been verified on a live cluster; run the post-upgrade checks in
-    `docs/upgrading-n8n.md`.
+    selects. The in-place Helm upgrade from `1.14.0` swaps the module's
+    literal for the chart's `configMapKeyRef`: observed once on a live
+    `examples/small` upgrade (upstream repository, TLS on, multi-main)
+    with no rollback and exactly one entry per container. Run the
+    post-upgrade checks in `docs/upgrading-n8n.md` on your own deployment.
   - No `deployment-*.yaml` template changed, so `1.15.0` joins
     `local.n8n_chart_has_worker_only_runners`.
   - #219 `extraObjects` and #222 `database.ssl.existingSecret` are new and
