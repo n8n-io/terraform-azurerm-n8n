@@ -28,7 +28,7 @@ body:
     attributes:
       label: Terraform version
       description: Output of `terraform version`.
-      placeholder: "Terraform v1.16.4"
+      placeholder: "Terraform v1.16.5"
     validations:
       required: true
 

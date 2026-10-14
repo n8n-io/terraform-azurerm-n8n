@@ -16,7 +16,7 @@ env:
   # examples to pin computed-at-apply attributes to plan-known synthetic
   # values under mock_provider). Bumped from 1.9.8 to track the version
   # the AGENTS.md combined-test-suite wall-clock note was measured on.
-  TF_VERSION: "1.16.4"
+  TF_VERSION: "1.16.5"
   TFLINT_VERSION: "v0.64.0"
   # checkov results are version-dependent, so this gate pins one version
   # rather than tracking latest. tests/scripts/check-checkov.sh reads this
@@ -157,7 +157,7 @@ jobs:
         # a newer runtime alone never notices code that needs more.
         # Keep the first entry equal to TF_VERSION (matrix values cannot
         # read `env`), and the second equal to the floor in versions.tf.
-        terraform: ["1.16.4", "1.13.0"]
+        terraform: ["1.16.5", "1.13.0"]
         target:
           [
             ".",
