@@ -145,7 +145,8 @@ keys env entries by `name`, so it is expected to replace the module's
 delete `DB_POSTGRESDB_SSL`. That outcome is reasoned from how the patch
 works, not observed: until a live Helm upgrade from `1.14.0` confirms the
 literal is removed without leaving `value` and `valueFrom` together on the
-same entry, run the checks below on every upgraded deployment.
+same entry, run the checks below on every upgraded deployment, against the
+expected shape for your chart source.
 
 Duplicates can only arise where the module cannot verify the chart: a
 custom `n8n_chart_repository` or a prerelease at `1.15.0` or newer keeps
@@ -159,6 +160,17 @@ entries (for example switching such a deployment to the upstream
 repository) is the riskiest path: check the pods afterwards as below, and
 `kubectl rollout restart` with a re-apply if the name went missing.
 
+**Expected `DB_POSTGRESDB_SSL_ENABLED` shape after the upgrade**, per n8n
+container (main, worker, and webhook-processor; the `task-runner` sidecar
+carries none):
+
+| Chart source and TLS | Expected entries | ConfigMap `n8n` |
+| --- | --- | --- |
+| Upstream `n8n_chart_repository`, numbered `1.15.0` or newer, TLS on | Exactly one, `configMapKeyRef` `n8n` / `DB_POSTGRESDB_SSL_ENABLED` | `DB_POSTGRESDB_SSL_ENABLED: "true"`, no `DB_POSTGRESDB_SSL` |
+| Custom repository or prerelease whose chart does not render the name | Exactly one, the module's `value: "true"` | Whatever that chart renders (for example `DB_POSTGRESDB_SSL`); not checked |
+| Custom repository or prerelease whose chart renders the name | Two by design: the chart's `configMapKeyRef` first, then the module's `value: "true"` | `DB_POSTGRESDB_SSL_ENABLED: "true"` |
+| `postgres_external_ssl_mode = "disable"` (any chart) | None | No `DB_POSTGRESDB_SSL*` key |
+
 **Check after the upgrade** (namespace `n8n` unless you changed it):
 
 1. `helm history n8n -n n8n`: the newest revision is `deployed` with chart
@@ -166,24 +178,27 @@ repository) is the riskiest path: check the pods afterwards as below, and
    previous one (`atomic = true` rolls a failed upgrade back, so a
    successful-looking apply that left `1.14.0` deployed means it failed).
 2. `kubectl rollout status deploy/n8n-main deploy/n8n-worker deploy/n8n-webhook-processor -n n8n`.
-3. For each of those Deployments, the n8n container's env has exactly one
-   `DB_POSTGRESDB_SSL_ENABLED`, from `configMapKeyRef` `n8n` /
-   `DB_POSTGRESDB_SSL_ENABLED`, and no `DB_POSTGRESDB_SSL`:
+3. For each of those Deployments, the n8n container's
+   `DB_POSTGRESDB_SSL_ENABLED` entries match the table row for your chart
+   source:
    `kubectl get deploy n8n-main -n n8n -o json | jq '[.spec.template.spec.containers[] | {name, ssl: [.env[]? | select(.name | startswith("DB_POSTGRESDB_SSL"))]}]'`
    (the filter also lists `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` and
    `DB_POSTGRESDB_SSL_CA` where your TLS mode renders them; those do not
    change, and the `task-runner` sidecar lists none).
-4. `kubectl get configmap n8n -n n8n -o json | jq '.data | with_entries(select(.key | startswith("DB_POSTGRESDB_SSL")))'`
-   shows `DB_POSTGRESDB_SSL_ENABLED: "true"` and no `DB_POSTGRESDB_SSL`.
-5. In a running pod, `printenv DB_POSTGRESDB_SSL_ENABLED` prints `true`,
-   and the n8n logs show no PostgreSQL connection or TLS errors.
+4. Where the table expects a ConfigMap key, check it with
+   `kubectl get configmap n8n -n n8n -o json | jq '.data | with_entries(select(.key | startswith("DB_POSTGRESDB_SSL")))'`.
+5. With TLS on, `printenv DB_POSTGRESDB_SSL_ENABLED` in a running pod
+   prints `true`, and the n8n logs show no PostgreSQL connection or TLS
+   errors.
 6. `tests/scripts/smoke-test.sh` passes.
 
 Failure signs: the Helm upgrade fails with
 `valueFrom: Invalid value: "": may not be specified when 'value' is not empty`
 (the patch kept the old literal next to the new reference), a container
-with zero or two `DB_POSTGRESDB_SSL_ENABLED` entries, or main pods failing
-their readiness probe on database connection errors after the roll.
+whose `DB_POSTGRESDB_SSL_ENABLED` entries differ from its table row (for
+example none with TLS on, or two on the upstream chart), or main pods
+failing their readiness probe on database connection errors after the
+roll.
 
 ## Moving from chart 1.13.0 to 1.14.0
 
