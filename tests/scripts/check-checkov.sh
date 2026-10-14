@@ -6,24 +6,16 @@
 # flags, the config file, and the exit/reporting behavior have a single
 # definition.
 #
-# Deliberate deviation from the AWS sibling's check-checkov.sh: AWS's repo
-# is fully curated (every finding fixed or annotated with
-# `checkov:skip=<ID>:<reason>`), so its script hard-fails on any finding.
-# Azure's repo carries a pre-existing, uncurated backlog across every
-# sizing example (subnet NSG associations, Key Vault purge protection,
-# storage SAS/soft-delete, etc.) that a full curation pass has not
-# reached yet (see AGENTS.md's "Static analysis" quality-bar section).
-# Hard-failing on that backlog here would be a scope-widening no one
-# asked for, so pass 1 below reports but never fails the script. The one
-# thing this script does hard-fail on is pass 2's coverage guarantee: an
-# opt-in resource that stops being reached is a real regression (a
-# rename or a broken toggle), not a backlog item, and that must never go
-# quiet again the way the original checkov-action gap did.
+# Findings are either fixed or annotated with an inline
+# `checkov:skip=<ID>:<reason>` comment at the resource that causes them;
+# .checkov.yaml carries no check suppressions, only path exclusions.
+# checkov exits non-zero on any finding that is neither fixed nor
+# annotated, and that is what fails the build. This matches the AWS
+# sibling's gate.
 #
-# Two passes: the configuration as written (reported, not gating), then
-# the same scan with every opt-in toggle in tests/checkov/opt-in.tfvars
-# turned on (gating on coverage only), because checkov never evaluates a
-# count-0 resource (details at pass 2 below).
+# Two passes: the configuration as written, then the same scan with every
+# opt-in toggle in tests/checkov/opt-in.tfvars turned on, because checkov
+# never evaluates a count-0 resource (details at pass 2 below).
 #
 # Usage:
 #   tests/scripts/check-checkov.sh
@@ -76,11 +68,8 @@ SCAN=(checkov -d . --framework terraform --config-file .checkov.yaml --compact)
 
 # Pass 1: the module and every example exactly as written. --quiet prints
 # failures only, so a clean pass is silent apart from the summary line.
-# Report only: see the header note on the pre-existing, uncurated backlog.
-echo "checkov pass 1/2: defaults (reported, not gating)"
-set +e
+echo "checkov pass 1/2: defaults"
 "${SCAN[@]}" --quiet
-set -e
 
 # Pass 2: the same scan with every opt-in toggle turned on. checkov
 # evaluates `count` from variable defaults and answers each check on a
@@ -99,13 +88,24 @@ OPT_IN_RESOURCES=(
   "kubernetes_service_v1.redis_exporter[0]"
 )
 
-echo "checkov pass 2/2: opt-in resources (--var-file $OPT_IN_TFVARS)"
+echo "checkov pass 2/2: opt-in resources (--var-file $OPT_IN_TFVARS, root module only)"
 # Not --quiet: PASSED lines are what prove the scan reached each resource.
 # The full listing is kept in a temp file and only the summary is echoed.
+#
+# The root module is scanned directly, with examples/ skipped. In a scan of
+# the whole tree checkov reaches the root only as `module.n8n.<address>`
+# through each example's call, evaluates it without the --var-file toggle, and
+# reports no `[0]` address at all, so the coverage check below can fail even
+# though the toggle is wired correctly. Scanning the root alone is what makes
+# the `[0]` addresses appear. --skip-path on the command line replaces the
+# list in .checkov.yaml instead of extending it, so every path that file skips
+# is repeated here (tests/fixtures calls the root with its own settings and
+# would draw findings that belong to a fixture, not to this module).
 OPT_IN_REPORT="$(mktemp)"
 trap 'rm -f "$OPT_IN_REPORT"' EXIT
 set +e
-"${SCAN[@]}" --var-file "$OPT_IN_TFVARS" > "$OPT_IN_REPORT"
+"${SCAN[@]}" --skip-path examples --skip-path tests --skip-path openspec --skip-path .agents \
+  --var-file "$OPT_IN_TFVARS" > "$OPT_IN_REPORT"
 rc=$?
 set -e
 
@@ -129,4 +129,8 @@ for address in "${OPT_IN_RESOURCES[@]}"; do
   fi
 done
 
-echo "checkov: coverage confirmed for every opt-in resource (findings above are reported, not gating; see AGENTS.md)."
+if [[ $rc -ne 0 ]]; then
+  exit "$rc"
+fi
+
+echo "checkov: clean, and coverage confirmed for every opt-in resource."

@@ -468,6 +468,16 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   description), not just "the AKS default node pool"
   ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
 
+- **Checkov is now a hard gate, matching `terraform-aws-n8n`.** The `checkov`
+  CI job no longer uses `continue-on-error`, and `tests/scripts/check-checkov.sh`
+  fails on any finding. The 167 findings that were previously reported but not
+  gating are each annotated at their resource with
+  `checkov:skip=<ID>:<reason>`; real gaps are prefixed `Known gap:`. Pass 2
+  (opt-in resources) now scans the root module directly, so its coverage
+  assertion no longer fails when examples reach the module only as
+  `module.n8n.*`, and it surfaced `CKV_AZURE_115` on the module's own AKS
+  (now annotated). No module behavior or default changed.
+
 ### Fixed
 
 - `examples/customer-managed-cluster`, `examples/customer-managed-everything`,

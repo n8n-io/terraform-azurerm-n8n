@@ -48,6 +48,7 @@ resource "azurerm_virtual_network" "n8n" {
 }
 
 resource "azurerm_subnet" "aks" {
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. The module only creates and associates an NSG for appgw_subnet_id (see ingress.tf azurerm_subnet_network_security_group_association.appgw); the AKS node subnet relies on AKS's own network policy enforcement instead of a subnet NSG.
   name                 = "aks"
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
@@ -55,6 +56,7 @@ resource "azurerm_subnet" "aks" {
 }
 
 resource "azurerm_subnet" "appgw" {
+  # checkov:skip=CKV2_AZURE_31:False positive: this subnet is attached to azurerm_network_security_group.appgw via azurerm_subnet_network_security_group_association.appgw inside the module (ingress.tf), created because this example passes appgw_subnet_id and leaves create_ingress at its default of true. Checkov's graph check cannot see the cross-module association.
   name                 = "appgw"
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
@@ -62,6 +64,7 @@ resource "azurerm_subnet" "appgw" {
 }
 
 resource "azurerm_subnet" "postgres" {
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. This subnet is delegated to Microsoft.DBforPostgreSQL/flexibleServers for VNet integration; the module's azurerm_postgresql_flexible_server sets public_network_access_enabled = false and uses this delegated subnet plus a private DNS zone for connectivity, but no NSG restricts traffic inside the subnet.
   name                 = "postgres"
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
@@ -81,6 +84,7 @@ resource "azurerm_subnet" "postgres" {
 }
 
 resource "azurerm_subnet" "redis" {
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. This subnet hosts only the Azure Managed Redis private endpoint NIC (private_endpoint_network_policies = "Disabled", passed to the module as redis_subnet_id), so traffic reaches Redis exclusively via the private endpoint, but the subnet itself has no NSG.
   name                              = "redis-private-endpoints"
   resource_group_name               = azurerm_resource_group.network.name
   virtual_network_name              = azurerm_virtual_network.n8n.name
@@ -89,6 +93,7 @@ resource "azurerm_subnet" "redis" {
 }
 
 resource "azurerm_subnet" "private_endpoints" {
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. This subnet hosts this example's own azurerm_private_endpoint.blob NIC for the external storage account stand-in (private_endpoint_network_policies = "Disabled"), so traffic reaches the storage account exclusively via the private endpoint, but the subnet itself has no NSG.
   name                              = "storage-private-endpoints"
   resource_group_name               = azurerm_resource_group.network.name
   virtual_network_name              = azurerm_virtual_network.n8n.name
@@ -109,6 +114,9 @@ resource "random_string" "storage_suffix" {
 }
 
 resource "azurerm_storage_account" "existing" {
+  # checkov:skip=CKV_AZURE_206:account_replication_type = "LRS" matches the module's own cost-minimizing default (var.storage_account_replication_type defaults to "LRS"). The stand-in models a plausible minimum-viable customer storage account, not this module's zone/region-redundant option.
+  # checkov:skip=CKV_AZURE_33:This account's Queue service is never used: n8n's workload only accesses the Blob container below (storage_container.existing), the same gap as the module's own azurerm_storage_account.n8n (storage.tf). Enabling diagnostic logging for a service nothing reads from would not improve this stand-in's posture.
+  # checkov:skip=CKV2_AZURE_1:Encrypted with the Storage-managed default key, not a Customer Managed Key: the module's own azurerm_storage_account.n8n (storage.tf) has no customer_managed_key support either, so this stand-in models a plausible minimum-viable customer storage account, not a CMK-capable posture. A real customer-managed account's actual key is the owning team's decision.
   name                = substr("${var.friendly_name_prefix}st${random_string.storage_suffix.result}", 0, 24)
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
@@ -148,6 +156,7 @@ resource "time_sleep" "storage_rbac" {
 }
 
 resource "azurerm_storage_container" "existing" {
+  # checkov:skip=CKV2_AZURE_21:Known gap: no diagnostic setting routes Blob read-request logs to a Log Analytics workspace or storage account. The stand-in models a plausible minimum-viable customer storage account; a real customer-managed account's actual logging posture is the owning team's decision.
   name                  = "n8n-data"
   storage_account_id    = azurerm_storage_account.existing.id
   container_access_type = "private"
@@ -203,6 +212,11 @@ resource "random_string" "key_vault_suffix" {
 }
 
 resource "azurerm_key_vault" "tls" {
+  # checkov:skip=CKV_AZURE_42:Teardown-friendly example setting: purge_protection_enabled = false is deliberate so `terraform destroy` fully removes this lab TLS vault without leaving a soft-deleted vault behind.
+  # checkov:skip=CKV_AZURE_110:Same requirement as CKV_AZURE_42 above: purge protection is intentionally disabled for teardown-friendly lab usage.
+  # checkov:skip=CKV_AZURE_109:This vault has no network_acls block, so it allows public access from all networks; it only stores a self-signed TLS cert created by modules/tls-self-signed and consumed via app_gateway_tls_cert_secret_id, so a firewall restriction is unnecessary lab convenience, not production data.
+  # checkov:skip=CKV_AZURE_189:Same requirement as CKV_AZURE_109: public_network_access_enabled defaults to true and no network_acls restrict it, consistent with the lab-only self-signed TLS cert this vault holds.
+  # checkov:skip=CKV2_AZURE_32:A private endpoint only helps with restricted network access, which this vault does not implement (see CKV_AZURE_189 above).
   name                       = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
   resource_group_name        = azurerm_resource_group.network.name
   location                   = azurerm_resource_group.network.location

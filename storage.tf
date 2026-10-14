@@ -14,6 +14,10 @@
 resource "azurerm_storage_account" "n8n" {
   # checkov:skip=CKV_AZURE_33:The module uses Blob only; enabling Queue service logging for an unused data plane would create noise and does not protect n8n storage operations.
   # checkov:skip=CKV_AZURE_206:Replication is caller-configurable because ZRS/GZRS availability differs by region. LRS remains the portable default; production examples select stronger replication where their documented regions support it.
+  # checkov:skip=CKV2_AZURE_1:Known gap, documented: docs/customer-managed-infrastructure.md's "AWS KMS controls on Storage and PostgreSQL" note states Azure Storage encrypts data at rest by default without an equivalent caller-supplied CMK control surface in this module, and this is not planned without an Azure-native equivalent.
+  # checkov:skip=CKV2_AZURE_33:False positive: azurerm_private_endpoint.blob below connects to this storage account via private_connection_resource_id = azurerm_storage_account.n8n[0].id (subresource_names = ["blob"]); checkov's graph connectivity check only resolves the connection against the "[0]"-indexed resource address.
+  # checkov:skip=CKV2_AZURE_40:shared_access_key_enabled is set from `var.azure_blob_connection_string != null || var.azure_blob_account_key != null`, a conditional expression that evaluates to false by default (both variables default to null, see variables.tf) — matching this control's intent — but only when a caller sets one of the compatibility credentials. Checkov's graph attribute check can't resolve the ternary to a static literal, so it flags the resource regardless of the default outcome.
+  # checkov:skip=CKV2_AZURE_41:Same ternary-evaluation limit as CKV2_AZURE_40 above: the default (shared_access_key_enabled = false) satisfies this control's first branch, but checkov can't resolve it to a literal. Known gap for the compatibility-credential modes: when azure_blob_connection_string or azure_blob_account_key is set (shared_access_key_enabled = true), the module configures no sas_policy block, so there is no account-level SAS expiration ceiling in that mode.
   count = var.create_blob_storage ? 1 : 0
 
   name                = local.storage_account_name
@@ -51,6 +55,7 @@ resource "azurerm_storage_account" "n8n" {
 # ── Azure Blob container and private networking ───────────────────────────────
 
 resource "azurerm_storage_container" "n8n" {
+  # checkov:skip=CKV2_AZURE_21:Storage logging via Log Analytics storage insights is out of scope — same README.md shared-responsibility boundary as CKV_AZURE_4 on azurerm_kubernetes_cluster.n8n (aks.tf): the module does not enable monitoring/alerting beyond what the caller configures, and no azurerm_log_analytics_storage_insights or Log Analytics workspace resource exists anywhere in this module.
   count = var.create_blob_storage ? 1 : 0
 
   name                  = var.azure_blob_container_name
