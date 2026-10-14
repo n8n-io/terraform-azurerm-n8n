@@ -103,13 +103,20 @@ echo "== new-script syntax checks (port-aws-050-enhancements) =="
 # and verify-worker-pools.sh need network or a live cluster for their real
 # work, so only syntax, shellcheck (when installed), and --help run here.
 for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-pools.sh \
-  tests/scripts/check-version-drift.sh tests/scripts/check-checkov.sh scripts/check-example-parity.sh; do
+  tests/scripts/check-version-drift.sh tests/scripts/lib/constraints.sh \
+  tests/scripts/test-version-drift-constraints.sh tests/scripts/test-version-drift-workflow.sh \
+  tests/scripts/check-checkov.sh \
+  scripts/check-example-parity.sh; do
   bash -n "$script"
   if command -v shellcheck >/dev/null 2>&1; then
     shellcheck -S warning "$script"
   fi
 done
 tests/scripts/chart-values-diff.sh --help >/dev/null
+# Offline tests for the drift script's version helpers and for
+# version-drift.yml's own shell steps.
+tests/scripts/test-version-drift-constraints.sh
+tests/scripts/test-version-drift-workflow.sh
 
 echo
 echo "== markdownlint =="
@@ -130,7 +137,9 @@ scripts/check-example-parity.sh
 if [[ "${SKIP_VERSION_DRIFT:-0}" != "1" ]]; then
   echo
   echo "== tests/scripts/check-version-drift.sh (report only, needs network) =="
-  tests/scripts/check-version-drift.sh
+  # Exits 2 when a lookup fails (for example, no network); report only, so
+  # that does not fail this script.
+  tests/scripts/check-version-drift.sh || echo "  check-version-drift.sh exited $? (see ERROR lines above); not failing init.sh"
 fi
 
 echo

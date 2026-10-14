@@ -1,7 +1,8 @@
 # Pre-apply, post-deployment, and chart-rendering scripts
 
-Six scripts. `check-n8n-chart.sh` is offline and runs in CI on every
-pull request. `smoke-test.sh`'s topology-detection self-test
+Seven scripts. `check-n8n-chart.sh` is offline and runs in CI on every
+pull request. `check-version-drift.sh` needs network but no credentials,
+and runs weekly. `smoke-test.sh`'s topology-detection self-test
 (`SMOKE_TEST_SELF_TEST=1`) and `preflight-region-check.sh`'s input and
 quota self-test (`PREFLIGHT_SELF_TEST=1`) also run offline in CI; the rest
 of `smoke-test.sh`, all of `verify-custom-image.sh`, `verify-worker-pools.sh`,
@@ -16,6 +17,7 @@ provide.
 | [`check-redis-exporter.py`](#redis-exporter-outage-check) | Changes to exporter probes, timeouts, or the pinned image. Runs against a local hanging TCP peer in CI. |
 | [`smoke-test.sh`](#smoke-test) | Always, after any deploy. Checks the deployment is healthy end to end. Its offline self-test runs in CI on every pull request. |
 | [`verify-custom-image.sh`](#custom-image-verification) | The deployment sets `n8n_image_repository` and `n8n_custom_extensions_path` to bake community packages into the image. |
+| [`check-version-drift.sh`](#version-drift-report) | Weekly (automated), or before planning pin bumps. Reports every pin it can check against public sources. Its offline helper test runs in CI on every pull request. |
 | [`verify-worker-pools.sh`](#worker-pools-verification) | The deployment declares `n8n_worker_pools` (alpha). Confirms the chart actually rendered the pool Deployments/ScaledObjects, since a chart that predates `queueMode.workerGroups` accepts and silently drops the values. |
 
 ## Region preflight
@@ -635,3 +637,35 @@ WORKER_POOLS="heavy secteam itop" NAMESPACE=n8n ./tests/scripts/verify-worker-po
 
 Priority: explicit env > `.env` file > Terraform outputs > built-in
 defaults, matching the other scripts in this directory.
+
+## Version drift report
+
+`check-version-drift.sh` compares the pins in
+[`docs/versioning.md`](../../docs/versioning.md#checking-currency) with their
+upstream sources (registry.terraform.io, GitHub releases, the n8n chart's OCI
+registry, the kedacore chart repository, endoflife.date) and prints one
+`DRIFT:`, `OK:`, `ERROR:`, or `INFO:` line per pin, then a summary. It needs
+`curl`, `jq`, and `helm`; no Azure credentials. Exit 0 means every lookup
+succeeded (drift is not a failure); exit 2 means at least one `ERROR:` line.
+Set `GH_TOKEN` to avoid the GitHub API's anonymous rate limit.
+
+```bash
+tests/scripts/check-version-drift.sh
+```
+
+Its provider-constraint evaluator, release-tag selection, and endoflife.date
+parsing live in `lib/constraints.sh` so they can be tested without network:
+
+```bash
+tests/scripts/test-version-drift-constraints.sh
+```
+
+That test runs in CI on every pull request. `.github/workflows/version-drift.yml`
+runs the report itself every Monday and syncs it to the tracking issue, also
+when a lookup failed (the run fails after the sync).
+`test-version-drift-workflow.sh` runs that workflow's own shell steps offline,
+against a stub report and a fake `gh`, to keep it that way:
+
+```bash
+tests/scripts/test-version-drift-workflow.sh
+```
