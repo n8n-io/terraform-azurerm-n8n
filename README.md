@@ -625,7 +625,8 @@ provider "helm" {
 }
 ```
 
-Existing state needs no manual step. The 3.x provider upgrades each
+Existing state needs no manual step (but see the `keyring` and `description`
+exception below). The 3.x provider upgrades each
 `helm_release` from the 2.x schema on the first plan and prints an
 `UpgradeState Triggered` warning. That first plan also shows every
 `helm_release` (`helm_release.n8n`, `module.controllers.helm_release.keda[0]`,
@@ -639,6 +640,25 @@ unchanged values, so each release's revision (and the
 render the same manifests from the same values, so no pods should roll. The
 next plan is clean. There is no supported
 way back to 2.x once 3.x has written the state, so back up the state first.
+
+One exception affects only your own `helm_release` resources; the module and
+the examples set neither argument. Helm provider 3.3.0 has an open bug
+([hashicorp/terraform-provider-helm#1695](https://github.com/hashicorp/terraform-provider-helm/issues/1695))
+that fails the first plan with `Provider produced invalid plan ... planned an
+invalid value for helm_release.<name>.keyring` (or `.description`):
+
+- Any `keyring` argument fails, because 2.x never stored it in state while
+  `verify` was false.
+- `description = ""` fails when the 2.x state holds no description, for
+  example because the argument was added after the release was created.
+  A non-empty `description` is not affected.
+
+Remove those arguments from your `helm_release` resources before the first
+3.x plan, and leave them out until upstream fixes
+([#1714](https://github.com/hashicorp/terraform-provider-helm/pull/1714) or
+[#1739](https://github.com/hashicorp/terraform-provider-helm/pull/1739)) ship
+in a release. A failed plan writes nothing to state, so you can fix the
+configuration and plan again.
 
 ## Support
 

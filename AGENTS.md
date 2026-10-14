@@ -676,12 +676,19 @@ kube-apiserver: the provider's `recomputeMetadata` sees the upgraded state's
 `metadata` unknown, and 2.x stored `set` sorted by name. The apply is a Helm
 upgrade with unchanged manifests (revision +1, no object changes) and the
 next plan is clean. Upstream issue hashicorp/terraform-provider-helm#1695
-("planned an invalid value for ... keyring") fires only when the state holds
-a non-null `keyring` or the config sets `keyring`/`description` explicitly; a
-real 2.17.0 state stores both as null (SDKv2's DiffSuppressFunc drops the
-`keyring` default on create), so do not set either on a `helm_release` until
-upstream PRs #1714/#1739 ship. A hand-built state with the default keyring
-path reproduces the error and is not what 2.x writes.
+("Provider produced invalid plan ... keyring/description") does not hit this
+module or its examples, which set neither argument. Reproduced against real
+helm 2.17.0 state on a local kube-apiserver: 2.17.0 never stores `keyring`
+(its DiffSuppressFunc drops the value while `verify = false`, even when the
+config sets it), and 3.3.0's `suppressKeyring` plans the null state value
+against a non-null config, so any explicit `keyring` fails the first 3.x
+plan. `suppressDescription` copies state into the plan when the config is
+`""`, so `description = ""` fails when the 2.x state holds null (the argument
+was added after create; 2.x's `new == ""` suppression never wrote it). A
+non-empty `description` planned clean in both cases, and removing the
+arguments fixed every failure, which is what the README's migration section
+tells callers. Do not set either argument on a `helm_release` until upstream
+PR #1714 or #1739 is released.
 
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
