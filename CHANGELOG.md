@@ -561,7 +561,12 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   Microsoft's HTML page, prints `DRIFT:`/`OK:`/`ERROR:`/`INFO:` lines with a
   summary, and exits 2 when a lookup fails instead of printing
   `unavailable` and exiting 0. It no longer needs python3. The new offline
-  `tests/scripts/test-version-drift-constraints.sh` runs in CI
+  `tests/scripts/test-version-drift-constraints.sh` runs in CI.
+  `.github/workflows/version-drift.yml` records that exit code instead of
+  failing its report step on it, still syncs the report (with its `ERROR:`
+  lines) to the tracking issue, and fails the run afterwards; the new
+  offline `tests/scripts/test-version-drift-workflow.sh` runs the workflow's
+  own steps to check this
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
 
 ## [0.1.0] - 2026-09-29

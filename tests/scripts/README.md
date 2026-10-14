@@ -661,4 +661,11 @@ tests/scripts/test-version-drift-constraints.sh
 ```
 
 That test runs in CI on every pull request. `.github/workflows/version-drift.yml`
-runs the report itself every Monday and syncs it to the tracking issue.
+runs the report itself every Monday and syncs it to the tracking issue, also
+when a lookup failed (the run fails after the sync).
+`test-version-drift-workflow.sh` runs that workflow's own shell steps offline,
+against a stub report and a fake `gh`, to keep it that way:
+
+```bash
+tests/scripts/test-version-drift-workflow.sh
+```

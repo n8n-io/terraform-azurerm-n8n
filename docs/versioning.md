@@ -70,7 +70,10 @@ when any lookup failed. The constraint evaluator and tag selection live in
 
 `.github/workflows/version-drift.yml` runs it every Monday (and on manual
 dispatch) and syncs the report to a single "Version drift report (automated)"
-tracking issue. Run it locally any time:
+tracking issue. A report with `ERROR:` lines is synced too, and the run then
+fails, so a failed lookup is visible both in the issue and as a red run
+(`tests/scripts/test-version-drift-workflow.sh` runs the workflow's own steps
+offline to check this). Run it locally any time:
 
 ```bash
 tests/scripts/check-version-drift.sh
