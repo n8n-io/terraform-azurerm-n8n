@@ -42,20 +42,32 @@ values derive from.
 
 ### Chart workaround for `DB_POSTGRESDB_SSL_ENABLED`
 
-The pinned n8n Helm chart (`1.14.0`, and `1.13.0` before it) renders
-`database.ssl.enabled` into an environment variable named
-`DB_POSTGRESDB_SSL`, but n8n only reads `DB_POSTGRESDB_SSL_ENABLED`
-([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
-fixes this upstream; it was merged after `1.14.0` and is not yet in a
-released chart). The module works around this by setting
+n8n Helm charts before `1.15.0` (including `1.14.0`, `1.13.0`, and the
+`1.11.0`-based worker-pools preview) render `database.ssl.enabled` into an
+environment variable named `DB_POSTGRESDB_SSL`, but n8n only reads
+`DB_POSTGRESDB_SSL_ENABLED`. On those charts the module sets
 `DB_POSTGRESDB_SSL_ENABLED=true` directly through `config.extraEnv`
 (`locals.tf`'s `n8n_postgres_ssl_enabled_env`) whenever the effective
-`ssl_mode` is not `disable`, independent of chart version. The entry stays
-harmless on a chart that includes the fix.
+`ssl_mode` is not `disable`.
+
+Chart `1.15.0`, the module's default, fixes the name upstream
+([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175))
+and renders `DB_POSTGRESDB_SSL_ENABLED` itself from `database.ssl.enabled`,
+which the module sets on exactly the same condition. To avoid giving every
+container the name twice, the module drops its own entry when
+`local.n8n_chart_renders_postgres_ssl_enabled` is true: `n8n_chart_repository`
+is the upstream default and `n8n_chart_version` is a numbered release (no
+prerelease suffix) at `1.15.0` or newer. A mirrored chart or a prerelease
+keeps the module's entry, because the module cannot verify what that chart
+renders. If that chart does render the name, each container carries it
+twice with the same value `"true"`. Kubernetes accepts that and the last
+entry wins, but see
+[Moving from chart 1.14.0 to 1.15.0](./upgrading-n8n.md#moving-from-chart-1140-to-1150)
+before you later switch such a deployment to the upstream repository.
 
 How the chart bug affected each mode before this workaround:
 
-| Mode | Before the workaround | With the workaround |
+| Mode | Before the workaround | With the workaround (or chart `1.15.0`) |
 | --- | --- | --- |
 | `require`, `allow`, `prefer` | TLS without certificate verification | Unchanged |
 | `verify-ca`, `verify-full` (external path, no CA) | Plaintext | TLS with certificate verification |

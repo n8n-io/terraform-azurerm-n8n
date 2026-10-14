@@ -453,6 +453,33 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   range). See
   `docs/upgrading-n8n.md`, "Moving from KEDA chart 2.15.0 to 2.21.0"
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
+- **Default `n8n_chart_version` bumped to `1.15.0`** (was `1.14.0`), the
+  same pin as `terraform-aws-n8n` #190 and `terraform-google-n8n` #39
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
+  Minor-required: every n8n pod rolls once on the upgrade. See
+  `docs/upgrading-n8n.md` for the post-upgrade checks.
+  - #175: the chart now renders `database.ssl.enabled` as
+    `DB_POSTGRESDB_SSL_ENABLED`, the name n8n reads, instead of
+    `DB_POSTGRESDB_SSL`. The module set `DB_POSTGRESDB_SSL_ENABLED` itself
+    through `config.extraEnv` to work around the old name, so on `1.15.0`
+    every n8n container would have carried it twice. The module now omits
+    its own entry when the chart is the upstream repository at a numbered
+    `1.15.0` or newer (`local.n8n_chart_renders_postgres_ssl_enabled`),
+    and keeps it for older charts, prereleases (including the worker-pools
+    preview), and a custom `n8n_chart_repository`. The rendered value
+    stays `"true"` whenever TLS is on, and
+    `tests/scripts/check-n8n-chart.sh` now fails if any n8n container
+    carries the name other than exactly once, from the source that gate
+    selects. The in-place Helm upgrade from `1.14.0` swaps the module's
+    literal for the chart's `configMapKeyRef`: observed once on a live
+    `examples/small` upgrade (upstream repository, TLS on, multi-main)
+    with no rollback and exactly one entry per container. Run the
+    post-upgrade checks in `docs/upgrading-n8n.md` on your own deployment.
+  - No `deployment-*.yaml` template changed, so `1.15.0` joins
+    `local.n8n_chart_has_worker_only_runners`.
+  - #219 `extraObjects` and #222 `database.ssl.existingSecret` are new and
+    not exposed. Chart `appVersion` moves to `2.42.4`; inert here, since
+    `n8n_image_tag` stays pinned (`2.35.0`).
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
   with `validity_in_months` (whole number, 1 to 120, default 12), matching
   the Key Vault certificate policy's own unit. The old input was converted
@@ -514,14 +541,15 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   ([#33](https://github.com/n8n-io/terraform-azurerm-n8n/issues/33)).
 
 - PostgreSQL `verify-ca` / `verify-full` on the external path connected
-  in plaintext. The pinned chart (`1.14.0`, and `1.13.0` before it) renders
-  `database.ssl.enabled` as `DB_POSTGRESDB_SSL`, which n8n does not read
-  (fixed upstream by
-  [n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175),
-  not yet in a released chart). `require`, `allow`, and `prefer` were not affected: the chart
-  also sets `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false` for them, which
-  makes n8n use TLS anyway. The module now sets `DB_POSTGRESDB_SSL_ENABLED`
-  directly whenever the effective mode is not `disable`. **Upgrade impact:**
+  in plaintext. Charts before `1.15.0` render `database.ssl.enabled` as
+  `DB_POSTGRESDB_SSL`, which n8n does not read (fixed upstream by
+  [n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
+  in chart `1.15.0`, now the default; see the bump entry above).
+  `require`, `allow`, and `prefer` were not affected: the chart also sets
+  `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false` for them, which makes n8n
+  use TLS anyway. On those charts the module now sets
+  `DB_POSTGRESDB_SSL_ENABLED` directly whenever the effective mode is not
+  `disable`. **Upgrade impact:**
   every deployment not on `disable` gets a Helm values diff and one pod
   rollout. Connection behavior is unchanged for `require`, `allow`, and
   `prefer`. External `verify-ca` / `verify-full` callers move from

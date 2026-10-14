@@ -240,10 +240,12 @@ locals {
   }
 
   # Verified upstream 1.12.0 (n8n-hosting #179) removes task-runner sidecars
-  # from queue-mode mains, unchanged through 1.14.0 (1.13.0 only reworks
+  # from queue-mode mains, unchanged through 1.15.0 (1.13.0 only reworks
   # worker/webhook-processor replica ownership; 1.14.0 only renames the
   # chart's WEBHOOK_URL key, drops an S3-only env var, and aggregates
-  # validation errors; deployment-main.yaml's runner placement is untouched).
+  # validation errors; 1.15.0 changes no deployment-*.yaml template and leaves
+  # n8n.mainTaskRunnersEnabled untouched; deployment-main.yaml's runner
+  # placement is untouched).
   # Previews, older or future releases, any chart this list has not been
   # checked against, and any chart served from a custom n8n_chart_repository
   # (local.n8n_chart_is_upstream, locals.tf), which need not share upstream's
@@ -254,7 +256,7 @@ locals {
   # "+build" suffix).
   n8n_chart_has_worker_only_runners = (
     local.n8n_chart_is_upstream &&
-    contains(["1.12.0", "1.13.0", "1.14.0"], var.n8n_chart_version)
+    contains(["1.12.0", "1.13.0", "1.14.0", "1.15.0"], var.n8n_chart_version)
   )
   n8n_main_task_runner_cpu_millis = local.n8n_chart_has_worker_only_runners ? 0 : local.n8n_cpu_request_millis.task_runner
 
@@ -273,13 +275,13 @@ locals {
   # stays quiet there rather than warn on a version number it cannot trust,
   # the same stance as check.graceful_shutdown_fits_grace_period. Same shape as
   # terraform-aws-n8n's local of the same name, minus its build-metadata strip
-  # (see n8n_chart_has_worker_only_runners above).
-  n8n_worker_keda_pause_chart_version_core = split(".", split("-", var.n8n_chart_version)[0])
+  # (see n8n_chart_has_worker_only_runners above). local.n8n_chart_version_core
+  # (locals.tf) is the prerelease-stripped version core this compares.
   n8n_worker_keda_pause_supported = !local.n8n_chart_is_upstream ? true : (
-    tonumber(local.n8n_worker_keda_pause_chart_version_core[0]) > 1 ||
+    tonumber(local.n8n_chart_version_core[0]) > 1 ||
     (
-      tonumber(local.n8n_worker_keda_pause_chart_version_core[0]) == 1 &&
-      tonumber(local.n8n_worker_keda_pause_chart_version_core[1]) >= 13
+      tonumber(local.n8n_chart_version_core[0]) == 1 &&
+      tonumber(local.n8n_chart_version_core[1]) >= 13
     )
   )
 
