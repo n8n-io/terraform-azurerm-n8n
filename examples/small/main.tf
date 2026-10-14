@@ -135,9 +135,15 @@ resource "azurerm_key_vault" "tls" {
   # checkov:skip=CKV_AZURE_109:This vault has no network_acls block, so it allows public access from all networks; it only stores a self-signed TLS cert created by modules/tls-self-signed and consumed via app_gateway_tls_cert_secret_id, so a firewall restriction is unnecessary lab convenience, not production data.
   # checkov:skip=CKV_AZURE_189:Same requirement as CKV_AZURE_109: public_network_access_enabled defaults to true and no network_acls restrict it, consistent with the lab-only self-signed TLS cert this vault holds.
   # checkov:skip=CKV2_AZURE_32:A private endpoint only helps with restricted network access, which this vault does not implement (see CKV_AZURE_189 above).
-  name                = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
-  resource_group_name = azurerm_resource_group.network.name
-  location            = var.location
+  name                       = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
+  resource_group_name        = azurerm_resource_group.network.name
+  location                   = var.location
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "standard"
+  soft_delete_retention_days = 7
+  purge_protection_enabled   = false
+  rbac_authorization_enabled = true
+  tags                       = local.common_tags
 }
 
 resource "azurerm_role_assignment" "key_vault_operator" {
