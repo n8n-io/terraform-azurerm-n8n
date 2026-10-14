@@ -76,7 +76,7 @@ ALLOW=$(cat <<'EOF_ALLOW'
 # pools".
 +n8n_chart_version|worker-pools
 +n8n_worker_pools_chart_verified|worker-pools
-# The sizing tiers (and worker-pools, which pins its own default above the
+# The sizing tiers (and worker-pools, which pins its own default at the
 # pools' n8n 2.39.0 floor because the root default (null) resolves to the
 # floating stable tag on the preview chart, which the plan cannot verify)
 # expose n8n_image_tag so production callers can pin the n8n version. The
