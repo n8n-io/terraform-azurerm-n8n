@@ -36,7 +36,7 @@ A private-only (no public IP) Application Gateway v2 needs four things, all of w
 1. The subscription has `Microsoft.Network/EnableApplicationGatewayNetworkIsolation` registered (`az feature register --namespace Microsoft.Network --name EnableApplicationGatewayNetworkIsolation`, then `az provider register -n Microsoft.Network`). **This is subscription-wide and changes behavior for every Application Gateway v2 in it:** once registered, every v2 gateway must sit in a subnet delegated to `Microsoft.Network/applicationGateways`, including the module's own gateway and the other examples, which do not delegate their subnets.
 2. A subnet delegated to `Microsoft.Network/applicationGateways`. Each gateway gets its own (`appgw-webhook`, `appgw-admin`) and its own NSG, so the VNet-only admin rule cannot be widened by the internet-facing webhook rule.
 3. A static private frontend address; Application Gateway v2 rejects a dynamic one.
-4. A route to Key Vault for the TLS certificate. The gateway has no public IP, so both subnets carry the `Microsoft.KeyVault` service endpoint (a private endpoint for the vault is the other supported route). Without either Azure fails the create with a bare `InternalServerError`.
+4. A route to Key Vault for the TLS certificate. The gateway has no public IP, so both subnets carry the `Microsoft.KeyVault` service endpoint (a private endpoint for the vault is the other route, but its `privatelink.vaultcore.azure.net` zone must be linked to the VNet). Without either Azure fails the create with a bare `InternalServerError`.
 
 See [`docs/troubleshooting.md`](../../docs/troubleshooting.md) for the errors each missing piece produces.
 
