@@ -572,6 +572,19 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   association (`appgw` becomes `appgw_webhook` plus `appgw_admin`) and moves
   both Application Gateways to the new subnets, so plan the change as a
   redeploy.
+- Every example's `azurerm` provider block sets
+  `persist_id_on_create_before_polling_for_completion = true`, and the examples
+  now require azurerm `>= 4.75.0` (was `>= 4.39.0`). A gateway whose create
+  fails on Azure's side used to be orphaned outside Terraform state, where it
+  blocked the next create, the subnet delete, and the resource-group delete.
+  It is now kept as tainted and replaced or destroyed by the next run. The root
+  module configures no provider and keeps its `>= 4.39.0` floor; callers can
+  set the flag in their own `features` block (see the README).
+- Application Gateways in the module and the examples set
+  `timeouts { create = "30m", update = "30m", delete = "20m" }`. The azurerm
+  default is 90 minutes, and a gateway left in `provisioningState: Failed` made
+  `terraform destroy` poll for over an hour after Azure had marked the delete
+  failed.
 - n8n's per-IP rate limiter and request logs no longer see the client's
   source port. Application Gateway v2 writes `X-Forwarded-For` as `IP:port`,
   so with `N8N_PROXY_HOPS=1` Express reported `req.ip` as `ip:port`, n8n's

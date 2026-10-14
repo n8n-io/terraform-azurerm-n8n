@@ -110,7 +110,12 @@ This module declares `required_providers` (`azurerm`, `kubernetes`, `helm`, `ran
 provider "azurerm" {
   storage_use_azuread = true
 
-  features {}
+  features {
+    # Recommended (azurerm 4.75.0 or later): a resource whose create fails on
+    # Azure's side stays in state as tainted instead of being orphaned, so the
+    # next apply replaces it and destroy removes it. See docs/troubleshooting.md.
+    persist_id_on_create_before_polling_for_completion = true
+  }
 }
 ```
 

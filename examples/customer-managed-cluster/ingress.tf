@@ -120,6 +120,12 @@ resource "azurerm_application_gateway" "n8n" {
   # AGIC reconciles listeners, routing rules, and backend settings against
   # the live Ingress once its Helm release is up; these mirror the module's
   # own ignore_changes so a plan does not fight the controller.
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "20m"
+  }
+
   lifecycle {
     ignore_changes = [
       backend_address_pool,
