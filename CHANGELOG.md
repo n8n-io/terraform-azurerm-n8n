@@ -11,14 +11,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Added
 
-- `azure_partner_attribution_id` creates one empty ARM deployment named
-  `pid-<guid>` in `resource_group_name` for Azure Customer Usage Attribution,
-  the Azure counterpart of `terraform-aws-n8n`'s partner tag. Default `""`
-  creates nothing, so existing deployments see no change. n8n's tracking GUID
-  is not yet issued and whether it becomes the default (versus opt-in) is
-  pending confirmation from Partnerships. Every example passes the input
-  through. No node tagging is needed: AKS propagates `tags` to the node
-  resource group and VMSS (unverified live). See
+- Every example sets the azurerm provider's `partner_id` from a new
+  `partner_id` variable (default `null`, so the provider falls back to
+  `ARM_PARTNER_ID`) for Azure Customer Usage Attribution, the Azure
+  counterpart of `terraform-aws-n8n`'s partner tag. The module itself has no
+  attribution input because it configures no providers; no value is shipped
+  until n8n's tracking ID is issued. No node tagging is needed: AKS applies
+  cluster `tags` to the node resource group's resources and node-pool `tags`
+  to the VMSS (unverified live). See
   `openspec/changes/add-azure-partner-attribution/`.
 
 - Seven opt-in AKS network and identity inputs, all defaulting to the

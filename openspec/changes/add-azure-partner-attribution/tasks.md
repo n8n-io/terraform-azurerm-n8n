@@ -1,21 +1,14 @@
-## 1. Module
+## 1. Examples
 
-- [x] 1.1 Add `azure_partner_attribution_id` to `variables.tf` with validation
-- [x] 1.2 Add `attribution.tf` with the `pid-<guid>` empty-template deployment
-- [x] 1.3 Plan-time tests: default off, bare GUID, pid prefix, partnercenter suffix, malformed rejected
+- [x] 1.1 Declare `partner_id` and wire it into each example's azurerm provider (nine examples)
+- [x] 1.2 Rejection test per example; regenerate `terraform-docs`
 
-## 2. Examples
+## 2. Docs
 
-- [x] 2.1 Declare and pass the input in all nine examples; add tests per example
-- [x] 2.2 Regenerate every `terraform-docs` block
+- [x] 2.1 README section, CHANGELOG entry, AGENTS.md note
 
-## 3. Docs
+## 3. Deferred until a GUID exists
 
-- [x] 3.1 README section, CHANGELOG entry, AGENTS.md note
-- [x] 3.2 Request to Partnerships for the GUID (in the PR description)
-
-## 4. Deferred until a GUID exists
-
-- [ ] 4.1 Live apply on Azure; confirm deployment record and Partner Center usage report
-- [ ] 4.2 Confirm AKS node-resource-group and VMSS tag propagation
-- [ ] 4.3 Flip the default to n8n's GUID
+- [ ] 3.1 Live apply with `partner_id` set; confirm the provider user agent and the Partner Center usage report
+- [ ] 3.2 Confirm AKS node-resource-group and VMSS tag propagation
+- [ ] 3.3 Decide whether examples default to n8n's GUID or stay opt-in

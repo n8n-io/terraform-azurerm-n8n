@@ -239,9 +239,7 @@ module "n8n" {
   create_public_dns_record = true
   public_dns_zone_id       = azurerm_dns_zone.public.id
 
-  n8n_license_key              = var.n8n_license_key
-  azure_partner_attribution_id = var.azure_partner_attribution_id
-
+  n8n_license_key = var.n8n_license_key
   depends_on = [
     time_sleep.storage_rbac,
     azurerm_subnet.aks,

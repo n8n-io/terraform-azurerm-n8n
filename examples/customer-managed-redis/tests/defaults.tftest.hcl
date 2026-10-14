@@ -172,50 +172,12 @@ run "customer_managed_redis_retention_overrides" {
   }
 }
 
-run "partner_attribution_passes_through" {
+run "rejects_malformed_partner_id" {
   command = plan
 
   variables {
-    azure_partner_attribution_id = "12345678-1234-1234-1234-123456789abc"
+    partner_id = "not-a-guid"
   }
 
-  override_resource {
-    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
-    override_during = plan
-    values = {
-      secret_id = "https://n8ncmr-tls-test.vault.azure.net/secrets/n8ncmr-n8n-tls/0123456789abcdef0123456789abcdef"
-    }
-  }
-
-  override_resource {
-    target          = azurerm_managed_redis.existing
-    override_during = plan
-    values = {
-      id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmr-n8n-rg/providers/Microsoft.Cache/redisEnterprise/n8ncmr-shared-redis"
-      hostname = "n8ncmr-shared-redis.eastus.redis.azure.net"
-      default_database = {
-        clustering_policy                  = "NoCluster"
-        client_protocol                    = "Encrypted"
-        access_keys_authentication_enabled = true
-        port                               = 10000
-        primary_access_key                 = "fake-primary-access-key"
-        secondary_access_key               = "fake-secondary-access-key"
-      }
-    }
-  }
-
-  assert {
-    condition     = module.n8n.azure_partner_attribution_deployment_name == "pid-12345678-1234-1234-1234-123456789abc"
-    error_message = "The example must forward azure_partner_attribution_id so the module plans the pid-<guid> deployment."
-  }
-}
-
-run "rejects_malformed_partner_attribution_id" {
-  command = plan
-
-  variables {
-    azure_partner_attribution_id = "not-a-guid"
-  }
-
-  expect_failures = [var.azure_partner_attribution_id]
+  expect_failures = [var.partner_id]
 }

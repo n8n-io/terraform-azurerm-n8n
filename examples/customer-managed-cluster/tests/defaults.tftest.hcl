@@ -298,66 +298,12 @@ run "customer_managed_cluster_retention_overrides" {
   }
 }
 
-run "partner_attribution_passes_through" {
+run "rejects_malformed_partner_id" {
   command = plan
 
   variables {
-    azure_partner_attribution_id = "12345678-1234-1234-1234-123456789abc"
+    partner_id = "not-a-guid"
   }
 
-  override_resource {
-    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
-    override_during = plan
-    values = {
-      secret_id = "https://n8ncmc-tls-test.vault.azure.net/secrets/n8ncmc-n8n-tls/0123456789abcdef0123456789abcdef"
-    }
-  }
-
-  override_resource {
-    target          = azurerm_application_gateway.n8n
-    override_during = plan
-    values = {
-      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.Network/applicationGateways/n8ncmc-appgw"
-    }
-  }
-
-  override_resource {
-    target          = azurerm_user_assigned_identity.n8n_tls_cert
-    override_during = plan
-    values = {
-      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncmc-appgw-tls"
-    }
-  }
-
-  override_resource {
-    target          = azurerm_kubernetes_cluster.existing
-    override_during = plan
-    values = {
-      id              = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ContainerService/managedClusters/n8ncmc-shared-aks"
-      oidc_issuer_url = "https://oidc.prod-aks.azure.com/00000000-0000-0000-0000-000000000000/"
-      kube_config = [{
-        host                   = "https://n8ncmc-shared-aks.hcp.eastus.azmk8s.io:443"
-        client_certificate     = "ZmFrZS1jZXJ0"
-        client_key             = "ZmFrZS1rZXk="
-        cluster_ca_certificate = "ZmFrZS1jYQ=="
-        password               = "fake-password"
-        username               = "fake-username"
-      }]
-    }
-  }
-
-  assert {
-    condition     = module.n8n.azure_partner_attribution_deployment_name == "pid-12345678-1234-1234-1234-123456789abc"
-    error_message = "The example must forward azure_partner_attribution_id so the module plans the pid-<guid> deployment."
-  }
-}
-
-run "rejects_malformed_partner_attribution_id" {
-  command = plan
-
-  variables {
-    azure_partner_attribution_id = "not-a-guid"
-  }
-
-  expect_failures = [var.azure_partner_attribution_id]
+  expect_failures = [var.partner_id]
 }

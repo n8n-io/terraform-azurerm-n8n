@@ -207,11 +207,9 @@ module "n8n" {
 
   n8n_main_hpa_min_replicas = var.n8n_main_hpa_min_replicas
 
-  n8n_domain                   = var.n8n_domain
-  n8n_webhook_url              = "https://${local.webhook_domain}"
-  n8n_license_key              = var.n8n_license_key
-  azure_partner_attribution_id = var.azure_partner_attribution_id
-
+  n8n_domain      = var.n8n_domain
+  n8n_webhook_url = "https://${local.webhook_domain}"
+  n8n_license_key = var.n8n_license_key
   depends_on = [
     time_sleep.storage_rbac,
     azurerm_subnet.aks,

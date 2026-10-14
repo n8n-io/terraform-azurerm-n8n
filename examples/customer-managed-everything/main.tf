@@ -556,8 +556,6 @@ module "n8n" {
 
   n8n_domain = var.n8n_domain
 
-  azure_partner_attribution_id = var.azure_partner_attribution_id
-
   depends_on = [
     module.controllers,
     kubernetes_secret.n8n_license,

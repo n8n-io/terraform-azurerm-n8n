@@ -252,8 +252,6 @@ module "n8n" {
   friendly_name_prefix = var.friendly_name_prefix
   common_tags          = local.common_tags
 
-  azure_partner_attribution_id = var.azure_partner_attribution_id
-
   vnet_id                    = azurerm_virtual_network.n8n.id
   aks_subnet_id              = azurerm_subnet.aks.id
   postgres_subnet_id         = azurerm_subnet.postgres.id

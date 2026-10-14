@@ -118,14 +118,14 @@ variable "blob_delete_retention_days" {
   }
 }
 
-variable "azure_partner_attribution_id" {
-  description = "Azure Customer Usage Attribution tracking ID passed to the module's azure_partner_attribution_id. Null (the default) uses the module's default; an empty string disables attribution. Accepts `<guid>`, `pid-<guid>`, or `pid-<guid>-partnercenter`."
+variable "partner_id" {
+  description = "Azure Customer Usage Attribution (CUA) tracking ID for the azurerm provider's partner_id, which Microsoft documents as the Terraform route. Null (the default) sends no partner_id and falls back to the ARM_PARTNER_ID environment variable. Accepts `<guid>`, `pid-<guid>`, or `pid-<guid>-partnercenter`."
   type        = string
   default     = null
 
   validation {
-    condition     = var.azure_partner_attribution_id == null ? true : can(regex("(?i)^(|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|pid-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-partnercenter)?)$", var.azure_partner_attribution_id))
-    error_message = "azure_partner_attribution_id must be null, empty, a GUID, `pid-<guid>`, or `pid-<guid>-partnercenter`."
+    condition     = var.partner_id == null ? true : can(regex("(?i)^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|pid-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-partnercenter)?)$", var.partner_id))
+    error_message = "partner_id must be null, a GUID, `pid-<guid>`, or `pid-<guid>-partnercenter`."
   }
 }
 

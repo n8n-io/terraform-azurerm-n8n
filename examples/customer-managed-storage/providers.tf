@@ -3,6 +3,7 @@
 
 provider "azurerm" {
   storage_use_azuread = true
+  partner_id          = var.partner_id
 
   features {}
 }
