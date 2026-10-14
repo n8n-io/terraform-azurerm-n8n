@@ -175,15 +175,17 @@ locals {
   )
 
   appgw_frontend_ip_configuration_name = "appgw-frontend-ip"
+  appgw_rewrite_xff_name               = "n8n-strip-xff-port"
   appgw_ingress_default_annotations = merge(
     {
-      "appgw.ingress.kubernetes.io/ssl-redirect"                = "true"
-      "appgw.ingress.kubernetes.io/backend-protocol"            = "http"
-      "appgw.ingress.kubernetes.io/appgw-ssl-certificate"       = "appgw-ssl-cert"
-      "appgw.ingress.kubernetes.io/request-timeout"             = "300"
-      "appgw.ingress.kubernetes.io/connection-draining"         = "true"
-      "appgw.ingress.kubernetes.io/connection-draining-timeout" = "30"
-      "appgw.ingress.kubernetes.io/cookie-based-affinity"       = "true"
+      "appgw.ingress.kubernetes.io/ssl-redirect"                     = "true"
+      "appgw.ingress.kubernetes.io/backend-protocol"                 = "http"
+      "appgw.ingress.kubernetes.io/appgw-ssl-certificate"            = "appgw-ssl-cert"
+      "appgw.ingress.kubernetes.io/request-timeout"                  = "300"
+      "appgw.ingress.kubernetes.io/connection-draining"              = "true"
+      "appgw.ingress.kubernetes.io/connection-draining-timeout"      = "30"
+      "appgw.ingress.kubernetes.io/cookie-based-affinity"            = "true"
+      "appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource" = local.appgw_rewrite_xff_name
     },
     var.appgw_frontend_mode == "internal" ? {
       "appgw.ingress.kubernetes.io/use-private-ip" = "true"

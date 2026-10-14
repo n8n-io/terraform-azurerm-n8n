@@ -215,6 +215,21 @@ run "split_ingress_plan" {
     condition     = azurerm_application_gateway.admin.sku[0].name == "Standard_v2"
     error_message = "The admin gateway must never carry a WAF policy: it is already private."
   }
+
+  assert {
+    condition     = kubernetes_ingress_v1.webhook_public.metadata[0].annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).metadata.name
+    error_message = "Ingress webhook_public must reference the AzureApplicationGatewayRewrite that strips the port from X-Forwarded-For."
+  }
+
+  assert {
+    condition     = kubernetes_ingress_v1.admin_internal.metadata[0].annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).metadata.name
+    error_message = "Ingress admin_internal must reference the AzureApplicationGatewayRewrite that strips the port from X-Forwarded-For."
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerValue == "{var_add_x_forwarded_for_proxy}"
+    error_message = "The rewrite must set X-Forwarded-For to {var_add_x_forwarded_for_proxy} so upstream proxy entries survive and the port is dropped."
+  }
 }
 
 run "waf_policy_omitted_uses_standard_v2" {

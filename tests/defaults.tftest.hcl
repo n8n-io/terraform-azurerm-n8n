@@ -826,6 +826,109 @@ run "capacity_warns_when_tainted_system_pool_leaves_one_pool_too_small" {
   expect_failures = [check.autoscaling_maxima_fit_aks_capacity]
 }
 
+# Application Gateway v2 writes X-Forwarded-For as IP:port (issue #60). The
+# module-owned Ingress must reference an AGIC rewrite that sets the header to
+# {var_add_x_forwarded_for_proxy}, which drops the port but keeps upstream
+# entries (verified live against the AKS add-on's AGIC).
+run "managed_ingress_strips_the_port_from_x_forwarded_for" {
+  command = plan
+
+  assert {
+    condition     = local.appgw_ingress_annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == "n8n-strip-xff-port"
+    error_message = "The managed Ingress must reference the n8n-strip-xff-port AzureApplicationGatewayRewrite."
+  }
+
+  assert {
+    condition = (
+      yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).kind == "AzureApplicationGatewayRewrite" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).metadata.name == "n8n-strip-xff-port" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).metadata.namespace == local.n8n_namespace &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerName == "X-Forwarded-For" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerValue == "{var_add_x_forwarded_for_proxy}"
+    )
+    error_message = "The rewrite must set X-Forwarded-For to {var_add_x_forwarded_for_proxy} in the n8n namespace; {var_client_ip} would drop upstream proxy entries."
+  }
+}
+
+run "no_xff_rewrite_without_managed_ingress" {
+  command = plan
+
+  variables {
+    create_ingress = false
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.appgw_rewrite_xff) == 0
+    error_message = "No AGIC rewrite may exist when create_ingress is false."
+  }
+}
+
+# The rewrite must coexist with the module's other inputs (issue #60). A
+# caller annotation wins the merge but draws the existing override warning, so
+# replacing the rewrite is possible and visible, never silent.
+run "caller_can_replace_the_rewrite_annotation_with_a_warning" {
+  command = plan
+
+  variables {
+    ingress_annotations = {
+      "appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource" = "platform-rewrite"
+    }
+  }
+
+  assert {
+    condition     = local.appgw_ingress_annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == "platform-rewrite"
+    error_message = "A caller-supplied rewrite annotation must win the merge."
+  }
+
+  expect_failures = [check.ingress_annotations_override_module_controls]
+}
+
+run "rewrite_is_independent_of_n8n_proxy_hops_zero" {
+  command = plan
+
+  variables {
+    n8n_proxy_hops = 0
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerValue == "{var_add_x_forwarded_for_proxy}"
+    error_message = "The rewrite must not depend on n8n_proxy_hops."
+  }
+}
+
+run "rewrite_is_independent_of_n8n_proxy_hops_three" {
+  command = plan
+
+  variables {
+    n8n_proxy_hops = 3
+  }
+
+  assert {
+    condition     = local.appgw_ingress_annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == local.appgw_rewrite_xff_name
+    error_message = "The Ingress must keep referencing the rewrite for any n8n_proxy_hops."
+  }
+}
+
+run "rewrite_follows_a_caller_owned_namespace_on_an_internal_frontend" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode = "internal"
+    create_namespace    = false
+    n8n_namespace       = "platform-n8n"
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.appgw_rewrite_xff[0].yaml_body).metadata.namespace == "platform-n8n"
+    error_message = "The rewrite must live in the n8n namespace the Ingress uses, or AGIC will not find it."
+  }
+
+  assert {
+    condition     = local.appgw_ingress_annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == local.appgw_rewrite_xff_name
+    error_message = "The internal frontend must still reference the rewrite."
+  }
+}
+
 run "rejects_zero_aks_node_os_disk_size_gb" {
   command = plan
 
