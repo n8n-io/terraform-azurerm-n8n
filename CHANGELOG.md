@@ -439,6 +439,32 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
     module sets neither of, and the module renders `N8N_WEBHOOK_URL` itself
     through `config.extraEnv`.
   - #209: chart values validation now reports every failure in one render.
+- **Default `keda_chart_version` bumped to `2.21.0`** (was `2.15.0`) in the
+  root module and `modules/controllers`, matching `terraform-aws-n8n` #159
+  and `terraform-google-n8n` #37. Minor-required (see
+  [`docs/versioning.md`](./docs/versioning.md)). KEDA 2.15 is tested only on
+  Kubernetes 1.28 to 1.30, outside the module's `aks_kubernetes_version`
+  default of `1.35`; 2.21 is tested on 1.34 to 1.36, which also covers the
+  next AKS minor. **Upgrade note:**
+  a caller that does not pin `keda_chart_version` gets one in-place change
+  on the next apply, `module.controllers.helm_release.keda[0]`, which
+  upgrades the KEDA controller and its CRDs in place (the chart renders the
+  CRDs from `templates/`; every KEDA CRD still serves and stores only
+  `keda.sh/v1alpha1`, and 2.21 adds `clustercloudeventsources.eventing.keda.sh`).
+  KEDA's pods roll once; nothing in the n8n namespace is replaced. Since
+  2.20 the CRDs carry schema validation (`minimum`, `minLength`,
+  `minItems`, `enum`, `minReplicaCount <= maxReplicaCount`), which the
+  module's `TriggerAuthentication` and the n8n chart's worker
+  `ScaledObject` satisfy. The breaking changes between 2.16 and 2.21 touch
+  scalers and authentication modes the module does not use; the Redis
+  scaler still reads `address`, `listName`, `listLength`, and `enableTLS`
+  unchanged. In 2.21 a `ScaledObject`'s `Ready` condition no longer
+  reflects HPA health, which moved to a new `HPAActive` condition. KEDA is
+  cluster-wide, so with `create_aks = false` the upgrade also affects every
+  other `ScaledObject` and `ScaledJob` in the cluster; on a cluster below
+  1.34 pin `"2.20.2"` (1.33) or `"2.19.0"` (1.32) as a temporary hold. See
+  `docs/upgrading-n8n.md`, "Moving from KEDA chart 2.15.0 to 2.21.0"
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
   with `validity_in_months` (whole number, 1 to 120, default 12), matching
   the Key Vault certificate policy's own unit. The old input was converted

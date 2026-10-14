@@ -31,8 +31,8 @@ run "installs_keda_by_default" {
   }
 
   assert {
-    condition     = helm_release.keda[0].repository == "https://kedacore.github.io/charts" && helm_release.keda[0].version == "2.15.0"
-    error_message = "The KEDA release must default to the public kedacore repository and pinned chart version."
+    condition     = helm_release.keda[0].repository == "https://kedacore.github.io/charts" && helm_release.keda[0].version == "2.21.0"
+    error_message = "The KEDA release must default to the public kedacore repository and pinned chart version 2.21.0 (the first release KEDA tests on Kubernetes 1.36), got ${helm_release.keda[0].version}."
   }
 
   assert {
