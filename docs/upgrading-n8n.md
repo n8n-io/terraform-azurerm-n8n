@@ -103,11 +103,12 @@ which covers 1.35 and the next AKS minor.
 
 ## Moving from chart 1.14.0 to 1.15.0
 
-`helm_release.n8n` plans the `version` change and, whenever PostgreSQL TLS
-is on (always on the module-managed Flexible Server; on the external path
-unless `postgres_external_ssl_mode = "disable"`), the removal of the
-module's own `DB_POSTGRESDB_SSL_ENABLED` entry from `config.extraEnv`. Every
-n8n pod rolls once. No `deployment-*.yaml` template changed, so replica
+`helm_release.n8n` plans the `version` change and, on the upstream chart
+repository with PostgreSQL TLS on (always on the module-managed Flexible
+Server; on the external path unless
+`postgres_external_ssl_mode = "disable"`), the removal of the module's own
+`DB_POSTGRESDB_SSL_ENABLED` entry from `config.extraEnv`. A custom `n8n_chart_repository` or a
+prerelease version keeps that entry (see below). Every n8n pod rolls once. No `deployment-*.yaml` template changed, so replica
 ownership, the worker `ScaledObject`, and task-runner placement are as on
 `1.14.0`. The upstream changes:
 
@@ -118,11 +119,14 @@ ownership, the worker `ScaledObject`, and task-runner placement are as on
   [PostgreSQL TLS](./postgresql-tls.md#chart-workaround-for-db_postgresdb_ssl_enabled)).
   Kept as is, every n8n container would carry the name twice, so on the
   upstream repository at a numbered `1.15.0` or newer the module now leaves
-  it to the chart (`local.n8n_chart_renders_postgres_ssl_enabled`). After
-  the upgrade each n8n container has exactly one `DB_POSTGRESDB_SSL_ENABLED`,
-  a `configMapKeyRef` to the chart's ConfigMap key of the same name
-  (value `"true"`), and no `DB_POSTGRESDB_SSL`. The effective value is
-  `"true"` before and after, so n8n's TLS behavior does not change.
+  it to the chart (`local.n8n_chart_renders_postgres_ssl_enabled`). The
+  rendered manifests give each n8n container exactly one
+  `DB_POSTGRESDB_SSL_ENABLED`, a `configMapKeyRef` to the chart's ConfigMap
+  key of the same name (value `"true"`), and no `DB_POSTGRESDB_SSL`;
+  `tests/scripts/check-n8n-chart.sh` verifies this offline. The live pods
+  are expected to match after the upgrade, keeping the effective value
+  `"true"` so n8n's TLS behavior does not change, but no live Helm upgrade
+  from `1.14.0` has confirmed it yet (see below).
 - **`extraObjects`** (n8n-hosting #219) renders extra Kubernetes objects
   inside the release, and **`database.ssl.existingSecret`** (n8n-hosting
   #222) sources a CA, client certificate, or client key from a Secret.
@@ -132,19 +136,27 @@ ownership, the worker `ScaledObject`, and task-runner placement are as on
 The chart's `appVersion` moved to `2.42.4`; inert here because
 `n8n_image_tag` always sets the image.
 
-**Why the upgrade from `1.14.0` is safe, and when it is not.** On `1.14.0`
-the chart's entry is `DB_POSTGRESDB_SSL` and the module's is
-`DB_POSTGRESDB_SSL_ENABLED`, so no container ever carries a duplicate name,
-and Helm's three-way strategic merge patch (env entries are keyed by
-`name`) swaps the module's literal for the chart's `configMapKeyRef` and
-deletes `DB_POSTGRESDB_SSL`. Duplicates only exist where the module cannot
-verify the chart: a custom `n8n_chart_repository` or a prerelease at
-`1.15.0` or newer keeps the module's entry, so each container carries
-`DB_POSTGRESDB_SSL_ENABLED` twice (both `"true"`; Kubernetes may print a
-"hides previous definition" warning). A strategic merge patch matches list
+**What the upgrade from `1.14.0` is expected to do (not yet verified
+live).** On `1.14.0` the chart's entry is `DB_POSTGRESDB_SSL` and the
+module's is `DB_POSTGRESDB_SSL_ENABLED`, so no container carries a
+duplicate name before or after. Helm's three-way strategic merge patch
+keys env entries by `name`, so it is expected to replace the module's
+`value: "true"` literal with the chart's `configMapKeyRef` in place and
+delete `DB_POSTGRESDB_SSL`. That outcome is reasoned from how the patch
+works, not observed: until a live Helm upgrade from `1.14.0` confirms the
+literal is removed without leaving `value` and `valueFrom` together on the
+same entry, run the checks below on every upgraded deployment.
+
+Duplicates can only arise where the module cannot verify the chart: a
+custom `n8n_chart_repository` or a prerelease at `1.15.0` or newer keeps
+the module's entry, and if that chart also renders
+`DB_POSTGRESDB_SSL_ENABLED` (as upstream `1.15.0` does), each container
+carries the name twice (both `"true"`; Kubernetes may print a "hides
+previous definition" warning). A chart that does not render it leaves the
+module's entry as the only one. A strategic merge patch matches list
 entries by `name`, so a later change that removes one of two same-named
 entries (for example switching such a deployment to the upstream
-repository) is the risky path: check the pods afterwards as below, and
+repository) is the riskiest path: check the pods afterwards as below, and
 `kubectl rollout restart` with a re-apply if the name went missing.
 
 **Check after the upgrade** (namespace `n8n` unless you changed it):

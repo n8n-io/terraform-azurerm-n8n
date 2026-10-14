@@ -491,10 +491,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
     its own entry when the chart is the upstream repository at a numbered
     `1.15.0` or newer (`local.n8n_chart_renders_postgres_ssl_enabled`),
     and keeps it for older charts, prereleases (including the worker-pools
-    preview), and a custom `n8n_chart_repository`. The effective value
-    stays `"true"` whenever TLS is on. `tests/scripts/check-n8n-chart.sh`
-    now fails if any n8n container carries the name other than exactly
-    once, from the source that gate selects.
+    preview), and a custom `n8n_chart_repository`. The rendered value
+    stays `"true"` whenever TLS is on, and
+    `tests/scripts/check-n8n-chart.sh` now fails if any n8n container
+    carries the name other than exactly once, from the source that gate
+    selects. The in-place Helm upgrade from `1.14.0` is expected to swap
+    the module's literal for the chart's `configMapKeyRef` but has not yet
+    been verified on a live cluster; run the post-upgrade checks in
+    `docs/upgrading-n8n.md`.
   - No `deployment-*.yaml` template changed, so `1.15.0` joins
     `local.n8n_chart_has_worker_only_runners`.
   - #219 `extraObjects` and #222 `database.ssl.existingSecret` are new and
