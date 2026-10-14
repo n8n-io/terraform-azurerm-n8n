@@ -383,16 +383,24 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   same apply (the provider upgrades the default pool after the control
   plane, and the `n8n_user` pool references the cluster, so Terraform
   upgrades it last). AKS surge-upgrades each pool: it adds
-  `aks_node_upgrade_max_surge` nodes (one per pool at the default sizing,
-  so keep vCPU quota headroom for one extra node of each pool's VM size),
+  `aks_node_upgrade_max_surge` extra nodes per pool at a time (an integer is
+  used as is; a percentage is rounded up against the pool's node count, so
+  the default `10%` is one node for pools of 1 to 10 nodes, and the pools
+  upgrade one after the other, so keep vCPU quota headroom for that many
+  extra nodes of the larger pool's VM size),
   then cordons, drains, and replaces every node, so n8n pods restart. With
   `n8n_main_hpa_min_replicas = 1` the editor is briefly unavailable. A
   minor alias such as `1.36` resolves to the latest GA patch at upgrade
   time; a later patch release neither upgrades the nodes nor changes the
-  plan. A cluster whose version has not changed plans no change: a pool
-  created without `orchestrator_version` already stores the cluster's
-  `kubernetes_version`. A cluster whose control plane was upgraded before
-  this change, with pools left behind, plans only the two pool upgrades.
+  plan. A cluster whose pools already run the cluster's version plans no change
+  when the version does not change (a pool created without
+  `orchestrator_version` already stores the cluster's `kubernetes_version`).
+  **A cluster whose control plane was upgraded earlier with the pools left
+  behind, as every earlier version of this module left them, plans the two
+  pool upgrades on the first apply with this change, even though
+  `aks_kubernetes_version` did not change, and that upgrade drains every
+  node.** Compare the cluster and pool versions first (`az aks show` and
+  `az aks nodepool list`), or set the input to `false` before applying.
   Observed live on 2026-10-14 (`examples/small`, `swedencentral`, 1.35 to
   1.36): the plan was the two in-place updates above, the apply took
   21m52s (control plane, then the system pool, then `n8nuser`), each pool
