@@ -370,6 +370,35 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Changed
 
+- **AKS node pools now follow `aks_kubernetes_version`**
+  ([#85](https://github.com/n8n-io/terraform-azurerm-n8n/issues/85)).
+  Minor-required (see [`docs/versioning.md`](./docs/versioning.md)). The
+  new `aks_node_pools_follow_cluster_version` input (default `true`) sets
+  `orchestrator_version` on both node pools (`system` and `n8nuser`) to
+  `aks_kubernetes_version`, passed through verbatim. Before, neither pool
+  set it, so a version change upgraded only the control plane and the
+  nodes stayed on their old version until someone ran
+  `az aks nodepool upgrade`. **Upgrade note:** a version change now
+  upgrades the control plane first and then each pool in place, in the
+  same apply (the provider upgrades the default pool after the control
+  plane, and the `n8n_user` pool references the cluster, so Terraform
+  upgrades it last). AKS surge-upgrades each pool: it adds
+  `aks_node_upgrade_max_surge` nodes (one per pool at the default sizing,
+  so keep vCPU quota headroom for one extra node of each pool's VM size),
+  then cordons, drains, and replaces every node, so n8n pods restart. With
+  `n8n_main_hpa_min_replicas = 1` the editor is briefly unavailable. A
+  minor alias such as `1.36` resolves to the latest GA patch at upgrade
+  time; a later patch release neither upgrades the nodes nor changes the
+  plan. A cluster whose version has not changed plans no change: a pool
+  created without `orchestrator_version` already stores the cluster's
+  `kubernetes_version`. A cluster whose control plane was upgraded before
+  this change, with pools left behind, plans only the two pool upgrades.
+  Set `aks_node_pools_follow_cluster_version = false` to keep the
+  control-plane-only behavior and upgrade the pools out of band; switching
+  to `false` plans no change. With `create_aks = false` the input has no
+  effect, and `false` triggers the non-failing
+  `check.aks_tuning_requires_module_managed_aks` warning. See
+  [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_kubernetes_version-upgrades-the-control-plane-and-both-node-pools).
 - **Breaking: the `hashicorp/helm` provider requirement is now `~> 3.0`**
   (was `~> 2.12`; 3.3.0 is locked) in the root module,
   `modules/controllers`, and every example, so the weekly drift report
@@ -594,24 +623,29 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   tested on Kubernetes 1.34 to 1.36, the pinned n8n and KEDA charts accept
   it, and Kubernetes 1.36 removes no API version they render. **Upgrade
   note:** a module-managed cluster (`create_aks = true`) that does not pin
-  `aks_kubernetes_version` plans one in-place change on the next apply,
-  `kubernetes_version` `1.35` to `1.36` on `azurerm_kubernetes_cluster.n8n`.
-  Expected behavior, derived from the `azurerm` 4.81.0 source and the
-  Azure CLI's `az aks upgrade` implementation and not yet observed live:
-  the provider upgrades only the control plane; neither node pool sets
-  `orchestrator_version`, so both keep `1.35` (AKS allows three minors of
-  skew), no node is drained, and no pod restarts. The API server can be
-  briefly unavailable during the upgrade, so apply it on its own. The pools
-  can be upgraded afterwards with `az aks nodepool upgrade`, a surge upgrade
-  that restarts n8n pods, and the next plan is expected to stay clean
-  because `orchestrator_version` is computed. The module sets no
-  `automatic_upgrade_channel` (none) and no maintenance windows, and leaves
-  `node_os_upgrade_channel` at its `NodeImage` default, so AKS never changes
-  the Kubernetes version by itself. A cluster that pins
-  `aks_kubernetes_version` sees no change. With `create_aks = false` the
-  input has no effect, but an explicit `"1.35"` now triggers the non-failing
-  `check.aks_tuning_requires_module_managed_aks` warning; remove it. See
-  [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_kubernetes_version-upgrades-only-the-aks-control-plane).
+  `aks_kubernetes_version` upgrades from `1.35` to `1.36` on the next apply.
+  With the new `aks_node_pools_follow_cluster_version` default (`true`, see
+  below) the plan shows three in-place updates, `kubernetes_version` and
+  `default_node_pool[0].orchestrator_version` on
+  `azurerm_kubernetes_cluster.n8n` and `orchestrator_version` on
+  `azurerm_kubernetes_cluster_node_pool.n8n_user`, and the apply upgrades
+  the control plane, then the system pool, then the user pool: a surge
+  upgrade that drains every node and restarts n8n pods. The API server can
+  be briefly unavailable during the control plane step, so apply it on its
+  own. With `aks_node_pools_follow_cluster_version = false` only the control
+  plane moves: observed live on 2026-10-14 (`examples/small`,
+  `swedencentral`), the plan was one in-place change, `kubernetes_version`
+  `1.35` to `1.36`, the apply took 177 s, both pools and every node stayed
+  on `1.35.8`, and the next plan was clean
+  ([#85](https://github.com/n8n-io/terraform-azurerm-n8n/issues/85)). The
+  module sets no `automatic_upgrade_channel` (none) and no maintenance
+  windows, and leaves `node_os_upgrade_channel` at its `NodeImage` default,
+  so AKS never changes the Kubernetes version by itself. A cluster that
+  pins `aks_kubernetes_version` sees no change. With `create_aks = false`
+  the input has no effect, but an explicit `"1.35"` now triggers the
+  non-failing `check.aks_tuning_requires_module_managed_aks` warning;
+  remove it. See
+  [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_kubernetes_version-upgrades-the-control-plane-and-both-node-pools).
 - **Default `n8n_chart_version` bumped to `1.16.0`** (was `1.15.0`)
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
   Minor-required: the module sends the same Helm values as on `1.15.0`,

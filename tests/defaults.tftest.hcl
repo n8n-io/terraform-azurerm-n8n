@@ -454,6 +454,138 @@ run "aks_cluster_resources_in_plan" {
   }
 }
 
+# ── AKS node pool Kubernetes version (issue #85) ─────────────────────────────
+# orchestrator_version is Optional+Computed on both pools. The overrides below
+# stand in for an existing cluster whose pools report 1.35.8: a configured
+# version replaces that value in the plan, an unset one keeps it. Without
+# override_during = plan the unset attribute is unknown at plan time.
+
+run "aks_node_pools_follow_the_cluster_version_by_default" {
+  command = plan
+
+  variables {
+    create_ingress = false
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.n8n[0]
+    override_during = plan
+    values = {
+      id                = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ContainerService/managedClusters/n8ntest-aks"
+      default_node_pool = { orchestrator_version = "1.35.8" }
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster_node_pool.n8n_user[0]
+    override_during = plan
+    values          = { orchestrator_version = "1.35.8" }
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].orchestrator_version == "1.36"
+    error_message = "The system pool's orchestrator_version must follow aks_kubernetes_version (\"1.36\") by default."
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].orchestrator_version == "1.36"
+    error_message = "The n8nuser pool's orchestrator_version must follow aks_kubernetes_version (\"1.36\") by default."
+  }
+}
+
+run "aks_node_pools_take_the_cluster_version_verbatim" {
+  command = plan
+
+  variables {
+    create_ingress         = false
+    aks_kubernetes_version = "1.36.5"
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.n8n[0]
+    override_during = plan
+    values = {
+      id                = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ContainerService/managedClusters/n8ntest-aks"
+      default_node_pool = { orchestrator_version = "1.36" }
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster_node_pool.n8n_user[0]
+    override_during = plan
+    values          = { orchestrator_version = "1.36" }
+  }
+
+  # A patch pin reaches both pools unchanged, and a minor alias stays an alias
+  # (the default run above): the module never resolves or truncates it.
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster.n8n[0].kubernetes_version == "1.36.5" &&
+      azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].orchestrator_version == "1.36.5" &&
+      azurerm_kubernetes_cluster_node_pool.n8n_user[0].orchestrator_version == "1.36.5"
+    )
+    error_message = "Both pools must receive aks_kubernetes_version verbatim (\"1.36.5\"), matching the control plane."
+  }
+}
+
+run "aks_node_pools_keep_their_version_when_not_following" {
+  command = plan
+
+  variables {
+    create_ingress                        = false
+    aks_node_pools_follow_cluster_version = false
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.n8n[0]
+    override_during = plan
+    values = {
+      id                = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ContainerService/managedClusters/n8ntest-aks"
+      default_node_pool = { orchestrator_version = "1.35.8" }
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster_node_pool.n8n_user[0]
+    override_during = plan
+    values          = { orchestrator_version = "1.35.8" }
+  }
+
+  assert {
+    condition     = local.aks_node_pool_orchestrator_version == null
+    error_message = "With aks_node_pools_follow_cluster_version = false the module must leave orchestrator_version unset on both pools."
+  }
+
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster.n8n[0].kubernetes_version == "1.36" &&
+      azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].orchestrator_version == "1.35.8" &&
+      azurerm_kubernetes_cluster_node_pool.n8n_user[0].orchestrator_version == "1.35.8"
+    )
+    error_message = "With aks_node_pools_follow_cluster_version = false only the control plane follows aks_kubernetes_version; both pools must keep the version Azure reports."
+  }
+}
+
+run "warns_when_aks_node_pools_follow_cluster_version_is_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_node_pools_follow_cluster_version        = false
+  }
+
+  assert {
+    condition     = length(azurerm_kubernetes_cluster.n8n) == 0 && length(azurerm_kubernetes_cluster_node_pool.n8n_user) == 0
+    error_message = "create_aks = false must manage no cluster or node pool, so the node pool version setting has nothing to act on."
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
 run "aks_api_authorized_ranges_render_when_supplied" {
   command = plan
 
