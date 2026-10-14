@@ -31,9 +31,14 @@ resource "acme_registration" "n8n" {
   email_address   = var.acme_email
 }
 
+# key_type is the provider's own default, set explicitly so a future provider
+# release cannot change the issued key type, or force a re-issue, by changing
+# that default: acme 3.0 renamed the RSA values ("2048" became "RSA2048").
+# Application Gateway accepts RSA 2048 certificates.
 resource "acme_certificate" "n8n" {
   account_key_pem = acme_registration.n8n.account_key_pem
   common_name     = lower(var.domain_name)
+  key_type        = "RSA2048"
   subject_alternative_names = length(var.subject_alternative_names) == 0 ? null : toset([
     for domain in var.subject_alternative_names : lower(domain)
   ])

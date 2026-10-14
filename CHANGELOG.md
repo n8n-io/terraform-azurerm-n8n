@@ -434,6 +434,25 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   chart signature verification needs. See
   [README.md, Moving the helm provider from 2.x to 3.x](./README.md#moving-the-helm-provider-from-2x-to-3x).
 
+- **Breaking: `modules/tls-letsencrypt` requires the `vancluever/acme`
+  provider `~> 3.0`** (was `~> 2.16`; latest is `3.2.1`)
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). A
+  calling root that pins acme `2.x` must widen its constraint and run
+  `terraform init -upgrade`. The `provider "acme"` block and every module
+  input are unchanged. Of the 3.0 breaking changes, only the `key_type`
+  rename (`2048` to `RSA2048`) touches this module; it never set
+  `disable_complete_propagation` (now `disable_authoritative_propagation`),
+  and it uses the `azuredns` DNS-01 provider, not the `azure` one lego v5
+  removed. The module now sets `key_type = "RSA2048"`, the provider's own
+  default, so the issued key stays RSA 2048 if that default changes again.
+  **Upgrade note:** acme `3.1.1` and later cannot migrate an
+  `acme_certificate` stored by 2.x. Upgrading straight to them makes the
+  next plan replace the certificate (`key_type = "2048" -> "RSA2048"`),
+  which revokes it, orders a new one against Let's Encrypt's rate limits,
+  and rolls the Application Gateway listener to a new Key Vault version.
+  Pin acme `3.1.0` in the calling root, apply once, then lift the pin; see
+  [`modules/tls-letsencrypt/README.md`](./modules/tls-letsencrypt/README.md#upgrading-from-acme-provider-2x).
+  New deployments are not affected.
 - **Breaking: `n8n_image_tag` now defaults to `null`** (was `"2.35.0"`),
   matching terraform-aws-n8n and terraform-google-n8n
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). With

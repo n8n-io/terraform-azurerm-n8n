@@ -67,6 +67,14 @@ run "submodule_plans_clean_with_defaults" {
     error_message = "The default certificate must cover only the normalized canonical domain."
   }
 
+  # The key type is pinned to the provider's RSA 2048 default under its 3.x
+  # name. Any other value forces a new certificate on existing deployments,
+  # and the 2.x name ("2048") fails provider validation.
+  assert {
+    condition     = acme_certificate.n8n.key_type == "RSA2048"
+    error_message = "acme_certificate.n8n.key_type must be \"RSA2048\""
+  }
+
   # DNS-01 challenge against Azure DNS. The supported lego provider identifier
   # is `azuredns`; the deprecated identifier fails during provider setup.
   assert {

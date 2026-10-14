@@ -108,6 +108,12 @@ for `var.domain_name`. The acme provider tracks `min_days_remaining = 30`
 by default — Terraform reissues the cert 30 days before expiry on the
 next apply.
 
+Upgrading a deployment whose certificate was issued with acme provider
+2.x? Follow the two-step provider upgrade in
+[`modules/tls-letsencrypt/README.md`](../modules/tls-letsencrypt/README.md#upgrading-from-acme-provider-2x)
+first. A direct jump to acme `3.1.1` or later revokes and re-issues the
+certificate.
+
 **Prerequisites for rotation** (same as initial issuance):
 
 - `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` /
