@@ -74,7 +74,7 @@ resource "kubectl_manifest" "my_trigger_authentication" {
 | `install_keda` | When true (the default), this module creates the KEDA namespace and Helm release. Set to false when KEDA is already installed by another process or another call of this module. | `bool` | `true` |
 | `keda_namespace` | Name of the Kubernetes namespace KEDA's operator and CRDs live in. | `string` | `"keda"` |
 | `keda_chart_repository` | Helm chart repository URL for the KEDA chart. Ignored when `install_keda = false`. | `string` | `"https://kedacore.github.io/charts"` |
-| `keda_chart_version` | KEDA Helm chart version from `keda_chart_repository`. Ignored when `install_keda = false`. | `string` | `"2.15.0"` |
+| `keda_chart_version` | KEDA Helm chart version from `keda_chart_repository`. KEDA tests the default on Kubernetes 1.34 to 1.36; on an older cluster pin a release whose tested window covers it (`"2.20.2"` on 1.33, `"2.19.0"` on 1.32) as a temporary hold, after checking the KEDA release notes for security fixes that release lacks. Ignored when `install_keda = false`. | `string` | `"2.21.0"` |
 | `keda_helm_timeout_seconds` | Timeout, in seconds, Helm waits for the KEDA release to become ready. Ignored when `install_keda = false`. | `number` | `300` |
 | `keda_helm_wait` | Whether Helm waits for KEDA's resources to reach a ready state. Ignored when `install_keda = false`. | `bool` | `true` |
 | `keda_helm_atomic` | Whether Helm rolls back the KEDA release automatically on failure. Ignored when `install_keda = false`. | `bool` | `true` |
