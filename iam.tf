@@ -10,10 +10,19 @@
 
 # ── AGIC identities and resource-group permissions ──────────────────────
 
-data "azurerm_resource_group" "n8n" {
-  count = var.create_ingress ? 1 : 0
-
-  name = var.resource_group_name
+# The resource group scope comes from the AGIC identity's resource ID rather
+# than a `data "azurerm_resource_group"` lookup. A caller's module-level
+# `depends_on` with any pending change defers every data source inside the
+# module to apply time, which made the scope unknown at plan time and planned
+# a destroy-and-recreate of both Reader assignments (scope forces
+# replacement) even though the resource group never changed. A managed
+# resource's ID already in state stays known at plan time, and the UAMI lives
+# in var.resource_group_name, so its ID carries the same
+# /subscriptions/<sub>/resourceGroups/<rg> prefix the lookup returned. On the
+# first apply the UAMI does not exist yet, so the scope is unknown exactly as
+# long as the assignments themselves are being created.
+locals {
+  agic_resource_group_scope = var.create_ingress ? regex("^/subscriptions/[^/]+/resourceGroups/[^/]+", azurerm_user_assigned_identity.agic[0].id) : null
 }
 
 # The AKS ingress_application_gateway addon currently creates and uses its own
@@ -33,7 +42,7 @@ resource "azurerm_user_assigned_identity" "agic" {
 resource "azurerm_role_assignment" "agic_rg_reader" {
   count = var.create_ingress ? 1 : 0
 
-  scope                = data.azurerm_resource_group.n8n[0].id
+  scope                = local.agic_resource_group_scope
   role_definition_name = "Reader"
   principal_id         = azurerm_user_assigned_identity.agic[0].principal_id
 }
@@ -41,7 +50,7 @@ resource "azurerm_role_assignment" "agic_rg_reader" {
 resource "azurerm_role_assignment" "agic_addon_rg_reader" {
   count = var.create_ingress ? 1 : 0
 
-  scope                = data.azurerm_resource_group.n8n[0].id
+  scope                = local.agic_resource_group_scope
   role_definition_name = "Reader"
   principal_id         = azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
 }
