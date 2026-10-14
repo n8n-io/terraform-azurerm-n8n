@@ -21,6 +21,67 @@ chart's templates or value schema. Bumping the chart version can also change
 what values the chart accepts and what the chart renders, so treat it as the
 larger-blast-radius change of the two.
 
+## Moving from KEDA chart 2.15.0 to 2.21.0
+
+The default `keda_chart_version` (root module and `modules/controllers`)
+moved from `2.15.0` to `2.21.0`
+([KEDA v2.21.0](https://github.com/kedacore/keda/releases/tag/v2.21.0)),
+matching `terraform-aws-n8n` #159 and `terraform-google-n8n` #37. KEDA
+2.15 is tested only on Kubernetes 1.28 to 1.30, so the module default
+`aks_kubernetes_version = "1.35"` ran it outside its tested window; 2.21 is
+tested on 1.34 to 1.36 ([compatibility matrix](https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility)),
+which covers 1.35 and the next AKS minor.
+
+- **What the next apply does.** A caller that does not pin
+  `keda_chart_version` plans one in-place change,
+  `module.controllers.helm_release.keda[0]` `2.15.0` to `2.21.0`. The Helm
+  upgrade rolls the operator, metrics API server, and admission webhook
+  pods once; nothing in the n8n namespace is replaced. Expect a short
+  external-metrics gap while the pods restart, during which the worker HPA
+  holds its current replica count. The release is `atomic` by default
+  (`keda_helm_atomic`), so a failed upgrade rolls back to `2.15.0`. KEDA
+  is cluster-wide: with `create_aks = false` the upgrade also changes the
+  controller for every other `ScaledObject` and `ScaledJob` in the
+  cluster.
+- **The jump crosses six minors in one Helm upgrade.** KEDA publishes
+  migration notes only for 2.20 to 2.21. The breaking changes on the way
+  (2.16 to 2.21) remove the NATS Streaming scaler, remove settings from
+  the Pulsar, CPU/memory, IBM MQ, External, GCP Pub/Sub, Huawei Cloudeye,
+  InfluxDB, Azure Data Explorer, and Temporal scalers, enforce service
+  account token audiences (Vault Kubernetes authentication and
+  `boundServiceAccountToken`), and change the Azure Pipelines scaler
+  default. The module uses none of them: its `TriggerAuthentication`
+  (`locals.tf`) uses only `secretTargetRef`, and
+  the n8n chart's worker `ScaledObject` uses only the `redis` scaler with
+  `address`, `listName`, `listLength`, and `enableTLS`, all still read the
+  same way by the 2.21 Redis scaler. If you run your own KEDA objects on the
+  same install, read KEDA's [migration guide](https://keda.sh/docs/2.21/migration/)
+  and the release notes for each minor first.
+- **CRDs upgrade with the release.** The chart renders its CRDs from
+  `templates/`, so the Helm upgrade updates them in place. Every KEDA CRD
+  still serves and stores only `v1alpha1`, so no stored object is
+  converted, and 2.21 adds one CRD (`clustercloudeventsources.eventing.keda.sh`).
+  Since 2.20 the CRDs carry schema validation (`minimum`, `minLength`,
+  `minItems`, `enum`, and a rule that `minReplicaCount` must not exceed
+  `maxReplicaCount`). The module's own objects satisfy it (the worker and
+  pool replica bounds are already validated at plan time); a caller's own
+  object that does not is rejected on its next create or update.
+- **ScaledObject conditions.** In 2.21 the `Ready` condition reflects only
+  the `ScaledObject`'s own validity; HPA health moved to a new `HPAActive`
+  condition. Read both when checking scaling after the upgrade.
+- **KEDA's own Prometheus metrics.** 2.17 removed the deprecated KEDA
+  operator metric names. The module scrapes none of them; update any
+  dashboard or alert of your own that does.
+- **Older clusters.** On any cluster below 1.34, whether module-managed
+  (`aks_kubernetes_version`) or caller-managed (`create_aks = false`), pin
+  a release KEDA tests there (`"2.20.2"` on 1.33, `"2.19.0"` on 1.32) as a
+  temporary hold. Both are inside the affected range (`<= 2.20.2`) of
+  KEDA's critical security advisory
+  [GHSA-637c-6jxx-4rwm](https://github.com/kedacore/keda/security/advisories/GHSA-637c-6jxx-4rwm),
+  which lists no patched version; the `2.21.0` default is outside that
+  range. Weigh that before holding, and move to the default as soon as the
+  cluster reaches 1.34.
+
 ## Moving from chart 1.13.0 to 1.14.0
 
 `helm_release.n8n` plans the `version` change plus the removal of the

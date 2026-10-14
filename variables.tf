@@ -1277,13 +1277,13 @@ variable "private_endpoint_subnet_id" {
 # ── Controllers and base n8n release ─────────────────────────────────────
 
 variable "keda_chart_version" {
-  description = "KEDA Helm chart version from the official kedacore repository. Pinning the controller keeps the CRD shape used by the root kubectl_manifest deterministic."
+  description = "KEDA Helm chart version from the official kedacore repository, passed through to modules/controllers. Pinning the controller keeps the CRD shape used by the root kubectl_manifest deterministic. KEDA tests the 2.21.0 default on Kubernetes 1.34 through 1.36 (https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility), which covers the aks_kubernetes_version default of 1.35 and the next minor. On any cluster outside that window, whether module-managed (aks_kubernetes_version) or caller-managed (create_aks = false), pin a release whose tested window covers it (2.20.2 on 1.33, 2.19.0 on 1.32) as a temporary hold. Both of those releases are inside the affected range (<= 2.20.2) of KEDA's critical security advisory GHSA-637c-6jxx-4rwm (https://github.com/kedacore/keda/security/advisories/GHSA-637c-6jxx-4rwm), which lists no patched version; the 2.21.0 default is outside that range. KEDA is cluster-wide, so changing this upgrades the controller for every ScaledObject and ScaledJob in the cluster."
   type        = string
-  default     = "2.15.0"
+  default     = "2.21.0"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-.+)?$", var.keda_chart_version))
-    error_message = "keda_chart_version must be a semantic version such as 2.15.0 or 2.15.0-rc1."
+    error_message = "keda_chart_version must be a semantic version such as 2.21.0 or 2.21.0-rc1."
   }
 }
 
