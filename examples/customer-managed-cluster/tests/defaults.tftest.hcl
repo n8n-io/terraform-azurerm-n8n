@@ -177,6 +177,21 @@ run "customer_managed_cluster_plan" {
   # PostgreSQL, Redis, and Blob remain module-managed in this example — the
   # module call in main.tf sets no create_database, create_redis, or
   # create_blob_storage override, so all three keep their true defaults.
+
+  assert {
+    condition     = kubernetes_ingress_v1.n8n.metadata[0].annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).metadata.name
+    error_message = "Ingress n8n must reference the AzureApplicationGatewayRewrite that strips the port from X-Forwarded-For."
+  }
+
+  assert {
+    condition = (
+      yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).kind == "AzureApplicationGatewayRewrite" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].actionType == "set" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerName == "X-Forwarded-For" &&
+      yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).spec.rewriteRules[0].actions.requestHeaderConfigurations[0].headerValue == "{var_add_x_forwarded_for_proxy}"
+    )
+    error_message = "The rewrite must set X-Forwarded-For to {var_add_x_forwarded_for_proxy} so upstream proxy entries survive and the port is dropped."
+  }
 }
 
 run "customer_managed_cluster_single_main_override" {

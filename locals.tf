@@ -175,6 +175,7 @@ locals {
   )
 
   appgw_frontend_ip_configuration_name = "appgw-frontend-ip"
+  appgw_rewrite_xff_name               = "n8n-strip-xff-port"
   appgw_ingress_default_annotations = merge(
     {
       "appgw.ingress.kubernetes.io/ssl-redirect"                = "true"
@@ -185,6 +186,14 @@ locals {
       "appgw.ingress.kubernetes.io/connection-draining-timeout" = "30"
       "appgw.ingress.kubernetes.io/cookie-based-affinity"       = "true"
     },
+    # AGIC attaches no rewrite rule set at all when an Ingress carries both
+    # rewrite-rule-set and rewrite-rule-set-custom-resource, so a caller's
+    # gateway-defined rule set replaces the X-Forwarded-For rewrite instead of
+    # leaving both unattached. check.ingress_annotations_override_module_controls
+    # (ingress.tf) warns on either annotation.
+    contains(keys(var.ingress_annotations), "appgw.ingress.kubernetes.io/rewrite-rule-set") ? {} : {
+      "appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource" = local.appgw_rewrite_xff_name
+    },
     var.appgw_frontend_mode == "internal" ? {
       "appgw.ingress.kubernetes.io/use-private-ip" = "true"
     } : {},
@@ -192,7 +201,11 @@ locals {
   appgw_ingress_annotations = merge(local.appgw_ingress_default_annotations, var.ingress_annotations)
   appgw_ingress_control_annotation_names = toset(concat(
     keys(local.appgw_ingress_default_annotations),
-    ["appgw.ingress.kubernetes.io/use-private-ip"],
+    [
+      "appgw.ingress.kubernetes.io/use-private-ip",
+      "appgw.ingress.kubernetes.io/rewrite-rule-set",
+      "appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource",
+    ],
   ))
 
   # The chart creates the workload-identity service account by default. It does
