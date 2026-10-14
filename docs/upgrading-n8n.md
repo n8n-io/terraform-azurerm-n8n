@@ -12,8 +12,8 @@ guide; the per-version sections below cover only what reaches this module.
 
 | Variable | Controls | Default |
 | --- | --- | --- |
-| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.15.0"`, pinned |
-| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `null`, meaning the chart's `appVersion` (`2.42.4` at chart `1.15.0`), as in the AWS and GCP siblings. A chart bump then also upgrades n8n. Pin a version in production to upgrade n8n deliberately. |
+| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.16.0"`, pinned |
+| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `null`, meaning the chart's `appVersion` (`2.43.5` at chart `1.16.0`), as in the AWS and GCP siblings. A chart bump then also upgrades n8n. Pin a version in production to upgrade n8n deliberately. |
 | `n8n_task_runner_image_tag` | Task runner image tag; keep aligned with the underlying n8n version when using a custom application tag. | `null`, meaning `n8n_image_tag`, else the chart's `appVersion` |
 
 Bumping the image tag alone gets you a new n8n version without changing the
@@ -29,8 +29,8 @@ running n8n version, across its database migrations.
 [#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). With a
 null tag the module sends no `image.tag` or `taskRunners.image.tag`, so the
 chart's own default runs: its `appVersion` on upstream charts from `1.12.0`
-(`2.42.4` at `1.15.0`). A caller that relied on the old default therefore
-moves from n8n `2.35.0` to `2.42.4` on the next apply after upgrading the
+(`2.43.5` at `1.16.0`). A caller that relied on the old default therefore
+moves from n8n `2.35.0` to `2.43.5` on the next apply after upgrading the
 module, and every later `n8n_chart_version` bump moves n8n again. A caller
 that already sets `n8n_image_tag` sees no change: the rendered values are
 byte-identical.
@@ -127,6 +127,78 @@ which covers both `1.35` and the current default, `1.36`, but not `1.37`.
   which lists no patched version; the `2.21.0` default is outside that
   range. Weigh that before holding, and move to the default as soon as the
   cluster reaches 1.34.
+
+## Moving from chart 1.15.0 to 1.16.0
+
+`helm_release.n8n` plans only the `version` change: the module sends
+`1.16.0` the same values it sent `1.15.0`. Every n8n pod still rolls once,
+because the chart version is a pod template label (`helm.sh/chart`) and
+also changes each pod's `checksum/config` annotation. Unpinned callers (`n8n_image_tag = null`) also move n8n from
+`2.42.4` to `2.43.5`, the new `appVersion`, across its database migrations;
+see [Moving to the chart-default image tag](#moving-to-the-chart-default-image-tag).
+Rendering the module's fixtures against both charts shows three changes for
+this module, apart from those labels and that checksum:
+
+- **No main PodDisruptionBudget in single-main** (n8n-hosting #228). The
+  chart now renders the main PDB only while main can run more than one
+  replica. Multi-main (`n8n_main_hpa_min_replicas` of 2 or more) keeps its
+  `minAvailable: 1` budget. Single-main loses its `minAvailable: 0` budget,
+  and Helm deletes `pdb/n8n-main` on the upgrade. That budget already
+  permitted every voluntary eviction, so node drains and AKS upgrades behave
+  as before. The module still sends `pdb.minAvailable = 0` for single-main,
+  which older charts (including the worker-pools preview) render.
+  `tests/scripts/smoke-test.sh` now accepts either shape for single-main and
+  still requires `minAvailable: 1` for multi-main.
+- **Liveness probe on the worker task-runner sidecar** (n8n-hosting #223):
+  an HTTP GET on `/healthz`, port 5680, the launcher's own health server,
+  every 10 seconds; Kubernetes restarts the sidecar after 6 failures. The
+  module never sets `N8N_RUNNERS_LAUNCHER_HEALTH_CHECK_PORT`, and a
+  caller-managed launcher file (`n8n_task_runner_custom_config`) cannot move
+  that port, because the launcher reads it from the environment only. Main
+  pods carry no sidecar in queue mode, so only workers get the probe. This
+  module does not expose `taskRunners.probes`.
+- **New render-time guards** (n8n-hosting #229): more than one main
+  (`replicaCount`, or `hpa.main.maxReplicas` above 1) requires
+  `multiMain.enabled`, which requires `license.enabled`. The module derives
+  `multiMain.enabled` from `n8n_main_hpa_min_replicas`, clamps the
+  single-main HPA to 1, and always enables the license, so every
+  configuration it accepts passes. `tests/scripts/check-n8n-chart.sh`
+  renders both topologies.
+
+Not exposed by this module: `editor.url` (#243; the module keeps rendering
+its own `N8N_EDITOR_BASE_URL` and sets neither `ingress` nor `webhook.url`,
+so the chart renders none), `hostAliases` (#167), image digests and
+`persistence.annotations` (#240), per-role `podSecurityContext` and
+`containerSecurityContext` (#236; their defaults render the same security
+contexts as `1.15.0`), and `secretRefs.env.N8N_ENCRYPTION_KEY_FILE` (#183;
+the module passes its key through `secretRefs.existingSecret`). The
+task-runner sidecar moved into a shared template helper with the same
+resources and the same placement, so `1.16.0` joins
+`local.n8n_chart_has_worker_only_runners`.
+
+**Check after the upgrade** (namespace `n8n` unless you changed it):
+
+1. `helm history n8n -n n8n`: the newest revision is `deployed` with chart
+   `n8n-1.16.0`, and no `failed` or rolled-back revision came after the
+   previous one.
+2. `kubectl rollout status deploy/n8n-main deploy/n8n-worker deploy/n8n-webhook-processor -n n8n`.
+3. `kubectl get deploy n8n-main -n n8n -o jsonpath='{.spec.template.spec.containers[0].image}'`
+   prints `docker.n8n.io/n8nio/n8n:2.43.5` with `n8n_image_tag = null`, or
+   your pinned tag.
+4. `kubectl get pdb -n n8n`: multi-main lists `n8n-main` with
+   `MIN AVAILABLE` 1; single-main lists no `n8n-main`.
+5. `kubectl get deploy n8n-worker -n n8n -o json | jq '.spec.template.spec.containers[] | select(.name == "task-runner") | .livenessProbe.httpGet'`
+   prints path `/healthz` and port `5680`. Over the next few minutes the
+   worker pods' restart counts stay flat and
+   `kubectl get events -n n8n --field-selector reason=Unhealthy` lists no
+   `task-runner` liveness failures.
+6. `tests/scripts/smoke-test.sh` passes.
+
+Failure signs: the Helm upgrade fails with an `n8n` values-validation error
+naming `multiMain`, `replicaCount`, or `hpa.main` (not expected from any
+configuration the module accepts; report it), worker `task-runner`
+containers restarting on `Liveness probe failed` (read the sidecar logs for
+the launcher's health server), or the apply rolling back to `1.15.0`.
 
 ## Moving from chart 1.14.0 to 1.15.0
 
@@ -340,7 +412,7 @@ main, so the sidecar was idle there. Main pods roll once to drop the
 container. `n8n_task_runner_*` resources now describe worker pods only, and
 the advisory capacity check (`check.autoscaling_maxima_fit_aks_capacity`)
 stops adding the sidecar request to the main ceiling for the verified
-charts `1.12.0`, `1.13.0`, `1.14.0`, and `1.15.0` (`local.n8n_chart_has_worker_only_runners`);
+charts `1.12.0`, `1.13.0`, `1.14.0`, `1.15.0`, and `1.16.0` (`local.n8n_chart_has_worker_only_runners`);
 any other `n8n_chart_version` keeps the conservative allowance. Verify
 JavaScript and Python Code nodes through workers after the upgrade,
 including manual executions from the editor.

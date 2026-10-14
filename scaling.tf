@@ -240,12 +240,14 @@ locals {
   }
 
   # Verified upstream 1.12.0 (n8n-hosting #179) removes task-runner sidecars
-  # from queue-mode mains, unchanged through 1.15.0 (1.13.0 only reworks
+  # from queue-mode mains, unchanged through 1.16.0 (1.13.0 only reworks
   # worker/webhook-processor replica ownership; 1.14.0 only renames the
   # chart's WEBHOOK_URL key, drops an S3-only env var, and aggregates
   # validation errors; 1.15.0 changes no deployment-*.yaml template and leaves
-  # n8n.mainTaskRunnersEnabled untouched; deployment-main.yaml's runner
-  # placement is untouched).
+  # n8n.mainTaskRunnersEnabled untouched; 1.16.0 moves the sidecar into a
+  # shared n8n.taskRunnerContainer helper, still gated on main by the same
+  # n8n.mainTaskRunnersEnabled, and keeps its resources; deployment-main.yaml's
+  # runner placement is untouched).
   # Previews, older or future releases, any chart this list has not been
   # checked against, and any chart served from a custom n8n_chart_repository
   # (local.n8n_chart_is_upstream, locals.tf), which need not share upstream's
@@ -256,7 +258,7 @@ locals {
   # "+build" suffix).
   n8n_chart_has_worker_only_runners = (
     local.n8n_chart_is_upstream &&
-    contains(["1.12.0", "1.13.0", "1.14.0", "1.15.0"], var.n8n_chart_version)
+    contains(["1.12.0", "1.13.0", "1.14.0", "1.15.0", "1.16.0"], var.n8n_chart_version)
   )
   n8n_main_task_runner_cpu_millis = local.n8n_chart_has_worker_only_runners ? 0 : local.n8n_cpu_request_millis.task_runner
 

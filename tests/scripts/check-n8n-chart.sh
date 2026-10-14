@@ -75,6 +75,15 @@ if (( BASH_REMATCH[1] < 2 || (BASH_REMATCH[1] == 2 && BASH_REMATCH[2] < 39) )); 
 fi
 echo "PASS: chart ${chart_version} appVersion ${app_version} is a concrete version at or above 2.39.0"
 
+# Chart 1.16.0 skips the single-main PDB (n8n-hosting #228) and adds the
+# task-runner liveness probe (#223); the assertions for both branch on this.
+IFS=. read -r chart_major chart_minor _ <<< "${chart_version%%-*}"
+if (( chart_major > 1 || (chart_major == 1 && chart_minor >= 16) )); then
+  chart_at_least_1_16=true
+else
+  chart_at_least_1_16=false
+fi
+
 # Worker pools (early alpha) render only on a chart that carries
 # queueMode.workerGroups, which no numbered release does yet; the official
 # preview build is the only public chart that exercises worker-pools.tf's
@@ -168,9 +177,22 @@ for template in deployment-main deployment-worker deployment-webhook-processor h
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
 
-for template in deployment-main hpa-main pdb; do
+for template in deployment-main hpa-main; do
   render "$tmp/single-main-values.json" single-main "$template"
 done
+
+# Charts from 1.16.0 (n8n-hosting #228) render the main PDB only while main
+# can run more than one replica, so single-main gets none there; older charts
+# render the module's minAvailable 0 budget. `--show-only` errors on a
+# template that renders nothing, so render the whole chart and look for the
+# PDB's source marker instead of matching Helm's error text.
+helm template n8n "$tmp/n8n" -f "$tmp/single-main-values.json" > "$tmp/single-main-all.yaml"
+if grep -qx '# Source: n8n/templates/pdb.yaml' "$tmp/single-main-all.yaml"; then
+  render "$tmp/single-main-values.json" single-main pdb
+  single_main_has_pdb=true
+else
+  single_main_has_pdb=false
+fi
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/pg-runtime-values.json" pg-runtime "$template"
@@ -312,10 +334,19 @@ jq -e '.spec.strategy.type == "Recreate" and ((.spec.strategy | has("rollingUpda
 jq -e '.spec.minReplicas == 1 and .spec.maxReplicas == 1' "$tmp/single-main-hpa-main.json" >/dev/null \
   || { echo "FAIL: single-main hpa-main must clamp to 1/1 regardless of the configured maximum of 20" >&2; exit 1; }
 
-jq -e '.spec.minAvailable == 0' "$tmp/single-main-pdb.json" >/dev/null \
-  || { echo "FAIL: single-main PDB must allow voluntary eviction with minAvailable = 0" >&2; exit 1; }
+if [[ "$chart_at_least_1_16" == false ]]; then
+  [[ "$single_main_has_pdb" == true ]] \
+    || { echo "FAIL: chart ${chart_version} predates 1.16.0 and must render the single-main PDB" >&2; exit 1; }
+  jq -e '.spec.minAvailable == 0' "$tmp/single-main-pdb.json" >/dev/null \
+    || { echo "FAIL: single-main PDB must allow voluntary eviction with minAvailable = 0" >&2; exit 1; }
+  single_main_pdb_summary="PDB minimum 0"
+else
+  [[ "$single_main_has_pdb" == false ]] \
+    || { echo "FAIL: chart ${chart_version} must render no main PDB for single-main (n8n-hosting #228 skips it while main runs one replica)" >&2; exit 1; }
+  single_main_pdb_summary="no main PDB (chart 1.16.0 or newer)"
+fi
 
-echo "PASS: single-main passes chart schema validation with one main, HPA 1/1, Recreate, and PDB minimum 0"
+echo "PASS: single-main passes chart schema validation with one main, HPA 1/1, Recreate, and ${single_main_pdb_summary}"
 
 echo "== Verify runtime manifests (execution save policy, URL naming) =="
 
@@ -596,6 +627,22 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
   ' "$tmp/multi-main-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} unexpectedly mounts a task-runner-config volume in the default fixture (n8n_task_runner_custom_config null)" >&2; exit 1; }
 done
+
+# Chart 1.16.0 (n8n-hosting #223) probes the launcher's /healthz on port 5680,
+# or on N8N_RUNNERS_LAUNCHER_HEALTH_CHECK_PORT from taskRunners.extraEnv, which
+# this module never sets. A caller-managed launcher file cannot move that port
+# (the launcher reads it from the environment only), so both fixtures must
+# carry the same probe.
+if [[ "$chart_at_least_1_16" == true ]]; then
+  for fixture in multi-main task-runner-config; do
+    jq -e '
+      [.spec.template.spec.containers[] | select(.name == "task-runner") | .livenessProbe.httpGet]
+      == [{"path": "/healthz", "port": 5680}]
+    ' "$tmp/${fixture}-deployment-worker.json" >/dev/null \
+      || { echo "FAIL: ${fixture} worker task-runner sidecar must carry the chart's launcher liveness probe on /healthz:5680" >&2; exit 1; }
+  done
+  echo "PASS: the worker task-runner sidecar carries the chart's launcher liveness probe on /healthz:5680"
+fi
 
 echo "PASS: caller-managed task-runner launcher configuration mounts on the worker sidecar only, with an exact file path and subPath, and is omitted by default"
 
