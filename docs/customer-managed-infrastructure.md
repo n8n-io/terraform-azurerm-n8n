@@ -459,8 +459,10 @@ happens during `terraform apply`, and a failure there fails the release. That
 machine must be able to authenticate to the mirror. The cluster's
 `n8n_image_pull_secrets` do not help here: they only authenticate image
 pulls by the cluster's nodes. For an OCI mirror such as Azure Container
-Registry, add a `registry` block to the caller's `helm` provider
-configuration, with the registry URL, a username, and a password or token.
+Registry, add an entry to the `registries` list attribute in the caller's
+`helm` provider configuration (`registries = [{ url = ..., username = ...,
+password = ... }]` on the 3.x provider, which replaced 2.x's `registry`
+blocks), with the registry URL, a username, and a password or token.
 The provider block belongs to the calling root, not this module, so the
 credentials stay under the caller's control.
 

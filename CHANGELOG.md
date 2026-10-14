@@ -370,6 +370,45 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Changed
 
+- **Breaking: the `hashicorp/helm` provider requirement is now `~> 3.0`**
+  (was `~> 2.12`; 3.3.0 is locked) in the root module,
+  `modules/controllers`, and every example, so the weekly drift report
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)) is
+  current. Minor-required (see [`docs/versioning.md`](./docs/versioning.md)).
+  The 3.x provider moved to the Terraform Plugin Framework, which turns
+  blocks into attributes. **Upgrade note:** before `terraform init
+  -upgrade`, widen any `helm` constraint you declare to `~> 3.0` and change
+  your `provider "helm"` configuration from `kubernetes { ... }` to
+  `kubernetes = { ... }` (and a nested `exec { ... }` to `exec = { ... }`;
+  `registry { ... }` blocks become `registries = [{ ... }]`). Your own
+  `helm_release` resources need `set = [{ name = ..., value = ... }]`
+  instead of `set { ... }` blocks (likewise `set_list` and
+  `set_sensitive`), `postrender = { ... }` instead of a block, and
+  `metadata.<field>` instead of `metadata[0].<field>`. The module's own
+  `n8n_helm_release_revision` output now reads `metadata.revision`; its
+  value does not change. Every example's `providers.tf` uses the new
+  syntax, and `examples/split-ingress`, `examples/customer-managed-cluster`,
+  and `examples/customer-managed-everything` convert their AGIC `set`
+  blocks. No state step is needed: the 3.x provider upgrades each
+  `helm_release` from the 2.x schema on the first plan (`UpgradeState
+  Triggered` warning). That first plan shows every `helm_release` updated
+  in place (never replaced): `metadata` and `id` become
+  `(known after apply)`, `postrender`, `set_list`, `set_sensitive`, and
+  `set_wo_revision` go to null, and `set` entries are reordered from
+  2.x's sorted order to configuration order. The apply runs one Helm
+  upgrade per release with unchanged values, which raises each revision
+  by one and should not roll any pod. The following plan is clean. 3.x
+  state cannot be read by 2.x, so back up state first. Exception for
+  callers' own `helm_release` resources (the module and examples set
+  neither): helm provider 3.3.0 bug
+  [hashicorp/terraform-provider-helm#1695](https://github.com/hashicorp/terraform-provider-helm/issues/1695)
+  fails the first plan with "Provider produced invalid plan" for any
+  `keyring` argument, and for `description = ""` when the 2.x state holds
+  no description. Remove those arguments before the first 3.x plan and
+  leave them out until an upstream fix (#1714 or #1739) is released; a
+  non-empty `description` is not affected. See
+  [README.md, Moving the helm provider from 2.x to 3.x](./README.md#moving-the-helm-provider-from-2x-to-3x).
+
 - **Breaking: `n8n_image_tag` now defaults to `null`** (was `"2.35.0"`),
   matching terraform-aws-n8n and terraform-google-n8n
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). With

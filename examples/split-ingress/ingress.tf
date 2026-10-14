@@ -485,35 +485,32 @@ resource "helm_release" "agic_webhook" {
   version    = "1.7.5"
   namespace  = kubernetes_namespace.agic_webhook.metadata[0].name
 
-  set {
-    name  = "appgw.applicationGatewayID"
-    value = azurerm_application_gateway.webhook.id
-  }
-
-  set {
-    name  = "armAuth.type"
-    value = "workloadIdentity"
-  }
-
-  set {
-    name  = "armAuth.identityClientID"
-    value = azurerm_user_assigned_identity.agic_webhook.client_id
-  }
-
-  set {
-    name  = "kubernetes.watchNamespace"
-    value = module.n8n.n8n_namespace
-  }
-
-  set {
-    name  = "kubernetes.ingressClass"
-    value = local.webhook_ingress_class
-  }
-
-  set {
-    name  = "rbac.enabled"
-    value = "true"
-  }
+  set = [
+    {
+      name  = "appgw.applicationGatewayID"
+      value = azurerm_application_gateway.webhook.id
+    },
+    {
+      name  = "armAuth.type"
+      value = "workloadIdentity"
+    },
+    {
+      name  = "armAuth.identityClientID"
+      value = azurerm_user_assigned_identity.agic_webhook.client_id
+    },
+    {
+      name  = "kubernetes.watchNamespace"
+      value = module.n8n.n8n_namespace
+    },
+    {
+      name  = "kubernetes.ingressClass"
+      value = local.webhook_ingress_class
+    },
+    {
+      name  = "rbac.enabled"
+      value = "true"
+    },
+  ]
 
   depends_on = [
     azurerm_role_assignment.agic_webhook_appgw_contributor,
@@ -538,35 +535,32 @@ resource "helm_release" "agic_admin" {
   version    = "1.7.5"
   namespace  = kubernetes_namespace.agic_admin.metadata[0].name
 
-  set {
-    name  = "appgw.applicationGatewayID"
-    value = azurerm_application_gateway.admin.id
-  }
-
-  set {
-    name  = "armAuth.type"
-    value = "workloadIdentity"
-  }
-
-  set {
-    name  = "armAuth.identityClientID"
-    value = azurerm_user_assigned_identity.agic_admin.client_id
-  }
-
-  set {
-    name  = "kubernetes.watchNamespace"
-    value = module.n8n.n8n_namespace
-  }
-
-  set {
-    name  = "kubernetes.ingressClass"
-    value = local.admin_ingress_class
-  }
-
-  set {
-    name  = "rbac.enabled"
-    value = "true"
-  }
+  set = [
+    {
+      name  = "appgw.applicationGatewayID"
+      value = azurerm_application_gateway.admin.id
+    },
+    {
+      name  = "armAuth.type"
+      value = "workloadIdentity"
+    },
+    {
+      name  = "armAuth.identityClientID"
+      value = azurerm_user_assigned_identity.agic_admin.client_id
+    },
+    {
+      name  = "kubernetes.watchNamespace"
+      value = module.n8n.n8n_namespace
+    },
+    {
+      name  = "kubernetes.ingressClass"
+      value = local.admin_ingress_class
+    },
+    {
+      name  = "rbac.enabled"
+      value = "true"
+    },
+  ]
 
   depends_on = [
     azurerm_role_assignment.agic_admin_appgw_contributor,
