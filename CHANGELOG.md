@@ -468,8 +468,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   matches it ignoring case, and the zone name lowercased), sets AKS
   `node_provisioning_profile { mode = "Manual" }` (required in 5.0), uses
   `public_network_access = "Disabled"` on the storage account, ignores PostgreSQL `storage_type`
-  (new in 5.4.0, ForceNew with no state migration, so a 4.x-created server
-  could otherwise plan a replacement that destroys the database), and pins
+  (new in 5.4.0, ForceNew with no state migration: a refreshed plan fills it
+  in from Azure, but a `-refresh=false` plan would otherwise plan a
+  replacement that destroys the database), and pins
   the WAF policy's `file_upload_enforcement = false`, the value 4.x always
   sent. The examples make the same changes to the resources they own, use
   the subnet `service_endpoint` block, and list
