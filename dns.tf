@@ -24,6 +24,17 @@ locals {
     "/",
     var.private_dns_zone_id,
   )[4]
+  # azurerm 5.x addresses a private DNS record by zone ID, and that argument
+  # forces replacement. Rebuild the ID with the lowercased zone name the
+  # record has always used, so a zone ID supplied with different casing does
+  # not replace records created by azurerm 4.x (whose refreshed state derives
+  # the zone ID from the record's own ID).
+  private_dns_zone_canonical_id = var.private_dns_zone_id == null ? null : format(
+    "/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/privateDnsZones/%s",
+    split("/", var.private_dns_zone_id)[2],
+    local.private_dns_zone_resource_group_name,
+    local.private_dns_zone_name,
+  )
 
   public_dns_records_managed  = var.create_ingress && var.create_public_dns_record
   private_dns_records_managed = var.create_ingress && var.create_private_dns_record
@@ -51,8 +62,7 @@ resource "azurerm_private_dns_a_record" "n8n" {
     each.value,
     ".${local.private_dns_zone_name}",
   )
-  zone_name           = local.private_dns_zone_name
-  resource_group_name = local.private_dns_zone_resource_group_name
+  private_dns_zone_id = local.private_dns_zone_canonical_id
   ttl                 = 300
   records             = [azurerm_application_gateway.n8n[0].frontend_ip_configuration[0].private_ip_address]
 

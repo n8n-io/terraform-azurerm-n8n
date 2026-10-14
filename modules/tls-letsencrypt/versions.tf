@@ -15,8 +15,10 @@ terraform {
 
   required_providers {
     azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      source = "hashicorp/azurerm"
+      # azurerm_key_vault_certificate is unchanged between 4.x and 5.x, so
+      # this helper accepts both majors; the root module requires 5.x.
+      version = ">= 4.0, < 6.0.0"
     }
     acme = {
       source  = "vancluever/acme"

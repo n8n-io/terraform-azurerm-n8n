@@ -664,6 +664,47 @@ arguments fixed every failure, which is what the README's migration section
 tells callers. Do not set either argument on a `helm_release` until upstream
 PR #1714 or #1739 is released.
 
+## azurerm 5.x (`feat/azurerm5`, issue #57)
+
+The root and every example require `hashicorp/azurerm` `>= 5.5.0, < 6.0.0`;
+the two TLS helpers accept `>= 4.0, < 6.0.0` because their only azurerm
+resource, `azurerm_key_vault_certificate`, did not change.
+`docs/upgrading-azurerm-5.md` is the caller-facing guide. Lessons for the
+next major bump:
+
+- `terraform validate` finds only the removed and newly required
+  arguments. Diff `terraform providers schema -json` between the two
+  versions for every resource type in use, then read the provider source
+  for `ForceNew`, `Default`, `Computed` removals, `CustomizeDiff`, and state
+  upgraders, none of which the schema JSON shows. The 5.0 upgrade guide is
+  not authoritative either: it documents a `true` default for the WAF
+  `file_upload_enforcement` that 5.9.0 does not implement.
+- An argument that is new, ForceNew, and without a state upgrader
+  (`private_dns_zone_id` on private DNS links and records,
+  `storage_type` on PostgreSQL Flexible Server) plans a replacement against
+  4.x state unless a refresh fills it in first. A `-refresh=false` plan
+  always shows it. When the provider stores the value only if the API
+  returns one (`storage_type`), add it to `ignore_changes`: for SDKv2
+  resources Terraform core reapplies `ignore_changes` to the provider's
+  planned value and drops `RequiresReplace` paths that no longer differ
+  (`node_resource_abstract_instance.go`, `LegacyTypeSystem` branch and
+  `getRequiredReplaces`), so it neutralizes the replacement even though the
+  provider fills in a schema default.
+- Where 5.x rebuilds an ID-valued argument from the resource's own ID on
+  read, send the exact string it will rebuild. `dns.tf` reconstructs the
+  private zone ID with the lowercased zone name the 4.x record used, and
+  `private_dns_record_zone_id_uses_lowercased_zone_name` pins that.
+- `terraform init -upgrade` upgrades every provider, not just the one being
+  bumped. To move only azurerm, delete its block from each
+  `.terraform.lock.hcl`, run `terraform init`, then
+  `terraform providers lock` for the three platforms.
+- 5.x registers no resource providers by default, so the examples list
+  `resource_providers_to_register`. Keep that list in step with any new
+  Azure service the module starts using.
+- The tflint azurerm ruleset stays at `0.27.0`: its latest release
+  (`0.32.0`) predates azurerm 5.0 and adds a `prevent_destroy` rule that
+  fires on every data-bearing resource.
+
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
 This section records the 1.11.0 to 1.13.0 bump. The current default is
@@ -847,7 +888,7 @@ concern, and one deliberate nested call to the directly composable
 | `examples/split-ingress/` | Single-decision topology example — module ingress fully disabled in favor of two caller-owned Application Gateways. |
 | `tests/scripts/smoke-test.sh`     | Post-`apply` smoke test for live deployments.               |
 | `tests/scripts/preflight-region-check.sh` | Pre-`apply` region/subscription capability check (AKS SKU zones, subscription vCPU quota headroom, PostgreSQL Flexible Server versions/SKU, optional Managed Redis capacity probe); reads region, sizing, and SKUs from the caller's own `terraform plan`. |
-| `docs/`                           | Long-form supplementary docs (upgrading n8n and the chart, troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
+| `docs/`                           | Long-form supplementary docs (upgrading n8n and the chart, upgrading to azurerm 5.x, troubleshooting, post-deploy, cleanup, TLS rotation, Redis, data storage, observability, Azure Key Vault external secrets, topology maintenance). `docs/qualification-runs/` holds one filled-in copy of `docs/manual-azure-qualification.md` per live run; never edit the template's Result rows in place. |
 | `README.md`                       | Human entry point — architecture, prerequisites, usage, and the auto-generated Reference block. |
 | `CONTRIBUTORS`                    | Contributors to this module, in order of first contribution, with maintainer/contributor role. |
 | `LICENSE`                         | MIT. Required for registry publication.                     |

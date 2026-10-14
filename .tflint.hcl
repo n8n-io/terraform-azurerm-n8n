@@ -18,8 +18,10 @@ plugin "terraform" {
 }
 
 # Azure provider ruleset. Bump together with the azurerm provider pin in
-# `versions.tf` (currently `>= 4.39.0, < 5.0.0`); the azurerm ruleset tracks azurerm
-# resource argument changes.
+# `versions.tf` (currently `>= 5.5.0, < 6.0.0`); the azurerm ruleset tracks azurerm
+# resource argument changes. No ruleset release targets azurerm 5.x yet (the
+# latest, 0.32.0, predates azurerm 5.0 and adds an opinionated
+# prevent_destroy rule), so the pin stays at 0.27.0 until one does.
 plugin "azurerm" {
   enabled = true
   version = "0.27.0"
