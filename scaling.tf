@@ -401,13 +401,15 @@ check "autoscaling_maxima_fit_aks_capacity" {
 # their documented defaults while create_aks = false have no effect —
 # azurerm_kubernetes_cluster.n8n and its node pool do not exist in that mode,
 # and the capacity model above stays silent. The existing cluster's version,
-# node sizing, zones, API access, upgrade surge, and SKU tier are owned by whoever
-# created it. Mirrors `redis_tuning_requires_module_managed_redis`. KEEP
-# THESE LITERALS IN LOCKSTEP WITH variables.tf defaults.
+# node sizing, zones, API access, upgrade surge, node pool version policy, and
+# SKU tier are owned by whoever created it. Mirrors
+# `redis_tuning_requires_module_managed_redis`. KEEP THESE LITERALS IN
+# LOCKSTEP WITH variables.tf defaults.
 check "aks_tuning_requires_module_managed_aks" {
   assert {
     condition = var.create_aks ? true : (
       var.aks_kubernetes_version == "1.36" &&
+      var.aks_node_pools_follow_cluster_version == true &&
       var.aks_node_vm_size == "Standard_D4s_v4" &&
       var.aks_node_count_min == 2 &&
       var.aks_node_count_max == 6 &&
@@ -430,7 +432,7 @@ check "aks_tuning_requires_module_managed_aks" {
       var.aks_network_policy == null
     )
     error_message = join("", [
-      "An aks_kubernetes_version, aks_node_vm_size, aks_node_count_min, aks_node_count_max, ",
+      "An aks_kubernetes_version, aks_node_pools_follow_cluster_version, aks_node_vm_size, aks_node_count_min, aks_node_count_max, ",
       "aks_system_node_vm_size, aks_system_node_count_min, aks_system_node_count_max, ",
       "aks_availability_zones, aks_api_authorized_ip_ranges, aks_node_upgrade_max_surge, ",
       "aks_api_warmup_seconds, aks_node_os_disk_size_gb, aks_system_pool_critical_addons_only, aks_sku_tier, ",
