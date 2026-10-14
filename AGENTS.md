@@ -899,7 +899,11 @@ Concretely, in this repo:
   passes: the configuration as written, and the same scan with
   `tests/checkov/opt-in.tfvars` applied so count-0 resources (e.g. the
   disabled-by-default Redis exporter) are actually evaluated; the second
-  pass also fails if it does not reach a listed opt-in resource. Reasons
+  pass also fails if it does not reach a listed opt-in resource. The
+  script unsets every exported `TF_VAR_*` first: on checkov 3.3.20 any one
+  of them makes checkov ignore `--var-file`, so pass 2 reports the same
+  counts as pass 1 and the coverage failure points at the wrong cause (a
+  real pass 2 has more passed checks than pass 1). Reasons
   must be true and specific; prefix a skip that records a real gap with
   `Known gap:` so it stays greppable. **When you add new resources, do not
   regress curated findings; prefer fixing them over adding suppressions,
