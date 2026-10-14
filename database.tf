@@ -168,6 +168,8 @@ locals {
 # zone; no caller-tunable knob would re-enable the public endpoint without
 # subverting the trust model.
 resource "azurerm_postgresql_flexible_server" "n8n" {
+  # checkov:skip=CKV_AZURE_136:geo_redundant_backup_enabled is caller-tunable via var.pg_geo_redundant_backup_enabled (default false, see variables.tf): disabled by default because it adds a cost premium and cannot be changed after server creation without a snapshot/restore into a new server.
+  # checkov:skip=CKV2_AZURE_57:False positive: this server is VNet-integrated (delegated_subnet_id = var.postgres_subnet_id, private_dns_zone_id set, public_network_access_enabled = false), which is the private-connectivity alternative to a private endpoint for PostgreSQL Flexible Server; delegated-subnet VNet integration and private endpoints are mutually exclusive deployment modes for this resource.
   count = var.create_database ? 1 : 0
 
   name                = local.postgres_server_name

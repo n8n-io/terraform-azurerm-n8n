@@ -6,24 +6,16 @@
 # flags, the config file, and the exit/reporting behavior have a single
 # definition.
 #
-# Deliberate deviation from the AWS sibling's check-checkov.sh: AWS's repo
-# is fully curated (every finding fixed or annotated with
-# `checkov:skip=<ID>:<reason>`), so its script hard-fails on any finding.
-# Azure's repo carries a pre-existing, uncurated backlog across every
-# sizing example (subnet NSG associations, Key Vault purge protection,
-# storage SAS/soft-delete, etc.) that a full curation pass has not
-# reached yet (see AGENTS.md's "Static analysis" quality-bar section).
-# Hard-failing on that backlog here would be a scope-widening no one
-# asked for, so pass 1 below reports but never fails the script. The one
-# thing this script does hard-fail on is pass 2's coverage guarantee: an
-# opt-in resource that stops being reached is a real regression (a
-# rename or a broken toggle), not a backlog item, and that must never go
-# quiet again the way the original checkov-action gap did.
+# Findings are either fixed or annotated with an inline
+# `checkov:skip=<ID>:<reason>` comment at the resource that causes them;
+# .checkov.yaml carries no check suppressions, only path exclusions.
+# checkov exits non-zero on any finding that is neither fixed nor
+# annotated, and that is what fails the build. This matches the AWS
+# sibling's gate.
 #
-# Two passes: the configuration as written (reported, not gating), then
-# the same scan with every opt-in toggle in tests/checkov/opt-in.tfvars
-# turned on (gating on coverage only), because checkov never evaluates a
-# count-0 resource (details at pass 2 below).
+# Two passes: the configuration as written, then the same scan with every
+# opt-in toggle in tests/checkov/opt-in.tfvars turned on, because checkov
+# never evaluates a count-0 resource (details at pass 2 below).
 #
 # Usage:
 #   tests/scripts/check-checkov.sh
@@ -72,15 +64,22 @@ fi
 
 cd "$REPO_ROOT"
 
+# On checkov 3.3.20 a single exported TF_VAR_* (even one this module has no
+# input for) makes checkov ignore --var-file, so pass 2 reports the same counts
+# as pass 1 and never evaluates the count-gated opt-in resources; the coverage
+# check below then fails with a message that points at the wrong cause. Shells
+# that export deployment defaults (TF_VAR_location, ...) hit this. CI exports
+# none. Diagnosed in terraform-aws-n8n#199.
+while IFS= read -r var; do
+  unset "$var"
+done < <(compgen -e | grep '^TF_VAR_' || true)
+
 SCAN=(checkov -d . --framework terraform --config-file .checkov.yaml --compact)
 
 # Pass 1: the module and every example exactly as written. --quiet prints
 # failures only, so a clean pass is silent apart from the summary line.
-# Report only: see the header note on the pre-existing, uncurated backlog.
-echo "checkov pass 1/2: defaults (reported, not gating)"
-set +e
+echo "checkov pass 1/2: defaults"
 "${SCAN[@]}" --quiet
-set -e
 
 # Pass 2: the same scan with every opt-in toggle turned on. checkov
 # evaluates `count` from variable defaults and answers each check on a
@@ -129,4 +128,8 @@ for address in "${OPT_IN_RESOURCES[@]}"; do
   fi
 done
 
-echo "checkov: coverage confirmed for every opt-in resource (findings above are reported, not gating; see AGENTS.md)."
+if [[ $rc -ne 0 ]]; then
+  exit "$rc"
+fi
+
+echo "checkov: clean, and coverage confirmed for every opt-in resource."

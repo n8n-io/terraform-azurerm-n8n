@@ -468,6 +468,18 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   description), not just "the AKS default node pool"
   ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
 
+- **Checkov is now a hard gate, matching `terraform-aws-n8n`.** The `checkov`
+  CI job no longer uses `continue-on-error`, and `tests/scripts/check-checkov.sh`
+  fails on any finding. The 167 findings that were previously reported but not
+  gating are each annotated at their resource with
+  `checkov:skip=<ID>:<reason>`; real gaps are prefixed `Known gap:`.
+  `check-checkov.sh` also unsets every exported `TF_VAR_*`: on checkov 3.3.20
+  any one of them makes checkov ignore `--var-file`, so pass 2 never
+  evaluated the opt-in resources and its coverage check failed with a
+  misleading message (found in terraform-aws-n8n#199). `CKV_AZURE_115` on the
+  module's own AKS, which only appears when the root module is scanned
+  directly, is annotated as well. No module behavior or default changed.
+
 ### Fixed
 
 - `examples/customer-managed-cluster`, `examples/customer-managed-everything`,
