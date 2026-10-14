@@ -302,6 +302,52 @@ resource "azurerm_role_assignment" "agic_addon_appgw_subnet_network_contributor"
   principal_id         = azurerm_kubernetes_cluster.n8n[0].ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
 }
 
+# ── Client IP without the source port ────────────────────────────────────────
+# Application Gateway v2 writes X-Forwarded-For as IP:port, so with
+# N8N_PROXY_HOPS=1 Express reports req.ip as "203.0.113.7:51234". n8n's
+# express-rate-limit then rejects the key (ERR_ERL_INVALID_IP_ADDRESS) and
+# the per-IP limiter never groups one client's requests. The
+# {var_add_x_forwarded_for_proxy} server variable is the incoming
+# X-Forwarded-For with the client IP, minus its port, appended, so entries an
+# upstream proxy such as Azure Front Door added survive and n8n_proxy_hops = 2
+# still resolves the right client. {var_client_ip} would drop them.
+#
+# The gateway ignores rewrite_rule_set changes because AGIC owns it, so the
+# rule set is an AzureApplicationGatewayRewrite custom resource that AGIC
+# reconciles onto the gateway and attaches through the Ingress annotation in
+# local.appgw_ingress_default_annotations. kubectl_manifest defers schema
+# resolution to apply time, like the KEDA TriggerAuthentication.
+resource "kubectl_manifest" "appgw_rewrite_xff" {
+  count = var.create_ingress ? 1 : 0
+
+  yaml_body = yamlencode({
+    apiVersion = "appgw.ingress.azure.io/v1beta1"
+    kind       = "AzureApplicationGatewayRewrite"
+    metadata = {
+      name      = local.appgw_rewrite_xff_name
+      namespace = local.n8n_namespace
+    }
+    spec = {
+      rewriteRules = [{
+        name         = "strip-xff-port"
+        ruleSequence = 100
+        actions = {
+          requestHeaderConfigurations = [{
+            actionType  = "set"
+            headerName  = "X-Forwarded-For"
+            headerValue = "{var_add_x_forwarded_for_proxy}"
+          }]
+        }
+      }]
+    }
+  })
+
+  depends_on = [
+    kubernetes_namespace.n8n,
+    azurerm_kubernetes_cluster.n8n,
+  ]
+}
+
 # ── AGIC-managed Kubernetes Ingress ──────────────────────────────────────────
 # For every host, the three editor test-mode prefixes are declared first and
 # target the main Service, then all five production webhook prefixes target
@@ -395,6 +441,7 @@ resource "kubernetes_ingress_v1" "n8n" {
     azurerm_role_assignment.agic_addon_appgw_subnet_network_contributor,
     azurerm_role_assignment.agic_addon_rg_reader,
     time_sleep.n8n_helm_settle,
+    kubectl_manifest.appgw_rewrite_xff,
   ]
 }
 
