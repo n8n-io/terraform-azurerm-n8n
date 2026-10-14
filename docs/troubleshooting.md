@@ -282,7 +282,7 @@ The Standard and Premium tiers add an hourly charge per cluster. Premium is a pr
 
 **Symptom**
 
-After an apply that changed `aks_kubernetes_version` on an existing cluster (for example, moving to a module release whose default is `1.36` without pinning the input), `az aks show --query currentKubernetesVersion` reports the new version, but `kubectl get nodes` still shows the previous minor (for example, `v1.35.x`) on both the system and `n8nuser` pools. The plan showed one in-place change, `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`, and no change to either pool.
+Expected outcome (not yet observed live): after an apply that changed `aks_kubernetes_version` on an existing cluster (for example, moving to a module release whose default is `1.36` without pinning the input), `az aks show --query currentKubernetesVersion` reports the new version, but `kubectl get nodes` still shows the previous minor (for example, `v1.35.x`) on both the system and `n8nuser` pools. The plan showed one in-place change, `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`, and no change to either pool.
 
 **Root cause**
 
@@ -296,7 +296,7 @@ A caller that sets `aks_kubernetes_version` explicitly sees no change from a new
 
 1. Change the version in its own apply, without other module changes, and confirm the plan contains only `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`. Minor versions cannot be skipped: move one minor per apply.
 2. If an apply that combined the upgrade with Kubernetes or Helm changes fails with `ServiceUnavailable`, `InternalError`, or a connection timeout, wait until `kubectl get --raw=/readyz` returns `ok`, then run `terraform plan` and `terraform apply` again.
-3. Upgrade the node pools outside Terraform, one at a time, with `az aks nodepool upgrade --resource-group <rg> --cluster-name <cluster> --name system --kubernetes-version <version>`, then `--name n8nuser`. This is a surge upgrade: AKS adds `aks_node_upgrade_max_surge` nodes (one per pool at the default sizing, which needs vCPU quota headroom), then cordons, drains, and replaces each node, so n8n pods restart. The next `terraform plan` shows no change, because `orchestrator_version` is computed.
+3. Upgrade the node pools outside Terraform, one at a time, with `az aks nodepool upgrade --resource-group <rg> --cluster-name <cluster> --name system --kubernetes-version <version>`, then `--name n8nuser`. This is a surge upgrade: AKS adds `aks_node_upgrade_max_surge` nodes (one per pool at the default sizing, which needs vCPU quota headroom), then cordons, drains, and replaces each node, so n8n pods restart. The next `terraform plan` is expected to show no change, because `orchestrator_version` is computed.
 
 ## `terraform apply`: `no cached repo found … kedacore-index.yaml`
 
