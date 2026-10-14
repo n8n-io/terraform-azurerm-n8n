@@ -462,6 +462,16 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   adjust any caller `required_version` or runtime pin that excludes 1.12
   (for example `~> 1.11.0`). CI now also runs every `terraform test`
   suite on 1.12.0, so the floor stays tested.
+- **Breaking:** `required_version` is now `>= 1.13` (was `>= 1.12`) for
+  the root module and every example, and CI's floor cell is `1.13.0`. On
+  Terraform 1.12.x and older, `terraform test` keeps about one provider
+  plugin process alive per run block until the command exits, so memory
+  grows with every run of the root suite (594 runs today; the same leak
+  got `terraform-aws-n8n`'s suite OOM-killed on a 16 GB runner). 1.13.0
+  does not leak. Module inputs do not change: upgrade the Terraform CLI
+  used locally and in automation, and adjust any caller
+  `required_version` or runtime pin that excludes 1.13
+  ([#63](https://github.com/n8n-io/terraform-azurerm-n8n/issues/63)).
 
 - `aks_node_count_min`'s description now states that it sizes both the
   system and user AKS node pools (matching `aks_node_count_max`'s
