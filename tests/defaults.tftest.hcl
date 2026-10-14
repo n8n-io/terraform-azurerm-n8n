@@ -13,13 +13,7 @@
 #    provider this module declares is mocked so `terraform init` /
 #    `terraform test` succeed without an azurerm/kubernetes/helm backend.)
 
-mock_provider "azurerm" {
-  mock_data "azurerm_resource_group" {
-    defaults = {
-      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg"
-    }
-  }
-}
+mock_provider "azurerm" {}
 mock_provider "kubernetes" {}
 mock_provider "helm" {}
 mock_provider "random" {}
@@ -824,6 +818,99 @@ run "capacity_warns_when_tainted_system_pool_leaves_one_pool_too_small" {
   }
 
   expect_failures = [check.autoscaling_maxima_fit_aks_capacity]
+}
+
+# While paused, KEDA holds the worker Deployment at the paused count, which
+# may exceed n8n_worker_keda_max_replicas, so the capacity model must size
+# the worker term from it (issue #64). 100 held workers cannot fit the
+# default node pools, and they also exceed the default PostgreSQL budget.
+run "capacity_warns_when_paused_replica_count_exceeds_node_capacity" {
+  command = plan
+
+  variables {
+    aks_node_count_max                   = 4
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 100
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == 100
+    error_message = "A paused count of 100 above the worker max must size the capacity model's worker term, got ${local.n8n_worker_modeled_max_replicas}."
+  }
+
+  expect_failures = [
+    check.autoscaling_maxima_fit_aks_capacity,
+    check.postgres_pool_size_fits_known_max_connections,
+  ]
+}
+
+run "capacity_keeps_worker_max_for_lower_paused_replica_count" {
+  command = plan
+
+  variables {
+    aks_node_count_max                   = 4
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 1
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == var.n8n_worker_keda_max_replicas
+    error_message = "A paused count below the worker max must leave the worker term at the maximum."
+  }
+}
+
+# The Reader scope comes from the AGIC identity's resource ID, not a data
+# source, so a caller's module-level depends_on cannot make it unknown at plan
+# time (issue #59). It must be exactly the resource group's ID, with no
+# provider or resource-type suffix.
+run "agic_reader_scope_is_the_resource_group_id_of_the_agic_identity" {
+  command = plan
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.agic
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-agic"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = local.agic_resource_group_scope == "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg"
+    error_message = "The AGIC Reader scope must be the /subscriptions/<sub>/resourceGroups/<rg> prefix of the AGIC identity's ID, got ${coalesce(local.agic_resource_group_scope, "null")}."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.agic_rg_reader[0].scope == local.agic_resource_group_scope && azurerm_role_assignment.agic_addon_rg_reader[0].scope == local.agic_resource_group_scope
+    error_message = "Both AGIC Reader role assignments must use local.agic_resource_group_scope."
+  }
+}
+
+run "agic_reader_scope_is_null_without_ingress" {
+  command = plan
+
+  variables {
+    create_ingress = false
+  }
+
+  assert {
+    condition     = local.agic_resource_group_scope == null
+    error_message = "No AGIC scope may be computed when create_ingress is false."
+  }
+}
+
+run "capacity_keeps_worker_max_when_pause_has_no_count" {
+  command = plan
+
+  variables {
+    aks_node_count_max    = 4
+    n8n_worker_keda_pause = true
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == var.n8n_worker_keda_max_replicas
+    error_message = "A pause with a null count must leave the worker term at the maximum."
+  }
 }
 
 run "rejects_zero_aks_node_os_disk_size_gb" {
@@ -2594,6 +2681,49 @@ run "rejects_empty_postgres_ssl_ca_pem" {
   expect_failures = [
     var.postgres_ssl_ca_pem,
   ]
+}
+
+# DB_POSTGRESDB_SSL_CA reaches every n8n container as one environment
+# variable; Linux refuses to exec above 131072 bytes for NAME=value plus NUL,
+# so the trimmed value may be at most 131050 characters (issue #62).
+run "rejects_postgres_ssl_ca_pem_over_environment_variable_limit" {
+  command = plan
+
+  variables {
+    postgres_ssl_ca_pem = format("%0131051d", 0)
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+run "rejects_non_ascii_postgres_ssl_ca_pem" {
+  command = plan
+
+  variables {
+    postgres_ssl_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIFäke\n-----END CERTIFICATE-----\n"
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+# The limit is measured after trimming, because the trimmed value is what
+# reaches the chart: 131050 characters plus surrounding whitespace passes.
+run "accepts_postgres_ssl_ca_pem_at_environment_variable_limit" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-ca"
+    postgres_ssl_ca_pem       = "\n${format("%0131050d", 0)}\n\n"
+  }
+
+  assert {
+    condition     = length(local.postgres_ssl_ca_values.ca) == 131050
+    error_message = "A CA bundle of exactly 131050 characters after trimming must pass validation and reach database.ssl.ca."
+  }
 }
 
 # With ssl_mode = "disable", any non-empty CA would make n8n build a TLS

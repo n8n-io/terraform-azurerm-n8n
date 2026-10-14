@@ -308,6 +308,17 @@ locals {
     p.max_replicas * (local.n8n_pool_cpu_request_millis[p.name] + local.n8n_cpu_request_millis.task_runner)
   ]))
 
+  # While n8n_worker_keda_pause is true, KEDA holds the worker Deployment at
+  # n8n_worker_keda_paused_replica_count, which may exceed
+  # n8n_worker_keda_max_replicas. A null count freezes workers at their
+  # current count, which the model assumes is within the maximum. That is an
+  # assumption, not a guarantee: workers held at a larger explicit count
+  # stay there if the count is cleared while the pause is still on.
+  n8n_worker_modeled_max_replicas = max(
+    var.n8n_worker_keda_max_replicas,
+    var.n8n_worker_keda_pause ? coalesce(var.n8n_worker_keda_paused_replica_count, 0) : 0,
+  )
+
   # Use the effective main ceiling (locals.tf) rather than the raw configured
   # maximum so a higher unused main maximum in single-main mode does not
   # inflate modeled demand, since the chart never schedules more than one main
@@ -315,7 +326,7 @@ locals {
   # sidecar allowance is chart-dependent (n8n_main_task_runner_cpu_millis).
   n8n_peak_cpu_request_millis = (
     local.n8n_main_hpa_effective_max_replicas * (local.n8n_cpu_request_millis.main + local.n8n_main_task_runner_cpu_millis) +
-    var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
+    local.n8n_worker_modeled_max_replicas * (local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner) +
     var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis.webhook +
     local.n8n_cpu_request_millis.redis_exporter +
     local.n8n_pool_peak_cpu_request_millis
@@ -348,7 +359,7 @@ check "autoscaling_maxima_fit_aks_capacity" {
       "Autoscaler maxima request ${local.n8n_peak_cpu_request_millis}m CPU, but the modeled AKS supply leaves only ",
       "${local.n8n_schedulable_cpu_millis}m schedulable for n8n. Demand is main ",
       "${local.n8n_main_hpa_effective_max_replicas} x ${local.n8n_cpu_request_millis.main + local.n8n_main_task_runner_cpu_millis}m, worker ",
-      "${var.n8n_worker_keda_max_replicas} x ${local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner}m, and webhook ",
+      "${local.n8n_worker_modeled_max_replicas} x ${local.n8n_cpu_request_millis.worker + local.n8n_cpu_request_millis.task_runner}m, and webhook ",
       "${var.n8n_webhook_hpa_max_replicas} x ${local.n8n_cpu_request_millis.webhook}m, plus ${local.n8n_cpu_request_millis.redis_exporter}m ",
       "for the optional Redis exporter when enabled",
       length(var.n8n_worker_pools) > 0 ? join("", [

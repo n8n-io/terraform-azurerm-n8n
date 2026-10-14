@@ -470,6 +470,33 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Fixed
 
+- The two AGIC `Reader` role assignments no longer take their scope from
+  `data.azurerm_resource_group.n8n`. A caller's module-level `depends_on`
+  with any pending change deferred that read to apply time, the scope
+  became unknown at plan time, and because `scope` forces replacement both
+  assignments were planned for destroy and recreate with the resource group
+  unchanged, opening a short permission gap for AGIC. The scope is now the
+  `/subscriptions/<sub>/resourceGroups/<rg>` prefix of the AGIC identity's
+  resource ID, which is known from state. The data source is removed. One
+  caveat: if `resource_group_name` differs in letter case from the name
+  Azure stores, the scope string differs in case from the old lookup, and
+  the first plan after upgrading can replace the two assignments once
+  ([#59](https://github.com/n8n-io/terraform-azurerm-n8n/issues/59)).
+- The advisory capacity check `autoscaling_maxima_fit_aks_capacity` now
+  sizes the worker term from `n8n_worker_keda_paused_replica_count` while
+  `n8n_worker_keda_pause` holds workers above `n8n_worker_keda_max_replicas`,
+  the same figure the PostgreSQL connection-budget check already used
+  ([#64](https://github.com/n8n-io/terraform-azurerm-n8n/issues/64)). That
+  budget check's advice now names `n8n_worker_keda_paused_replica_count`,
+  and only when the paused count is what raises the worker term
+  ([#65](https://github.com/n8n-io/terraform-azurerm-n8n/issues/65)).
+- `postgres_ssl_ca_pem` now rejects non-ASCII values and values over
+  131050 characters after trimming. The chart passes it to every n8n
+  container as the single environment variable `DB_POSTGRESDB_SSL_CA`, and
+  Linux refuses to start a process whose environment string exceeds 131072
+  bytes, so an oversized bundle used to pass the plan and then fail every
+  pod with `argument list too long`
+  ([#62](https://github.com/n8n-io/terraform-azurerm-n8n/issues/62)).
 - `examples/customer-managed-cluster`, `examples/customer-managed-everything`,
   and `examples/split-ingress` now match the root module's Ingress defaults
   on their caller-owned AGIC Ingress: `request-timeout = "300"` and 30 s

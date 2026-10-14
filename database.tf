@@ -525,17 +525,6 @@ locals {
   # an empty list.
   n8n_pool_max_replicas_sum = sum(concat([0], [for p in var.n8n_worker_pools : p.max_replicas]))
 
-  # While n8n_worker_keda_pause is true, KEDA holds the worker Deployment at
-  # n8n_worker_keda_paused_replica_count, which may exceed
-  # n8n_worker_keda_max_replicas. A null count freezes workers at their
-  # current count, which the model assumes is within the maximum. That is an
-  # assumption, not a guarantee: workers held at a larger explicit count
-  # stay there if the count is cleared while the pause is still on.
-  n8n_worker_modeled_max_replicas = max(
-    var.n8n_worker_keda_max_replicas,
-    var.n8n_worker_keda_pause ? coalesce(var.n8n_worker_keda_paused_replica_count, 0) : 0,
-  )
-
   # n8n_webhook_hpa_max_replicas is counted even when n8n_webhook_hpa_enabled
   # = false. That input lets a caller bring their own webhook autoscaler,
   # whose ceiling the module cannot see, so the module's own maximum is the
@@ -562,8 +551,12 @@ check "postgres_pool_size_fits_known_max_connections" {
       local.n8n_pool_max_replicas_sum > 0 ? " + worker pools ${local.n8n_pool_max_replicas_sum}" : "",
       ") requests up to ${local.n8n_pg_peak_connections} connections, more than the ",
       "${coalesce(local.pg_max_user_connections_known, 0)} user connections Microsoft publishes as the default for ",
-      "pg_sku_name = \"${var.pg_sku_name}\". Lower postgres_pool_size or the autoscaler maxima, or choose a larger ",
-      "pg_sku_name for a new server. On an existing server a SKU change does not raise the limit: Azure keeps the ",
+      "pg_sku_name = \"${var.pg_sku_name}\". Lower postgres_pool_size or the autoscaler maxima",
+      local.n8n_worker_modeled_max_replicas > var.n8n_worker_keda_max_replicas ? join("", [
+        ", or n8n_worker_keda_paused_replica_count (the paused count, ${local.n8n_worker_modeled_max_replicas}, is above ",
+        "n8n_worker_keda_max_replicas, ${var.n8n_worker_keda_max_replicas}, and only counts while it stays above it)",
+      ]) : "",
+      ", or choose a larger pg_sku_name for a new server. On an existing server a SKU change does not raise the limit: Azure keeps the ",
       "max_connections it computed at provisioning until you change that server parameter and restart. Confirm ",
       "the live budget with SHOW max_connections, minus reserved_connections and superuser_reserved_connections, ",
       "and count other clients (see docs/sandbox.md). This diagnostic is advisory and does not fail the plan.",

@@ -300,8 +300,8 @@ building a `jsonencode({...})` fixture through `terraform console` must
 keep that whole expression on a single line. Separately, `terraform
 console` (and `terraform plan`) does not require live provider
 credentials merely because the configuration declares a data source:
-an unconfigured provider's data-source read (e.g. `data.azurerm_resource_group.n8n`
-in `iam.tf`) is deferred and reported as `(known after apply)` rather than
+an unconfigured provider's data-source read (e.g. `data.azurerm_postgresql_flexible_server.current`
+in `database.tf`) is deferred and reported as `(known after apply)` rather than
 erroring the whole plan, as long as the console expression being
 evaluated doesn't itself depend on that unresolved value. This is what
 lets a chart-check script pull real `var.*`/`local.*` values from the
