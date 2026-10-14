@@ -120,7 +120,7 @@ tasks:
     desc: >-
       Diff the pinned n8n chart's values.yaml against a candidate version
       (requires Helm). Run before moving n8n_chart_version's default, e.g.
-      task chart-diff CANDIDATE=1.14.0
+      task chart-diff CANDIDATE=1.15.0
     requires:
       vars: [CANDIDATE]
     cmds:
