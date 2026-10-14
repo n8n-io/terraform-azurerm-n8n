@@ -405,7 +405,7 @@ check "autoscaling_maxima_fit_aks_capacity" {
 check "aks_tuning_requires_module_managed_aks" {
   assert {
     condition = var.create_aks ? true : (
-      var.aks_kubernetes_version == "1.35" &&
+      var.aks_kubernetes_version == "1.36" &&
       var.aks_node_vm_size == "Standard_D4s_v4" &&
       var.aks_node_count_min == 2 &&
       var.aks_node_count_max == 6 &&
