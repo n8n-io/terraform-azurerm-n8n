@@ -40,6 +40,11 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 - `docs/tls-proxy.md`: outbound, inbound, and combined proxy setups.
 - Examples pass `n8n_extra_ca_pem` and `n8n_extra_env` through (ported from
   `terraform-google-n8n` #49).
+- README Prerequisites now state that the applying identity needs permission
+  to create role assignments (`Owner`, `User Access Administrator`, or
+  `Role Based Access Control Administrator`); `Contributor` alone fails with
+  `AuthorizationFailed ... roleAssignments/write`. Found during live
+  validation; the requirement predates `n8n_extra_ca_pem`.
 - Seven opt-in AKS network and identity inputs, all defaulting to the
   module's current behavior so an existing caller sees no plan diff
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)):
