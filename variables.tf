@@ -3050,7 +3050,7 @@ variable "n8n_extra_ca_pem" {
   default     = null
 
   validation {
-    condition     = var.n8n_extra_ca_pem == null ? true : (can(regex("-----BEGIN CERTIFICATE-----", var.n8n_extra_ca_pem)) && can(regex("-----END CERTIFICATE-----", var.n8n_extra_ca_pem)))
+    condition     = var.n8n_extra_ca_pem == null ? true : can(regex("-----BEGIN CERTIFICATE-----[[:space:]]*[A-Za-z0-9+/=]+[A-Za-z0-9+/=[:space:]]*-----END CERTIFICATE-----", var.n8n_extra_ca_pem))
     error_message = "n8n_extra_ca_pem must contain at least one PEM-encoded certificate (-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----)."
   }
 
