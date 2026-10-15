@@ -11,6 +11,23 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Added
 
+- `n8n_extra_ca_pem` (default `null`): trust a private or TLS-intercepting
+  proxy CA for n8n's outbound TLS. The PEM is stored in a module-managed
+  Secret, mounted read-only at `/etc/n8n-certs/ca-bundle.crt` on the main,
+  worker, and webhook-processor pods, and `NODE_EXTRA_CA_CERTS` points at it.
+  Certificates only (a private key is rejected at plan time).
+  `NODE_EXTRA_CA_CERTS` is rejected in the extra-env inputs only while this
+  is set. Changing the PEM needs a manual restart of the three deployments;
+  the task-runner sidecars are not covered. Ported from
+  `terraform-google-n8n` #48; `n8n_proxy_hops` already existed here.
+- `docs/tls-proxy.md`: outbound, inbound, and combined proxy setups.
+- Examples pass `n8n_extra_ca_pem` and `n8n_extra_env` through (ported from
+  `terraform-google-n8n` #49).
+- README Prerequisites now state that the applying identity needs permission
+  to create role assignments (`Owner`, `User Access Administrator`, or
+  `Role Based Access Control Administrator`); `Contributor` alone fails with
+  `AuthorizationFailed ... roleAssignments/write`. Found during live
+  validation; the requirement predates `n8n_extra_ca_pem`.
 - Seven opt-in AKS network and identity inputs, all defaulting to the
   module's current behavior so an existing caller sees no plan diff
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)):

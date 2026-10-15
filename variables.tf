@@ -3024,6 +3024,67 @@ variable "n8n_credentials_overwrite_secret_ref" {
   }
 }
 
+variable "n8n_extra_ca_pem" {
+  description = <<-EOT
+    PEM-encoded CA certificate(s) every n8n role should trust for outbound
+    TLS, in addition to Node's built-in roots. Use it when egress passes
+    through a TLS-intercepting proxy or reaches endpoints signed by a private
+    CA. The module stores the PEM (public certificates only, never private
+    keys) in a module-managed Secret, mounts it read-only at
+    /etc/n8n-certs/ca-bundle.crt on main, worker, and webhook-processor pods,
+    and points NODE_EXTRA_CA_CERTS at it. Combine with n8n_extra_env
+    HTTP_PROXY/HTTPS_PROXY/NO_PROXY to route traffic through the proxy; the
+    module does not manage those. A change rewrites the Secret but does not
+    restart running pods: restart the n8n-main, n8n-worker, and
+    n8n-webhook-processor deployments to pick it up. The task-runner sidecars
+    are not covered; see docs/tls-proxy.md. Null (default) leaves
+    NODE_EXTRA_CA_CERTS unset. While this is set, NODE_EXTRA_CA_CERTS is
+    rejected in n8n_extra_env, n8n_worker_extra_env, and every
+    n8n_worker_pools entry's extra_env, and the volume name "ca-bundle" and
+    mount path "/etc/n8n-certs/ca-bundle.crt" are reserved. It also needs a
+    module-managed namespace or an existing one the Kubernetes provider can
+    write a Secret into. Inbound proxies in front of the ingress are covered
+    by n8n_proxy_hops, not by this input.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : can(regex("-----BEGIN CERTIFICATE-----[[:space:]]*[A-Za-z0-9+/=]+[A-Za-z0-9+/=[:space:]]*-----END CERTIFICATE-----", var.n8n_extra_ca_pem))
+    error_message = "n8n_extra_ca_pem must contain at least one PEM-encoded certificate (-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----)."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !can(regex("PRIVATE KEY-----", var.n8n_extra_ca_pem))
+    error_message = "n8n_extra_ca_pem must contain certificates only; remove any private key block."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !anytrue([for e in var.n8n_extra_env : e.name == "NODE_EXTRA_CA_CERTS"])
+    error_message = "n8n_extra_ca_pem sets NODE_EXTRA_CA_CERTS itself while set; remove the conflicting n8n_extra_env entry."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !anytrue([for e in var.n8n_worker_extra_env : e.name == "NODE_EXTRA_CA_CERTS"])
+    error_message = "n8n_extra_ca_pem sets NODE_EXTRA_CA_CERTS itself while set; remove the conflicting n8n_worker_extra_env entry."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !anytrue(flatten([for p in var.n8n_worker_pools : [for e in p.extra_env : e.name == "NODE_EXTRA_CA_CERTS"]]))
+    error_message = "n8n_extra_ca_pem sets NODE_EXTRA_CA_CERTS itself while set; remove the conflicting extra_env entry from n8n_worker_pools."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !contains([for v in var.n8n_extra_volumes : v.name], "ca-bundle")
+    error_message = "n8n_extra_ca_pem reserves the \"ca-bundle\" volume name while set; remove or rename the conflicting n8n_extra_volumes entry."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !contains([for m in var.n8n_extra_volume_mounts : m.mount_path], "/etc/n8n-certs/ca-bundle.crt")
+    error_message = "n8n_extra_ca_pem reserves the mount path \"/etc/n8n-certs/ca-bundle.crt\" while set; move or remove the conflicting n8n_extra_volume_mounts entry."
+  }
+}
+
 # ── n8n domain, certificate, and license ─────────────────────────────────
 # The remaining inputs the single-module-deployment spec's "Deploy from the
 # root" scenario calls out: domain, certificate, and license. Application
