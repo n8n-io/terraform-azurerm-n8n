@@ -6,7 +6,7 @@ independent inputs.
 | Proxy position | What breaks without configuration | Module inputs | You still own |
 | --- | --- | --- | --- |
 | **Outbound** (n8n to the internet, TLS-inspecting) | Node rejects the proxy's re-signed certificates (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`) | `n8n_extra_ca_pem` for the proxy CA, plus `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` in `n8n_extra_env` | The proxy, its allow-list, and which hosts bypass it |
-| **Inbound** (client to the ingress, TLS-terminating, WAF or CDN) | n8n sees the proxy as the client and logs `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` | `n8n_proxy_hops`; `app_gateway_tls_cert_secret_id` for a private-CA origin certificate; `n8n_webhook_url` if the public host differs | The proxy's certificate, its trust of the origin certificate, forwarding `X-Forwarded-For` / `X-Forwarded-Proto` |
+| **Inbound** (client to the ingress, TLS-terminating, WAF or CDN) | n8n attributes the client to the wrong proxy when the hop count is too low | `n8n_proxy_hops`; `app_gateway_tls_cert_secret_id` for a private-CA origin certificate; `n8n_webhook_url` if the public host differs | The proxy's certificate, its trust of the origin certificate, forwarding `X-Forwarded-For` / `X-Forwarded-Proto` |
 | **Both** | Both rows | Set both groups | Both |
 
 ## Outbound: trust the proxy's CA

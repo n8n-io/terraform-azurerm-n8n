@@ -13405,3 +13405,13 @@ run "extra_ca_leaves_node_extra_ca_certs_usable_when_unset" {
     n8n_extra_env = [{ name = "NODE_EXTRA_CA_CERTS", value = "/mnt/own-ca.crt" }]
   }
 }
+
+run "extra_ca_rejects_empty_certificate_block" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
