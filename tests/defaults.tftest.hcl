@@ -13232,3 +13232,176 @@ run "runner_tag_with_null_image_tag_warns" {
 
   expect_failures = [check.task_runner_image_tag_matches_application_version]
 }
+
+# ── n8n_extra_ca_pem ──────────────────────────────────────────────────────────
+
+run "extra_ca_default_omits_bundle" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      length(kubernetes_secret.n8n_ca_bundle) == 0 &&
+      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "NODE_EXTRA_CA_CERTS"]) == 0 &&
+      length([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "ca-bundle"]) == 0
+    )
+    error_message = "Without n8n_extra_ca_pem no Secret, env var, or volume may render."
+  }
+}
+
+run "extra_ca_renders_secret_volume_mount_and_env" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_extra_ca_pem           = "-----BEGIN CERTIFICATE-----\nMIIBsynthetic\n-----END CERTIFICATE-----\n"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      length(kubernetes_secret.n8n_ca_bundle) == 1 &&
+      kubernetes_secret.n8n_ca_bundle[0].data["ca.crt"] == "-----BEGIN CERTIFICATE-----\nMIIBsynthetic\n-----END CERTIFICATE-----"
+    )
+    error_message = "The PEM must be stored trimmed under ca.crt in a module-managed Secret."
+  }
+
+  assert {
+    condition = (
+      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "NODE_EXTRA_CA_CERTS"]) == "/etc/n8n-certs/ca-bundle.crt" &&
+      one([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v.secret.secretName if v.name == "ca-bundle"]) == "n8n-ca-bundle" &&
+      one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "ca-bundle"]).mountPath == "/etc/n8n-certs/ca-bundle.crt" &&
+      one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "ca-bundle"]).readOnly == true &&
+      one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "ca-bundle"]).subPath == "ca.crt"
+    )
+    error_message = "The bundle must mount read-only at /etc/n8n-certs/ca-bundle.crt and NODE_EXTRA_CA_CERTS must point at it."
+  }
+}
+
+run "extra_ca_keeps_caller_volumes_alongside_bundle" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "postgres.external.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "synthetic-external-postgres-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_extra_ca_pem           = "-----BEGIN CERTIFICATE-----\nMIIBsynthetic\n-----END CERTIFICATE-----\n"
+    n8n_extra_volumes          = [{ name = "scratch", config_map = { name = "scratch-cm" } }]
+    n8n_extra_volume_mounts    = [{ name = "scratch", mount_path = "/etc/scratch" }]
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition = (
+      [for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v.name] == ["scratch", "ca-bundle"] &&
+      [for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m.name] == ["scratch", "ca-bundle"]
+    )
+    error_message = "Caller volumes and mounts must keep their order with the CA bundle appended last."
+  }
+}
+
+run "extra_ca_rejects_non_certificate" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = "not a pem"
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "extra_ca_rejects_private_key" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n"
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "extra_ca_rejects_node_extra_ca_certs_in_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+    n8n_extra_env    = [{ name = "NODE_EXTRA_CA_CERTS", value = "/x.crt" }]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "extra_ca_rejects_node_extra_ca_certs_in_worker_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem     = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+    n8n_worker_extra_env = [{ name = "NODE_EXTRA_CA_CERTS", value = "/x.crt" }]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "extra_ca_rejects_reserved_volume_name" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem        = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+    n8n_extra_volumes       = [{ name = "ca-bundle", config_map = { name = "x" } }]
+    n8n_extra_volume_mounts = [{ name = "ca-bundle", mount_path = "/etc/other" }]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "extra_ca_leaves_node_extra_ca_certs_usable_when_unset" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [{ name = "NODE_EXTRA_CA_CERTS", value = "/mnt/own-ca.crt" }]
+  }
+}

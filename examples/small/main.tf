@@ -216,6 +216,7 @@ module "n8n" {
 
   n8n_license_key             = var.n8n_license_key
   n8n_license_cert_secret_ref = var.n8n_license_cert_secret_ref
+  n8n_extra_ca_pem            = var.n8n_extra_ca_pem
   n8n_extra_env               = var.n8n_extra_env
   n8n_image_tag               = var.n8n_image_tag
 

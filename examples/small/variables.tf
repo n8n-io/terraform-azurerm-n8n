@@ -197,3 +197,9 @@ variable "common_tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "n8n_extra_ca_pem" {
+  description = "PEM-encoded CA certificate(s) n8n should trust for outbound TLS (TLS-inspecting proxy or private CA). Certificates only. Passed to the module; see docs/tls-proxy.md. Restart the n8n deployments after changing it."
+  type        = string
+  default     = null
+}

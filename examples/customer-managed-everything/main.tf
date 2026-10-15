@@ -573,8 +573,10 @@ module "n8n" {
   existing_keda_prerequisites_confirmed = true
 
   n8n_license_key_secret_ref = {
-    name = kubernetes_secret.n8n_license.metadata[0].name
-    key  = "license-key"
+    n8n_extra_ca_pem = var.n8n_extra_ca_pem
+    n8n_extra_env    = var.n8n_extra_env
+    name             = kubernetes_secret.n8n_license.metadata[0].name
+    key              = "license-key"
   }
   n8n_encryption_key_secret_ref = {
     name = kubernetes_secret.n8n_encryption_key.metadata[0].name

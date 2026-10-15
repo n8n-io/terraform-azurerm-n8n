@@ -13,3 +13,10 @@ n8n_license_key      = "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
 #   Environment = "production"
 #   Owner       = "platform-team"
 # }
+
+# Outbound TLS-inspecting proxy (see docs/tls-proxy.md).
+# n8n_extra_ca_pem = file("proxy-ca.pem")
+# n8n_extra_env = [
+#   { name = "HTTPS_PROXY", value = "http://proxy.corp.example:3128" },
+#   { name = "NO_PROXY", value = "localhost,127.0.0.1,.svc,.cluster.local" },
+# ]

@@ -283,6 +283,15 @@ locals {
         }
       },
     ],
+    var.n8n_extra_ca_pem == null ? [] : [
+      {
+        name = "ca-bundle"
+        secret = {
+          secretName = "n8n-ca-bundle"
+          items      = [{ key = "ca.crt", path = "ca.crt" }]
+        }
+      },
+    ],
   )
 
   n8n_extra_volume_mounts = concat(
@@ -303,6 +312,14 @@ locals {
         readOnly  = true
       },
     ],
+    var.n8n_extra_ca_pem == null ? [] : [
+      {
+        name      = "ca-bundle"
+        mountPath = "/etc/n8n-certs/ca-bundle.crt"
+        subPath   = "ca.crt"
+        readOnly  = true
+      },
+    ],
   )
 
   # CREDENTIALS_OVERWRITE_DATA_FILE is deliberately absent from
@@ -317,6 +334,21 @@ locals {
       value = "/etc/n8n/credentials-overwrite/${var.n8n_credentials_overwrite_secret_ref.key}"
     },
   ]
+
+  # ── Extra CA bundle (n8n_extra_ca_pem) ──
+  # Public certificates only, so a plain Kubernetes Secret is fine. Azure
+  # Managed Redis chains to a public root, so there is no module CA to merge
+  # and the Secret holds the caller's PEM verbatim. NODE_EXTRA_CA_CERTS is
+  # deliberately absent from n8n_managed_env_names: the validation on the
+  # variable rejects it only while the input is set, so callers already
+  # delivering a CA through n8n_extra_env keep working.
+  n8n_extra_ca_enabled     = var.n8n_extra_ca_pem != null
+  n8n_extra_ca_secret_name = "n8n-ca-bundle"
+  n8n_extra_ca_mount_path  = "/etc/n8n-certs/ca-bundle.crt"
+
+  n8n_extra_ca_env = local.n8n_extra_ca_enabled ? [
+    { name = "NODE_EXTRA_CA_CERTS", value = local.n8n_extra_ca_mount_path },
+  ] : []
 
   # n8n reads DB_POSTGRESDB_SSL_ENABLED. Charts before 1.15.0 render
   # database.ssl.enabled into a ConfigMap key named DB_POSTGRESDB_SSL instead,
