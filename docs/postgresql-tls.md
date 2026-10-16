@@ -40,32 +40,26 @@ Both inputs feed `local.postgres_connection.ssl_mode` (`database.tf`), which
 the n8n Helm chart's `database.ssl.enabled` / `database.ssl.rejectUnauthorized`
 values derive from.
 
-### Chart workaround for `DB_POSTGRESDB_SSL_ENABLED`
+### `DB_POSTGRESDB_SSL_ENABLED` (chart 2.0 and later)
 
-The pinned n8n Helm chart (`1.14.0`, and `1.13.0` before it) renders
-`database.ssl.enabled` into an environment variable named
-`DB_POSTGRESDB_SSL`, but n8n only reads `DB_POSTGRESDB_SSL_ENABLED`
-([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)
-fixes this upstream; it was merged after `1.14.0` and is not yet in a
-released chart). The module works around this by setting
-`DB_POSTGRESDB_SSL_ENABLED=true` directly through `config.extraEnv`
+Chart `1.14.0` and earlier rendered `database.ssl.enabled` into an
+environment variable named `DB_POSTGRESDB_SSL`, but n8n only reads
+`DB_POSTGRESDB_SSL_ENABLED`
+([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175)).
+Until chart 2.0 this module worked around the bug by setting
+`DB_POSTGRESDB_SSL_ENABLED=true` itself through `config.extraEnv`
 (`locals.tf`'s `n8n_postgres_ssl_enabled_env`) whenever the effective
-`ssl_mode` is not `disable`, independent of chart version. The entry stays
-harmless on a chart that includes the fix.
+`ssl_mode` was not `disable`. Chart 2.0 includes the upstream fix, so the
+chart now sets `DB_POSTGRESDB_SSL_ENABLED` itself from `database.ssl.enabled`
+and this module's workaround has been removed; see `docs/upgrading-n8n.md`.
 
-How the chart bug affected each mode before this workaround:
+How the chart bug affected each mode before the chart-side fix:
 
-| Mode | Before the workaround | With the workaround |
+| Mode | Before the fix | After the fix |
 | --- | --- | --- |
 | `require`, `allow`, `prefer` | TLS without certificate verification | Unchanged |
 | `verify-ca`, `verify-full` (external path, no CA) | Plaintext | TLS with certificate verification |
 | `disable` | Plaintext | Unchanged |
-
-`require`, `allow`, and `prefer` were already encrypted because the chart
-also renders `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false` for them, and n8n
-builds a TLS options object whenever that flag is `false`. Only the
-verifying modes lost TLS entirely, because they leave that flag at its
-default.
 
 ## Supplying a CA bundle for `verify-ca` / `verify-full`
 

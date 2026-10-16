@@ -133,14 +133,21 @@ WORKER_MIN=1
 WEBHOOK_MIN=2
 
 # Multi-main optional load-test settings — no-ops unless LOAD_TEST=true.
-# `LOAD_SEED_JOBS=40` is calibrated to clear the chart's stock
+# `LOAD_SEED_JOBS=40` was calibrated to clear the pinned chart's stock
 # `queueMode.workerConcurrency=10` × `n8n_worker_keda_min_replicas=2` =
 # 20 in-flight slots AND push at least 10 jobs into `bull:jobs:wait` (the
 # KEDA trigger threshold = `listLength=5` × 2 replicas), which together
-# give KEDA something to scale on. Lower the seed only if you've also
-# lowered the chart-level concurrency or the KEDA target list-length;
-# otherwise the load test can complete without any queue depth ever
-# accumulating and the autoscaler-scale-up assertion warns harmlessly.
+# give KEDA something to scale on. Chart 2.0 no longer renders
+# `queueMode.workerConcurrency` (decision 0012: it fails the render
+# alongside `executions.concurrency.productionLimit`, which this module
+# always sets); each worker's concurrency now comes entirely from
+# `N8N_CONCURRENCY_PRODUCTION_LIMIT` (`n8n_execution_concurrency_limit`,
+# default 100, not 10 — see tests/scripts/README.md's "Worker scaling
+# test" section for the real in-flight ceiling this implies). Lower the
+# seed only if you've also lowered `n8n_execution_concurrency_limit` or
+# the KEDA target list-length; otherwise the load test can complete
+# without any queue depth ever accumulating and the autoscaler-scale-up
+# assertion warns harmlessly.
 LOAD_TEST="${LOAD_TEST:-false}"
 LOAD_REQUESTS="${LOAD_REQUESTS:-100}"
 LOAD_CONCURRENCY="${LOAD_CONCURRENCY:-20}"

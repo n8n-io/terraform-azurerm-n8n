@@ -58,7 +58,6 @@ run "medium_tier_plan" {
       webhook_max_replicas         = 24
       worker_min_replicas          = 4
       worker_max_replicas          = 30
-      worker_concurrency           = 20
       appgw_autoscale_min_capacity = 2
       appgw_autoscale_max_capacity = 10
     }

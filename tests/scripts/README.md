@@ -150,6 +150,15 @@ terraform init -backend=false   # once, from the repo root
 tests/scripts/check-n8n-chart.sh
 ```
 
+Set `N8N_CHART_PATH` to render against a local chart checkout instead of
+pulling the pinned version from the OCI registry, for a chart that is not
+published yet (for example, a chart 2.0 candidate checked out from an open
+n8n-hosting pull request before `n8n_chart_version`'s default moves to it):
+
+```bash
+N8N_CHART_PATH=/path/to/n8n-hosting/charts/n8n tests/scripts/check-n8n-chart.sh
+```
+
 ### What it covers
 
 - Deployment families (`deployment-main`, `deployment-worker`,
@@ -158,17 +167,16 @@ tests/scripts/check-n8n-chart.sh
   `PodDisruptionBudget` minimum/selector.
 - The worker `ScaledObject`'s replica bounds and both `bull:jobs:wait` /
   `bull:jobs:active` triggers.
-- Execution save-policy environment values (`EXECUTIONS_DATA_SAVE_*`) exactly
-  once on main, worker, and webhook-processor containers. The module supplies
-  the webhook entries because the pinned chart omits them for that role.
-  Webhook processors need these settings to decide final execution retention.
-- The current `N8N_WEBHOOK_URL` environment entry on all three
-  application containers, and the absence of the chart's own deprecated
-  `WEBHOOK_URL` alias (which only renders when `webhook.url` or
-  `ingress.enabled` is set — neither is set by this module).
-- A self-test proving the script's duplicate-environment-name detector
-  actually flags an intentionally duplicated fixture, followed by a real
-  duplicate-name scan of every rendered container.
+- Execution save-policy environment values (`EXECUTIONS_DATA_SAVE_*`) in
+  the main, worker, and webhook-processor env ConfigMaps (chart decision
+  0012: one ConfigMap per component, loaded with `envFrom`, not a
+  container-level `env` list). The pinned chart renders these chart-native
+  on main and worker; the module supplies the webhook-processor entries
+  because the chart omits them for that role. Webhook processors need
+  these settings to decide final execution retention.
+- The current `N8N_WEBHOOK_URL` and `N8N_EDITOR_BASE_URL` values in the
+  shared env ConfigMap, and the absence of the chart's own deprecated
+  `WEBHOOK_URL` alias.
 
 This script does not prove a live Helm upgrade or rollback succeeds;
 see the manual Azure qualification checklist for that.
@@ -420,25 +428,35 @@ three poll cycles before the warning fires.
 ### Why `LOAD_SEED_JOBS = 40`?
 
 KEDA only scales when `bull:jobs:wait` exceeds `listLength × replicas`.
-With the module's defaults:
 
-- `queueMode.workerConcurrency = 10` (chart default) — each worker pod
-  processes 10 jobs in parallel
-- `n8n_worker_keda_min_replicas = 2` — the floor
-- `n8n_worker_keda_target_list_length = 5` — the per-replica wait-queue
-  target
+Chart 2.0 no longer renders `queueMode.workerConcurrency` (decision 0012;
+n8n fails the render if that flag is set alongside
+`executions.concurrency.productionLimit`, which this module always sets).
+Each worker's concurrency now comes entirely from
+`N8N_CONCURRENCY_PRODUCTION_LIMIT`, i.e. `n8n_execution_concurrency_limit`,
+whose default is **100**, not the chart's former `workerConcurrency`
+default of 10. With the module's other defaults —
+`n8n_worker_keda_min_replicas = 2` (the floor) and
+`n8n_worker_keda_target_list_length = 5` (the per-replica wait-queue
+target) — the cluster now runs `2 × 100 = 200` jobs concurrently, so the
+seed has to push past `2 × 5 = 10` jobs in the wait queue *and* past the
+200 in-flight slots before KEDA notices: **210 jobs**, not the 30 this
+section used to derive from the chart's old default.
 
-... the cluster runs `2 × 10 = 20` jobs concurrently and KEDA only
-triggers when there are more than `2 × 5 = 10` jobs sitting in the wait
-queue — i.e. the seed has to push past **30 jobs** before KEDA notices.
-40 is the smallest round number that comfortably clears that floor.
-Lower the seed only if you've also lowered the chart's `workerConcurrency`
-or the module's `n8n_worker_keda_target_list_length` accordingly.
+`LOAD_SEED_JOBS = 40` predates that change and no longer clears this
+floor; recalibrating it is a separate change from the chart 2.0 values
+migration this check-n8n-chart.sh/chart-values-diff.sh/verify-worker-pools.sh
+update covers; do not reuse this default when relying on the autoscaler to
+actually scale up until it is recalibrated against the production-limit
+floor above. Lower (or raise) the seed only alongside
+`n8n_execution_concurrency_limit` or
+`n8n_worker_keda_target_list_length`, whichever moves the floor.
 
 The load-test default also sets `LOAD_JOB_DURATION_SECS = 15` (vs the
-AWS sibling's 10) so the 40 seed jobs don't drain before KEDA's first
-poll cycle. With 15 s burn, 20 in-flight, the queue stays saturated for
-~30 s — plenty of dwell time for the 15 s polling interval to register.
+AWS sibling's 10), sized against the chart's old 20-in-flight assumption
+above so the 40 seed jobs wouldn't drain before KEDA's first poll cycle;
+it is subject to the same recalibration note as `LOAD_SEED_JOBS` now that
+the real in-flight ceiling is 200, not 20.
 
 ## Running against a remote deployment
 
@@ -575,6 +593,13 @@ chart actually rendered `var.n8n_worker_pools` (early alpha, see
 ScaledObject exists and every pinned project quietly runs on the default
 queue. Only counting the rendered resources after a live apply catches
 that.
+
+`N8N_WORKER_POOL_NAME` and `N8N_WORKER_POOLS_ENABLED` render as a literal
+container `env:` entry on a chart that predates decision 0012's per-component
+ConfigMaps, and in a ConfigMap the container loads with `envFrom` on a chart
+that has adopted it; `deploy_env()` checks the literal entry first and falls
+back to every ConfigMap the matching container references, so this script
+works against either chart shape without knowing which one is live.
 
 This is the Azure sibling of
 [`terraform-aws-n8n/tests/scripts/verify-worker-pools.sh`](https://github.com/n8n-io/terraform-aws-n8n/blob/main/tests/scripts/README.md).

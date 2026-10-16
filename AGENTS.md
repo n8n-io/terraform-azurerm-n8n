@@ -132,9 +132,10 @@ one-apply contract as a release guarantee for a given release.
 
 **Runtime controls.** Root `n8n.tf` owns the chart-native resource, execution,
 lifecycle, task-runner, logging, template, personalization, community-package,
-and floating-license settings. The chart's `config.extraEnv` is shared by
-main, worker, and webhook containers. Keep feature variables omitted when
-their defaults match n8n, but always render
+and floating-license settings. Shared environment variables reach main,
+worker, and webhook containers through `env.shared` (chart 2.0
+per-component maps; see "Chart 2.0 adoption" below). Keep feature
+variables omitted when their defaults match n8n, but always render
 `N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false` because n8n's upstream `true`
 default can invalidate the shared floating certificate during a multi-main
 rollout.
@@ -146,7 +147,8 @@ Secrets, so root Terraform takes over the n8n ServiceAccount only when
 moves the workload-identity federated subject with it. Inputs contain existing
 Secret names only, never registry credentials. Keep `local.n8n_managed_env_names` and
 `local.n8n_managed_env_prefixes` synchronized with every environment variable
-the module or chart owns before adding to `config.extraEnv`. The one deliberate
+the module or chart owns before adding to `n8n_extra_env` /
+`n8n_worker_extra_env`. The one deliberate
 exception is `CREDENTIALS_OVERWRITE_DATA_FILE`: `n8n_credentials_overwrite_secret_ref`
 (ported from `terraform-aws-n8n` PR #119) appends a `credentials-overwrite`
 Secret volume, a read-only mount at `/etc/n8n/credentials-overwrite`, and that
@@ -159,8 +161,8 @@ reads the Secret's payload, so Secret rotation needs a manual rollout restart.
 
 **Data and observability configuration.** Root `n8n.tf` renders binary mode,
 historical binary modes, execution-data mode, Azure connection, metrics,
-OpenTelemetry, and log-streaming settings through the shared `config.extraEnv`
-list so main, worker, and webhook processes stay aligned. Binary-data modes are
+OpenTelemetry, and log-streaming settings through the shared `env.shared`
+map so main, worker, and webhook processes stay aligned. Binary-data modes are
 restricted to `database`/`azure` for both binary and execution data — 0.1.0 has
 neither n8n's inline-memory `default` binary mode nor a shared-filesystem path.
 Azure binary and execution storage have
@@ -506,7 +508,7 @@ renders into a worker Deployment and a KEDA `ScaledObject`; this module's
 contribution is entirely `worker-pools.tf`'s locals (validated pool names
 at plan time, sizing knobs that fall back to the module-wide `n8n_worker_*`
 defaults instead of the chart's, `N8N_WORKER_POOLS_ENABLED` on
-`config.extraEnv`) plus the merge in `n8n.tf`'s `helm_release.n8n`. The
+`env.shared`) plus the merge in `n8n.tf`'s `helm_release.n8n`. The
 default `[]` omits `queueMode.workerGroups` from the values entirely rather
 than sending an empty list, so an untouched deployment sees no Helm diff.
 
@@ -675,6 +677,65 @@ reason, so new default-shape assertions belong in their own run. In jq, `|`
 binds looser than `and`, so `[...] | length == 0 and (.spec...)` evaluates
 the right-hand side against the filtered array, not the document;
 parenthesize each side.
+
+## Chart 2.0 adoption (`feat/chart-2.0`)
+
+This module targets n8n Helm chart `2.0`
+([n8n-hosting#250](https://github.com/n8n-io/n8n-hosting/pull/250), still
+unreleased; see the chart's own `UPGRADING.md` and decisions 0012 and 0020
+for the upstream rationale). `n8n_chart_version`'s default stays `1.14.0`
+on this branch and moves to `2.0.0` only once that release exists, in
+lockstep with this change — this section documents shipped branch
+behavior, not a future plan. See `docs/upgrading-n8n.md`'s "Moving to chart
+2.0" for the caller-facing upgrade path.
+
+**`config.extraEnv` is no longer one shared list.** Chart decision 0012
+replaces it, and `queueMode.workerExtraEnv`, with per-component flat
+`NAME: value` maps: `env.shared`, `env.worker`, `env.webhookProcessor`
+(`env.main` and `env.taskRunner` exist on the chart but this module does
+not use them). `n8n.tf` builds these maps from the module's existing
+inputs instead of `config.extraEnv` lists. Every n8n pod's environment
+moves from `valueFrom` entries into ConfigMaps loaded with `envFrom`, so
+every pod restarts once on this upgrade regardless of whether any value
+actually changes.
+
+**`n8n_worker_concurrency` is a removed tombstone**, validated null-only
+like `n8n_available_binary_data_modes` before it. The chart no longer
+renders `queueMode.workerConcurrency`, and its render fails if that value
+is set together with `executions.concurrency.productionLimit`. This module
+always sets `productionLimit` from `n8n_execution_concurrency_limit`,
+which n8n now uses as each worker's concurrency.
+
+**`local.n8n_managed_env_names` no longer reserves `N8N_HOST` or
+`N8N_PROTOCOL`.** They used to be reserved because the module rendered them
+itself to build n8n's fallback public URLs; chart 2.0 never sets either
+(decision 0012), and `n8n.tf` now sets `editor.url` and `webhook.url`
+explicitly from `n8n_domain` and `n8n_webhook_url` instead, so a caller may
+render either name through `n8n_extra_env` if some other integration still
+needs it. `N8N_PORT` stays unreserved: the chart sets it from
+`service.port` on every n8n process, workers included, and the module
+never touches it.
+
+**The caller-managed encryption Secret needs only one key.** The chart's
+`secretRefs.existingSecret` (`n8n_encryption_key_secret_ref`) used to
+require a Secret with `N8N_ENCRYPTION_KEY`, `N8N_HOST`, `N8N_PORT`, and
+`N8N_PROTOCOL`, because `secretRefs.env` held all four. As of chart 2.0 the
+chart reads only `N8N_ENCRYPTION_KEY` from it (or
+`N8N_ENCRYPTION_KEY_FILE`, which this module does not use); a Secret that
+still carries the other three keeps working, since the chart ignores keys
+it does not read by name.
+
+**`n8n_postgres_ssl_enabled_env` is removed.** It worked around
+n8n-hosting#175 — the chart rendering `DB_POSTGRESDB_SSL`, a key n8n never
+read, instead of `DB_POSTGRESDB_SSL_ENABLED` — by setting
+`DB_POSTGRESDB_SSL_ENABLED=true` itself whenever the effective `ssl_mode`
+was not `disable`. Chart 2.0 includes the upstream fix and sets the
+variable itself from `database.ssl.enabled`.
+
+**The `WEBHOOK_URL` legacy-image fallback local is renamed
+`n8n_legacy_webhook_url_env`** to match the chart's current naming; no
+behavior change.
+
 
 ## What this repo is
 

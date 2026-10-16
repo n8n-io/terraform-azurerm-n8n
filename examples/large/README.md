@@ -9,7 +9,7 @@ A high-volume Azure reference topology with larger network ranges, zone-redundan
 | AKS | Two pools, `Standard_D16s_v5`, 5 to 20 nodes per pool, `/18` AKS subnet, Standard SKU tier |
 | n8n main | 6 to 60 replicas |
 | n8n webhook | 20 to 80 replicas, 500m CPU and 1 Gi memory requests |
-| n8n workers | 20 to 160 replicas, concurrency 40 |
+| n8n workers | 20 to 160 replicas |
 | PostgreSQL | `GP_Standard_D8s_v3`, 512 GB, zones 1 and 2, 35-day geo-redundant backups |
 | PgBouncer | 2 replicas, required node anti-affinity, transaction pooling |
 | Redis | `MemoryOptimized_M20`, high availability enabled |

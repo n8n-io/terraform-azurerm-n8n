@@ -83,8 +83,21 @@ locals {
       name     = p.name
       poolName = p.name
 
-      concurrency = coalesce(p.concurrency, var.n8n_worker_concurrency)
-      extraEnv    = p.extra_env
+      # n8n_worker_concurrency (the former module-wide fallback) was
+      # tombstoned when chart 2.0 dropped queueMode.workerConcurrency
+      # (variables.tf); null now renders no --concurrency flag for this
+      # pool, same as the default worker since that removal.
+      concurrency = p.concurrency
+      # [verify] extraEnv here follows the preview/worker-pools chart branch
+      # (1.11.0-preview.workerpools.1), not chart 2.0: queueMode.workerGroups
+      # does not exist in the chart-2.0-restructuring branch this module
+      # otherwise tracks (n8n-io/n8n-hosting#250; grepped its templates/,
+      # no matches), so there is no evidence yet of whether a merged chart
+      # keeps workerGroups[].extraEnv as a list or moves it to the env-map
+      # shape decision 0012 gives every other component. Left as the list
+      # the preview chart expects until a chart ships both features and
+      # this can be re-verified against it.
+      extraEnv = p.extra_env
 
       resources = {
         requests = {

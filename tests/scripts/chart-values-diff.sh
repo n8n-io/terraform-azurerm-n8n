@@ -9,21 +9,31 @@
 # tool, or a failed `helm show values` call (network/registry issue, or a
 # candidate version that does not exist).
 #
+# <candidate-version> is normally a published chart version (resolved via the
+# OCI registry, same as the pinned chart). It may instead be a local chart
+# directory (one containing a Chart.yaml), which `helm show values` reads
+# directly: this is how a not-yet-released chart (e.g. a chart 2.0 candidate
+# checked out from an open n8n-hosting PR) gets diffed against the pinned
+# version before it is published.
+#
 # Usage:
 #   tests/scripts/chart-values-diff.sh <candidate-version>
+#   tests/scripts/chart-values-diff.sh <path-to-local-chart-dir>
 #   tests/scripts/chart-values-diff.sh --help
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 source tests/scripts/lib/tf-defaults.sh
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  echo "Usage: $0 <candidate-version>"
+  echo "Usage: $0 <candidate-version>|<path-to-local-chart-dir>"
   echo "Diffs the pinned n8n_chart_version's values.yaml against <candidate-version>."
+  echo "<candidate-version> may be a local chart directory (containing Chart.yaml)"
+  echo "instead of a published version, for a chart not yet released."
   exit 0
 fi
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 <candidate-version>" >&2
+  echo "Usage: $0 <candidate-version>|<path-to-local-chart-dir>" >&2
   exit 1
 fi
 
@@ -44,8 +54,13 @@ trap 'rm -rf "$tmp"' EXIT
 echo "== Pinned: ${pinned} =="
 helm show values "$repo" --version "$pinned" > "$tmp/pinned.yaml"
 
-echo "== Candidate: ${candidate} =="
-helm show values "$repo" --version "$candidate" > "$tmp/candidate.yaml"
+if [[ -f "${candidate}/Chart.yaml" ]]; then
+  echo "== Candidate: local chart at ${candidate} =="
+  helm show values "$candidate" > "$tmp/candidate.yaml"
+else
+  echo "== Candidate: ${candidate} =="
+  helm show values "$repo" --version "$candidate" > "$tmp/candidate.yaml"
+fi
 
 echo "== Diff (pinned -> candidate) =="
 diff -u "$tmp/pinned.yaml" "$tmp/candidate.yaml" || true

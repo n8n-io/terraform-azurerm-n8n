@@ -149,10 +149,11 @@ resource "kubernetes_secret" "n8n_license" {
 }
 
 # Gated to zero when n8n_encryption_key_secret_ref selects a caller-managed
-# Secret instead — the chart's secretRefs.existingSecret names one Secret for
-# all four of these keys, so there is no way to keep this Secret around for
-# N8N_HOST/N8N_PORT/N8N_PROTOCOL while pointing the encryption key at a
-# caller-supplied Secret; the caller's own Secret must carry all four.
+# Secret instead. Chart 2.0's secretRefs.env reads only N8N_ENCRYPTION_KEY
+# (or N8N_ENCRYPTION_KEY_FILE, which this module does not use) from the
+# referenced Secret; N8N_HOST, N8N_PORT and N8N_PROTOCOL are no longer read
+# from it (decision 0012). Public URLs come from editor.url/webhook.url
+# below, and N8N_PORT is chart-set from service.port.
 resource "kubernetes_secret" "n8n_encryption_key" {
   count = local.n8n_encryption_key_uses_secret_ref ? 0 : 1
 
@@ -163,9 +164,6 @@ resource "kubernetes_secret" "n8n_encryption_key" {
 
   data = {
     N8N_ENCRYPTION_KEY = local.n8n_encryption_key
-    N8N_HOST           = var.n8n_domain
-    N8N_PORT           = tostring(local.n8n_service_port)
-    N8N_PROTOCOL       = "http"
   }
 
   depends_on = [kubernetes_namespace.n8n]
@@ -265,9 +263,16 @@ resource "helm_release" "n8n" {
       {
         enabled            = true
         workerReplicaCount = var.n8n_worker_keda_min_replicas
-        workerConcurrency  = var.n8n_worker_concurrency
+        # queueMode.workerConcurrency is deliberately never set. Chart 2.0
+        # fails the render if it is set together with
+        # executions.concurrency.productionLimit (below), and this module
+        # always sets productionLimit from n8n_execution_concurrency_limit,
+        # whose non-disabled default (100) would collide with the flag's
+        # own non-empty former default. n8n takes a worker's concurrency
+        # from N8N_CONCURRENCY_PRODUCTION_LIMIT over the flag anyway, so
+        # n8n_execution_concurrency_limit is the one input governing it now;
+        # n8n_worker_concurrency is a removed tombstone (variables.tf).
       },
-      length(var.n8n_worker_extra_env) > 0 ? { workerExtraEnv = var.n8n_worker_extra_env } : {},
       # One additional worker Deployment and ScaledObject per pool. Omitted
       # entirely on the default path. See worker-pools.tf.
       length(local.n8n_worker_groups) > 0 ? { workerGroups = local.n8n_worker_groups } : {},
@@ -277,19 +282,6 @@ resource "helm_release" "n8n" {
       enabled                                = true
       replicaCount                           = var.n8n_webhook_hpa_min_replicas
       disableProductionWebhooksOnMainProcess = true
-
-      # The chart renders executions.data only on main and worker pods
-      # (re-checked on 1.14.0: tests/scripts/check-n8n-chart.sh's duplicate
-      # detector fails if the chart ever adds them to webhook pods too).
-      # The webhook process also decides retention when a queued run finishes,
-      # so it must receive the same defaults. Keep these role-specific to avoid
-      # duplicating the chart-owned entries on main and worker containers.
-      extraEnv = [
-        { name = "EXECUTIONS_DATA_SAVE_ON_SUCCESS", value = var.n8n_executions_data_save_on_success },
-        { name = "EXECUTIONS_DATA_SAVE_ON_ERROR", value = var.n8n_executions_data_save_on_error },
-        { name = "EXECUTIONS_DATA_SAVE_ON_PROGRESS", value = tostring(var.n8n_executions_data_save_on_progress) },
-        { name = "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS", value = tostring(var.n8n_executions_data_save_manual_executions) },
-      ]
     }
 
     database = {
@@ -402,150 +394,183 @@ resource "helm_release" "n8n" {
       }
     }
 
+    # Public URLs are chart-set from editor.url/webhook.url as of chart 2.0
+    # (decision 0012); the chart's Secret no longer carries N8N_HOST or
+    # N8N_PROTOCOL to build a fallback from, and with no chart-managed
+    # ingress configured here (this module manages its own Ingress outside
+    # the chart) there is no other source for either URL. Editor identity
+    # always stays on n8n_domain; webhook base is independently overridable
+    # (local.n8n_effective_webhook_url, e.g. examples/split-ingress).
+    editor = {
+      url = local.n8n_editor_base_url
+    }
+
+    webhook = {
+      url = local.n8n_effective_webhook_url
+    }
+
     config = {
       timezone = var.n8n_timezone
-      extraEnv = concat(
-        [
-          { name = "N8N_LOG_LEVEL", value = var.n8n_log_level },
-          { name = "N8N_LOG_OUTPUT", value = var.n8n_log_output },
-          { name = "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", value = "true" },
-          { name = "N8N_EDITOR_BASE_URL", value = local.n8n_editor_base_url },
-        ],
-        # N8N_WEBHOOK_URL, plus the legacy WEBHOOK_URL for images older than
-        # n8n 2.30.0 (local.n8n_needs_legacy_webhook_url_env).
-        local.n8n_webhook_url_env,
-        [
-          { name = "N8N_PROXY_HOPS", value = tostring(var.n8n_proxy_hops) },
-          { name = "DB_POSTGRESDB_POOL_SIZE", value = tostring(local.postgres_connection.pool_size) },
-          { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
-          { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = tostring(var.n8n_license_detach_floating_on_shutdown) },
-        ],
-        # PostgreSQL connection/health-check runtime tuning (section 3). Null
-        # inputs contribute no entries and retain n8n's pinned defaults.
-        local.n8n_postgres_runtime_env,
-        # DB_POSTGRESDB_SSL_ENABLED works around a chart bug: the pinned
-        # chart renders database.ssl.enabled into a ConfigMap key named
-        # DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
-        # upstream), so verify-ca/verify-full without a CA connected in
-        # plaintext. Setting the correct name here fixes that regardless of
-        # chart version.
-        local.n8n_postgres_ssl_enabled_env,
+    }
+
+    # Chart 2.0 delivers every non-secret environment variable as flat
+    # per-component maps rendered into ConfigMaps and loaded with envFrom
+    # (decision 0012), replacing the nine `extraEnv` lists chart 1.x used.
+    # `shared` reaches main, worker and webhook-processor pods; `worker` and
+    # `webhookProcessor` layer on top of it for that component alone. A key
+    # the chart itself sets from a value (N8N_PORT from service.port,
+    # N8N_EDITOR_BASE_URL from editor.url, N8N_WEBHOOK_URL from webhook.url,
+    # above) fails the render if it also appears in one of these maps, so
+    # this module never repeats a value it has already expressed through a
+    # dedicated chart key.
+    env = {
+      shared = merge(
+        {
+          N8N_LOG_LEVEL                         = var.n8n_log_level
+          N8N_LOG_OUTPUT                        = var.n8n_log_output
+          N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS = "true"
+        },
+        # N8N_WEBHOOK_URL itself is chart-set from webhook.url above. Only
+        # the deprecated WEBHOOK_URL alias — which the chart does not
+        # render, and which n8n reads only on images older than 2.30.0 —
+        # still needs an explicit entry here.
+        { for e in local.n8n_legacy_webhook_url_env : e.name => e.value },
+        {
+          N8N_PROXY_HOPS                          = tostring(var.n8n_proxy_hops)
+          DB_POSTGRESDB_POOL_SIZE                 = tostring(local.postgres_connection.pool_size)
+          N8N_RUNNERS_TASK_REQUEST_TIMEOUT        = tostring(var.n8n_task_runner_request_timeout)
+          N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN = tostring(var.n8n_license_detach_floating_on_shutdown)
+        },
+        # PostgreSQL connection/health-check runtime tuning (section 3).
+        # Null inputs contribute no entries and retain n8n's pinned
+        # defaults.
+        { for e in local.n8n_postgres_runtime_env : e.name => e.value },
+        # DB_POSTGRESDB_SSL_ENABLED is chart-set from database.ssl.enabled
+        # as of chart 2.0: the n8n-io/n8n-hosting#175 ConfigMap-key bug this
+        # module used to work around (rendering DB_POSTGRESDB_SSL_ENABLED
+        # itself whenever the effective ssl_mode was not "disable") is fixed
+        # upstream, and database.ssl.enabled is already set that way above,
+        # so no entry is needed here.
         # Optional shared V8 heap ceiling (section 6). Null contributes no
-        # entries and leaves n8n/Node's own default and any caller NODE_OPTIONS
-        # in n8n_extra_env in place.
-        local.n8n_node_heap_env,
-        # Storage-mode variables live in config.extraEnv because the chart has no
-        # Azure-native values block. This shared list renders on main, worker,
-        # and webhook containers, which queue mode requires. n8n reads each
-        # object from the backend recorded in its ID; the Azure connection below
-        # stays rendered while azure_blob_retain_read_access is true, so moving
-        # writes to database does not strand existing Azure objects.
-        [
-          { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = var.n8n_binary_data_storage_mode },
-          { name = "N8N_EXECUTION_DATA_STORAGE_MODE", value = var.n8n_execution_data_storage_mode },
-        ],
-        local.n8n_azure_storage_enabled ? concat(
-          [
-            { name = "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME", value = local.azure_blob_connection.container_name },
-          ],
-          local.azure_blob_endpoint_env,
-          local.azure_blob_connection.connection_string != null ? [
-            { name = "N8N_EXTERNAL_STORAGE_AZURE_CONNECTION_STRING", value = local.azure_blob_connection.connection_string },
-            ] : concat(
-            [{ name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME", value = local.azure_blob_connection.account_name }],
-            local.azure_blob_connection.account_key == null ? [] : [
-              { name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_KEY", value = local.azure_blob_connection.account_key },
-            ],
-            local.azure_blob_connection.auth_auto_detect ? [
-              { name = "N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT", value = "true" },
-            ] : [],
+        # entries and leaves n8n/Node's own default and any caller
+        # NODE_OPTIONS in n8n_extra_env in place.
+        { for e in local.n8n_node_heap_env : e.name => e.value },
+        # Storage-mode variables live in env.shared because the chart has
+        # no Azure-native values block. This shared map renders on main,
+        # worker, and webhook containers, which queue mode requires. n8n
+        # reads each object from the backend recorded in its ID; the Azure
+        # connection below stays rendered while
+        # azure_blob_retain_read_access is true, so moving writes to
+        # database does not strand existing Azure objects.
+        {
+          N8N_DEFAULT_BINARY_DATA_MODE    = var.n8n_binary_data_storage_mode
+          N8N_EXECUTION_DATA_STORAGE_MODE = var.n8n_execution_data_storage_mode
+        },
+        local.n8n_azure_storage_enabled ? merge(
+          { N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME = local.azure_blob_connection.container_name },
+          { for e in local.azure_blob_endpoint_env : e.name => e.value },
+          local.azure_blob_connection.connection_string != null ? {
+            N8N_EXTERNAL_STORAGE_AZURE_CONNECTION_STRING = local.azure_blob_connection.connection_string
+            } : merge(
+            { N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME = local.azure_blob_connection.account_name },
+            local.azure_blob_connection.account_key == null ? {} : {
+              N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_KEY = local.azure_blob_connection.account_key
+            },
+            local.azure_blob_connection.auth_auto_detect ? {
+              N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT = "true"
+            } : {},
           ),
-        ) : [],
-        var.n8n_metrics_enabled ? [
-          { name = "N8N_METRICS", value = "true" },
-        ] : [],
-        var.n8n_reinstall_missing_packages ? [
-          { name = "N8N_REINSTALL_MISSING_PACKAGES", value = "true" },
-        ] : [],
-        # OpenTelemetry settings are omitted as one block when disabled. When
-        # enabled, null tuning inputs stay absent so n8n's own defaults apply.
-        # OTLP headers are sensitive Terraform inputs but remain literal pod
-        # environment values and therefore remain present in Terraform state.
-        var.n8n_otel_enabled ? concat(
-          [{ name = "N8N_OTEL_ENABLED", value = "true" }],
-          var.n8n_otel_exporter_otlp_endpoint == null ? [] : [
-            { name = "N8N_OTEL_EXPORTER_OTLP_ENDPOINT", value = var.n8n_otel_exporter_otlp_endpoint },
-          ],
-          var.n8n_otel_exporter_otlp_headers == null ? [] : [
-            { name = "N8N_OTEL_EXPORTER_OTLP_HEADERS", value = var.n8n_otel_exporter_otlp_headers },
-          ],
-          var.n8n_otel_exporter_service_name == null ? [] : [
-            { name = "N8N_OTEL_EXPORTER_SERVICE_NAME", value = var.n8n_otel_exporter_service_name },
-          ],
-          var.n8n_otel_traces_sample_rate == null ? [] : [
-            { name = "N8N_OTEL_TRACES_SAMPLE_RATE", value = tostring(var.n8n_otel_traces_sample_rate) },
-          ],
-          var.n8n_otel_traces_include_node_spans == null ? [] : [
-            { name = "N8N_OTEL_TRACES_INCLUDE_NODE_SPANS", value = tostring(var.n8n_otel_traces_include_node_spans) },
-          ],
-          var.n8n_otel_traces_inject_outbound == null ? [] : [
-            { name = "N8N_OTEL_TRACES_INJECT_OUTBOUND", value = tostring(var.n8n_otel_traces_inject_outbound) },
-          ],
-          var.n8n_otel_traces_production_only == null ? [] : [
-            { name = "N8N_OTEL_TRACES_PRODUCTION_ONLY", value = tostring(var.n8n_otel_traces_production_only) },
-          ],
-        ) : [],
+        ) : {},
+        var.n8n_metrics_enabled ? {
+          N8N_METRICS = "true"
+        } : {},
+        var.n8n_reinstall_missing_packages ? {
+          N8N_REINSTALL_MISSING_PACKAGES = "true"
+        } : {},
+        # OpenTelemetry settings are omitted as one block when disabled.
+        # When enabled, null tuning inputs stay absent so n8n's own
+        # defaults apply. OTLP headers are sensitive Terraform inputs but
+        # remain literal pod environment values and therefore remain
+        # present in Terraform state.
+        var.n8n_otel_enabled ? merge(
+          { N8N_OTEL_ENABLED = "true" },
+          var.n8n_otel_exporter_otlp_endpoint == null ? {} : { N8N_OTEL_EXPORTER_OTLP_ENDPOINT = var.n8n_otel_exporter_otlp_endpoint },
+          var.n8n_otel_exporter_otlp_headers == null ? {} : { N8N_OTEL_EXPORTER_OTLP_HEADERS = var.n8n_otel_exporter_otlp_headers },
+          var.n8n_otel_exporter_service_name == null ? {} : { N8N_OTEL_EXPORTER_SERVICE_NAME = var.n8n_otel_exporter_service_name },
+          var.n8n_otel_traces_sample_rate == null ? {} : { N8N_OTEL_TRACES_SAMPLE_RATE = tostring(var.n8n_otel_traces_sample_rate) },
+          var.n8n_otel_traces_include_node_spans == null ? {} : { N8N_OTEL_TRACES_INCLUDE_NODE_SPANS = tostring(var.n8n_otel_traces_include_node_spans) },
+          var.n8n_otel_traces_inject_outbound == null ? {} : { N8N_OTEL_TRACES_INJECT_OUTBOUND = tostring(var.n8n_otel_traces_inject_outbound) },
+          var.n8n_otel_traces_production_only == null ? {} : { N8N_OTEL_TRACES_PRODUCTION_ONLY = tostring(var.n8n_otel_traces_production_only) },
+        ) : {},
         # Enterprise log streaming uses n8n's environment-managed settings
-        # activation pattern. Typed destination objects are stripped of absent
-        # optional fields and JSON encoded once for every n8n process.
-        var.n8n_log_streaming_managed_by_env ? concat(
-          [{ name = "N8N_LOG_STREAMING_MANAGED_BY_ENV", value = "true" }],
-          length(var.n8n_log_streaming_destinations) == 0 ? [] : [
-            { name = "N8N_LOG_STREAMING_DESTINATIONS", value = jsonencode(local.n8n_log_streaming_destinations) },
-          ],
-        ) : [],
-        var.n8n_community_packages_prevent_loading ? [
-          { name = "N8N_COMMUNITY_PACKAGES_PREVENT_LOADING", value = "true" },
-        ] : [],
-        var.n8n_community_packages_registry == null ? [] : [
-          { name = "N8N_COMMUNITY_PACKAGES_REGISTRY", value = var.n8n_community_packages_registry },
-        ],
-        var.n8n_custom_extensions_path == null ? [] : [
-          { name = "N8N_CUSTOM_EXTENSIONS", value = var.n8n_custom_extensions_path },
-        ],
-        !var.n8n_templates_enabled ? [
-          { name = "N8N_TEMPLATES_ENABLED", value = "false" },
-        ] : [],
-        !var.n8n_personalization_enabled ? [
-          { name = "N8N_PERSONALIZATION_ENABLED", value = "false" },
-        ] : [],
+        # activation pattern. Typed destination objects are stripped of
+        # absent optional fields and JSON encoded once for every n8n
+        # process.
+        var.n8n_log_streaming_managed_by_env ? merge(
+          { N8N_LOG_STREAMING_MANAGED_BY_ENV = "true" },
+          length(var.n8n_log_streaming_destinations) == 0 ? {} : {
+            N8N_LOG_STREAMING_DESTINATIONS = jsonencode(local.n8n_log_streaming_destinations)
+          },
+        ) : {},
+        var.n8n_community_packages_prevent_loading ? {
+          N8N_COMMUNITY_PACKAGES_PREVENT_LOADING = "true"
+        } : {},
+        var.n8n_community_packages_registry == null ? {} : {
+          N8N_COMMUNITY_PACKAGES_REGISTRY = var.n8n_community_packages_registry
+        },
+        var.n8n_custom_extensions_path == null ? {} : {
+          N8N_CUSTOM_EXTENSIONS = var.n8n_custom_extensions_path
+        },
+        !var.n8n_templates_enabled ? {
+          N8N_TEMPLATES_ENABLED = "false"
+        } : {},
+        !var.n8n_personalization_enabled ? {
+          N8N_PERSONALIZATION_ENABLED = "false"
+        } : {},
         # File-based credential overwrites from a caller-managed Secret. The
-        # matching volume and read-only mount are assembled in locals.tf and
-        # rendered onto all three n8n pod types below. This is n8n's generic
-        # "<VAR>_FILE" convention (readEnv in @n8n/config), not a dedicated
-        # setting, and readEnv prefers CREDENTIALS_OVERWRITE_DATA over the
-        # _FILE variant wherever it appears in the env list, so Kubernetes'
-        # last-wins ordering is not the whole story here. The input validation
-        # rejects both names in n8n_extra_env while this entry is active for
-        # exactly that reason.
-        local.n8n_credentials_overwrite_env,
-        # Worker pools (n8n alpha). The feature is inert unless this is set on
-        # the mains, which resolve a project's pool and enqueue to it, as well
-        # as the workers, which read N8N_WORKER_POOL_NAME. Webhook pods ignore
-        # it but are harmless to set, and config.extraEnv reaches all three.
-        # Emitted only when pools are declared, so an untouched deployment sees
-        # no diff. The name is reserved in n8n_managed_env_names, so declaring a
-        # pool is the only way to switch the feature on. See worker-pools.tf.
-        length(var.n8n_worker_pools) > 0 ? [
-          { name = "N8N_WORKER_POOLS_ENABLED", value = "true" },
-        ] : [],
-        # Caller-supplied escape hatch, appended last. Kubernetes resolves
-        # duplicate env names last-wins, so this would override anything above
-        # it; var.n8n_extra_env is validated against local.n8n_managed_env_names
-        # and local.n8n_managed_env_prefixes (variables.tf) so it cannot shadow
-        # a module- or chart-managed connection/identity/storage/license var.
-        var.n8n_extra_env,
+        # matching volume and read-only mount are assembled in locals.tf
+        # and rendered onto all three n8n pod types below. This is n8n's
+        # generic "<VAR>_FILE" convention (readEnv in @n8n/config), not a
+        # dedicated setting, and readEnv prefers CREDENTIALS_OVERWRITE_DATA
+        # over the _FILE variant wherever it appears, which is why
+        # n8n_extra_env rejects both names while this entry is active.
+        { for e in local.n8n_credentials_overwrite_env : e.name => e.value },
+        # Worker pools (n8n alpha). The feature is inert unless this is set
+        # on the mains, which resolve a project's pool and enqueue to it,
+        # as well as the workers, which read N8N_WORKER_POOL_NAME. Webhook
+        # pods ignore it but are harmless to set, and env.shared reaches
+        # all three. Emitted only when pools are declared, so an untouched
+        # deployment sees no diff. The name is reserved in
+        # n8n_managed_env_names, so declaring a pool is the only way to
+        # switch the feature on. See worker-pools.tf.
+        length(var.n8n_worker_pools) > 0 ? {
+          N8N_WORKER_POOLS_ENABLED = "true"
+        } : {},
+        # Caller-supplied escape hatch, merged last so it can shadow
+        # anything above it; var.n8n_extra_env is validated against
+        # local.n8n_managed_env_names and local.n8n_managed_env_prefixes
+        # (variables.tf) so it cannot shadow a module- or chart-managed
+        # connection/identity/storage/license var, and chart 2.0 itself
+        # also fails the render if a key here is one the chart already
+        # sets from a value (decision 0012).
+        { for e in var.n8n_extra_env : e.name => e.value },
       )
+
+      worker = { for e in var.n8n_worker_extra_env : e.name => e.value }
+
+      # The chart renders executions.data only on main and worker pods
+      # (re-checked against the pinned chart:
+      # tests/scripts/check-n8n-chart.sh's duplicate detector fails if the
+      # chart ever adds them to webhook pods too). The webhook process
+      # also decides retention when a queued run finishes, so it must
+      # receive the same defaults. Keep these role-specific to avoid
+      # duplicating the chart-owned entries on main and worker containers.
+      webhookProcessor = {
+        EXECUTIONS_DATA_SAVE_ON_SUCCESS        = var.n8n_executions_data_save_on_success
+        EXECUTIONS_DATA_SAVE_ON_ERROR          = var.n8n_executions_data_save_on_error
+        EXECUTIONS_DATA_SAVE_ON_PROGRESS       = tostring(var.n8n_executions_data_save_on_progress)
+        EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS = tostring(var.n8n_executions_data_save_manual_executions)
+      }
     }
 
     lifecycle = {

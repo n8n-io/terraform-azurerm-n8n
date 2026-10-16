@@ -169,10 +169,14 @@ locals {
       tonumber(local.n8n_image_version_parts[1]) < 30
     )
   )
-  n8n_webhook_url_env = concat(
-    [{ name = "N8N_WEBHOOK_URL", value = local.n8n_effective_webhook_url }],
-    local.n8n_needs_legacy_webhook_url_env ? [{ name = "WEBHOOK_URL", value = local.n8n_effective_webhook_url }] : [],
-  )
+  # N8N_WEBHOOK_URL itself is chart-set from webhook.url (n8n.tf, decision
+  # 0012) and is never rendered as a user env map entry. Only the
+  # deprecated WEBHOOK_URL alias, which the chart does not render, still
+  # needs an explicit env.shared entry, and only for images old enough to
+  # read nothing else.
+  n8n_legacy_webhook_url_env = local.n8n_needs_legacy_webhook_url_env ? [
+    { name = "WEBHOOK_URL", value = local.n8n_effective_webhook_url },
+  ] : []
 
   appgw_frontend_ip_configuration_name = "appgw-frontend-ip"
   appgw_ingress_default_annotations = merge(
@@ -289,21 +293,12 @@ locals {
     },
   ]
 
-  # n8n reads DB_POSTGRESDB_SSL_ENABLED, not the chart-rendered
-  # DB_POSTGRESDB_SSL ConfigMap key (n8n-io/n8n-hosting#175 upstream). n8n
-  # still built a TLS options object for require/allow/prefer, because the
-  # chart renders DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false for them, but
-  # verify-ca/verify-full without a CA connected in plaintext. Setting this
-  # directly whenever the effective ssl_mode is not "disable" fixes that
-  # regardless of chart version. DB_POSTGRESDB_SSL_ENABLED is
-  # deliberately absent from local.n8n_managed_env_names below: the "DB_"
-  # prefix already reserves it in n8n_extra_env.
-  n8n_postgres_ssl_enabled_env = local.postgres_connection.ssl_mode == "disable" ? [] : [
-    {
-      name  = "DB_POSTGRESDB_SSL_ENABLED"
-      value = "true"
-    },
-  ]
+  # DB_POSTGRESDB_SSL_ENABLED is chart-set from database.ssl.enabled as of
+  # chart 2.0 (n8n.tf sets that value to true whenever the effective
+  # ssl_mode is not "disable"). The n8n-io/n8n-hosting#175 bug this module
+  # used to work around with its own env entry — the chart rendering the
+  # wrong ConfigMap key, DB_POSTGRESDB_SSL, which n8n never read — is fixed
+  # upstream, so no workaround entry is needed here any more.
 
   # The CA bundle reaches n8n through the chart's own database.ssl.ca value
   # (n8n.tf), which the chart renders into its ConfigMap as
@@ -455,10 +450,18 @@ locals {
   # local of the same name.
   image_repository_regex = "^(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:]+\\])(?::[0-9]+)?/)?[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:__|[._]|-+)[a-z0-9]+)*)*$"
 
-  # The chart appends config.extraEnv after its own environment variables, and
-  # Kubernetes resolves duplicates last-wins. Reserve every current module and
-  # chart-owned connection, identity, storage, license, runner, and topology
-  # name so the arbitrary environment escape hatch cannot replace them.
+  # Chart 2.0 renders the escape-hatch inputs below into env.shared/env.worker
+  # maps (n8n.tf, decision 0012) and fails the render itself if a key there
+  # collides with one the chart, or this module through a dedicated values
+  # key, already sets. This plan-time guard catches the same collisions
+  # earlier, with a clearer Terraform-native error before any Helm template
+  # render. Reserve every current module- and chart-owned connection,
+  # identity, storage, license, runner, and topology name so the arbitrary
+  # environment escape hatch cannot replace them. N8N_HOST and N8N_PROTOCOL
+  # are deliberately absent: chart 2.0 never sets either (editor.url and
+  # webhook.url cover URL building, and N8N_PORT covers the port), so a
+  # caller may set them in n8n_extra_env if some other integration still
+  # needs them (see UPGRADING.md's guidance on the chart's own repository).
   n8n_managed_env_names = [
     "EXECUTIONS_MODE",
     "N8N_COMMUNITY_PACKAGES_PREVENT_LOADING",
@@ -472,7 +475,6 @@ locals {
     "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS",
     "N8N_EXECUTION_DATA_STORAGE_MODE",
     "N8N_GRACEFUL_SHUTDOWN_TIMEOUT",
-    "N8N_HOST",
     "N8N_LICENSE_ACTIVATION_KEY",
     "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN",
     "N8N_LOG_LEVEL",
@@ -481,7 +483,6 @@ locals {
     "N8N_NATIVE_PYTHON_RUNNER",
     "N8N_PERSONALIZATION_ENABLED",
     "N8N_PORT",
-    "N8N_PROTOCOL",
     "N8N_PROXY_HOPS",
     "N8N_REINSTALL_MISSING_PACKAGES",
     "N8N_TEMPLATES_ENABLED",
@@ -491,7 +492,7 @@ locals {
     "TZ",
     # Owned by var.n8n_worker_pools. N8N_WORKER_POOLS_ENABLED is emitted only
     # when pools are declared, and N8N_WORKER_POOL_NAME is set per worker group
-    # by the chart. Reached through config.extraEnv (all pods), an override here
+    # by the chart. Reached through env.shared (all pods), an override here
     # would either turn the feature on with no pool to route to, or put every
     # worker, main and webhook pod into one pool at once, which is not a
     # topology the feature has.

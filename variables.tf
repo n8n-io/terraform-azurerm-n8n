@@ -1113,7 +1113,7 @@ variable "ingress_annotations" {
 }
 
 variable "n8n_proxy_hops" {
-  description = "Number of trusted reverse-proxy hops in front of n8n, rendered as N8N_PROXY_HOPS on every n8n pod (main, worker, webhook processor) via config.extraEnv. n8n passes it to Express's trust proxy setting, which uses it to pick the client IP out of X-Forwarded-For; any value of 1 or more also makes n8n honor X-Forwarded-Proto. Count every proxy on the client's path that adds an X-Forwarded-For entry (HTTP proxies such as Application Gateway, Application Gateway for Containers, Azure Front Door, or an in-cluster ingress controller do; a layer 4 Azure Load Balancer does not), whatever create_ingress is set to: an Application Gateway alone (the module's own, or a caller-owned one) is 1, so the default fits it; Azure Front Door in front of the Application Gateway is 2. Too low a value attributes every request to the nearest extra proxy's IP. A value above 1 is only safe when the inner proxy accepts traffic from the outer one alone (e.g. an Application Gateway restricted to Front Door): otherwise a client that reaches the inner proxy directly can forge its IP through X-Forwarded-For. At any value of 1 or more, the same holds for anything that bypasses the declared proxy chain, such as an in-cluster caller reaching the n8n Services directly. Set 0 only when nothing proxies HTTP traffic to n8n. Reserved in n8n_managed_env_names, so n8n_extra_env, n8n_worker_extra_env and n8n_worker_pools[*].extra_env cannot set it. See docs/ingress-options.md."
+  description = "Number of trusted reverse-proxy hops in front of n8n, rendered as N8N_PROXY_HOPS on every n8n pod (main, worker, webhook processor) via env.shared. n8n passes it to Express's trust proxy setting, which uses it to pick the client IP out of X-Forwarded-For; any value of 1 or more also makes n8n honor X-Forwarded-Proto. Count every proxy on the client's path that adds an X-Forwarded-For entry (HTTP proxies such as Application Gateway, Application Gateway for Containers, Azure Front Door, or an in-cluster ingress controller do; a layer 4 Azure Load Balancer does not), whatever create_ingress is set to: an Application Gateway alone (the module's own, or a caller-owned one) is 1, so the default fits it; Azure Front Door in front of the Application Gateway is 2. Too low a value attributes every request to the nearest extra proxy's IP. A value above 1 is only safe when the inner proxy accepts traffic from the outer one alone (e.g. an Application Gateway restricted to Front Door): otherwise a client that reaches the inner proxy directly can forge its IP through X-Forwarded-For. At any value of 1 or more, the same holds for anything that bypasses the declared proxy chain, such as an in-cluster caller reaching the n8n Services directly. Set 0 only when nothing proxies HTTP traffic to n8n. Reserved in n8n_managed_env_names, so n8n_extra_env, n8n_worker_extra_env and n8n_worker_pools[*].extra_env cannot set it. See docs/ingress-options.md."
   type        = number
   default     = 1
   nullable    = false
@@ -1527,7 +1527,7 @@ variable "n8n_otel_exporter_otlp_endpoint" {
 }
 
 variable "n8n_otel_exporter_otlp_headers" {
-  description = "Optional comma-separated key=value headers sent to the OTLP collector. Marked sensitive, but the literal remains in Terraform state and the pod environment because the chart's shared config.extraEnv contract does not support secretKeyRef. Ignored when n8n_otel_enabled is false."
+  description = "Optional comma-separated key=value headers sent to the OTLP collector. Marked sensitive, but the literal remains in Terraform state and the pod environment: env map values now support a secretKeyRef reference (chart decision 0012), but this input packs multiple headers into one comma-separated string and the module does not expose a secretKeyRef variant for it. Ignored when n8n_otel_enabled is false."
   type        = string
   default     = null
   sensitive   = true
@@ -2024,14 +2024,17 @@ variable "n8n_worker_keda_jobs_per_replica" {
   }
 }
 
+# Tombstone: read only by its own validation, which is the point. Delete this
+# variable, the ignore, and its test in the release after next.
+# tflint-ignore: terraform_unused_declarations
 variable "n8n_worker_concurrency" {
-  description = "Number of jobs each worker pod can process simultaneously."
+  description = "Removed after 0.1.0. Must stay null; kept for one release only so a configuration that still sets it fails with migration guidance instead of a bare \"Unsupported argument\" error. Chart 2.0 no longer renders queueMode.workerConcurrency; n8n takes each worker's concurrency from N8N_CONCURRENCY_PRODUCTION_LIMIT when it is set and ignores the --concurrency flag, and the chart's own render now fails if both are set. This module always renders executions.concurrency.productionLimit from n8n_execution_concurrency_limit, so delete n8n_worker_concurrency. If it held a value you need workers to keep running at, set n8n_execution_concurrency_limit to that value instead (its default is 100, not -1/disabled, so every worker already receives a production limit unless you changed it)."
   type        = number
-  default     = 10
+  default     = null
 
   validation {
-    condition     = var.n8n_worker_concurrency >= 1 && var.n8n_worker_concurrency == floor(var.n8n_worker_concurrency)
-    error_message = "n8n_worker_concurrency must be a whole number of at least 1."
+    condition     = var.n8n_worker_concurrency == null
+    error_message = "n8n_worker_concurrency was removed after 0.1.0: chart 2.0 no longer renders queueMode.workerConcurrency. Delete the argument. n8n takes each worker's concurrency from N8N_CONCURRENCY_PRODUCTION_LIMIT (n8n_execution_concurrency_limit) instead; set that input to the value you need if it differs from its current default (100)."
   }
 }
 
@@ -2129,7 +2132,7 @@ variable "n8n_execution_timeout_max" {
 }
 
 variable "n8n_execution_concurrency_limit" {
-  description = "Maximum concurrent production executions. Set to -1 to disable the limit."
+  description = "Maximum concurrent production executions, applied process-wide and, in queue mode, to each worker: n8n takes a worker's concurrency from N8N_CONCURRENCY_PRODUCTION_LIMIT when this is set, rather than a per-worker --concurrency flag (chart decision 0012; n8n_worker_concurrency, the former way to set that flag, is a removed tombstone because chart 2.0 fails the render when both are set). Set to -1 to disable the limit."
   type        = number
   default     = 100
 
@@ -2735,7 +2738,7 @@ variable "n8n_extra_env" {
 }
 
 variable "n8n_worker_extra_env" {
-  description = "Additional non-secret environment variables applied only to worker containers (chart queueMode.workerExtraEnv). Use for worker-specific tuning that must not affect main or webhook-processor pods; use n8n_extra_env for values that should apply everywhere. This reaches every worker, the chart's own unlabelled deployment and each n8n_worker_pools pool alike, because they render from one shared pod template; a pool's own extra_env is applied after this and wins on a repeated name. Set it here for tuning that should apply pool-wide, and on the pool for tuning that should not. Entries render in Helm values and Terraform state. Duplicate names and module or chart-reserved connection, identity, storage, license, runner, and topology names are rejected, including N8N_WORKER_POOL_NAME: pool membership is owned by n8n_worker_pools, which also builds the queue and the KEDA scaler that go with it. The deprecated names n8n_extra_env rejects (N8N_AVAILABLE_BINARY_DATA_MODES) are rejected here too."
+  description = "Additional non-secret environment variables applied only to worker containers (chart env.worker). Use for worker-specific tuning that must not affect main or webhook-processor pods; use n8n_extra_env for values that should apply everywhere. This reaches every worker, the chart's own unlabelled deployment and each n8n_worker_pools pool alike, because they render from one shared pod template; a pool's own extra_env is applied after this and wins on a repeated name. Set it here for tuning that should apply pool-wide, and on the pool for tuning that should not. Entries render in Helm values and Terraform state. Duplicate names and module or chart-reserved connection, identity, storage, license, runner, and topology names are rejected, including N8N_WORKER_POOL_NAME: pool membership is owned by n8n_worker_pools, which also builds the queue and the KEDA scaler that go with it. The deprecated names n8n_extra_env rejects (N8N_AVAILABLE_BINARY_DATA_MODES) are rejected here too."
   type = list(object({
     name  = string
     value = string
@@ -2770,8 +2773,8 @@ variable "n8n_worker_extra_env" {
 }
 
 # The upstream Helm chart renders exactly one worker Deployment and exposes
-# worker-only env solely through queueMode.workerExtraEnv, so it can express at
-# most a single pool. Anything beyond that has to be built outside the chart,
+# worker-only env solely through env.worker, so it can express at most a
+# single pool. Anything beyond that has to be built outside the chart,
 # which is what n8n_worker_pools does: one Deployment and one KEDA ScaledObject
 # per entry, alongside the chart's own unlabelled worker deployment.
 
@@ -2782,8 +2785,20 @@ variable "n8n_worker_pools" {
     min_replicas = optional(number, 1)
     max_replicas = optional(number, 5)
 
+    # Per-pool override of the worker's --concurrency flag. Chart 2.0 removed
+    # queueMode.workerConcurrency, so n8n_worker_concurrency (the module-wide
+    # fallback this used to inherit) is a removed tombstone; null now renders
+    # no --concurrency flag for this pool's workers, and n8n takes their
+    # concurrency from N8N_CONCURRENCY_PRODUCTION_LIMIT
+    # (n8n_execution_concurrency_limit) instead, same as the default worker.
+    # Kept as its own field rather than removed outright because
+    # queueMode.workerGroups does not exist in any released chart yet (see
+    # worker-pools.tf), so this module cannot verify whether that preview
+    # feature's own concurrency key carries the same
+    # conflicts-with-productionLimit rule the default worker's flag does.
+    concurrency = optional(number, null)
+
     # Null inherits the module-wide worker setting of the same name.
-    concurrency    = optional(number, null)
     cpu_request    = optional(string, null)
     cpu_limit      = optional(string, null)
     memory_request = optional(string, null)
@@ -2834,7 +2849,7 @@ variable "n8n_worker_pools" {
 
   validation {
     condition     = alltrue([for p in var.n8n_worker_pools : p.concurrency == null ? true : (p.concurrency == floor(p.concurrency) && p.concurrency >= 1)])
-    error_message = "n8n_worker_pools concurrency must be a whole number of concurrent jobs, 1 or greater, or null to inherit n8n_worker_concurrency."
+    error_message = "n8n_worker_pools concurrency must be a whole number of concurrent jobs, 1 or greater, or null to render no --concurrency flag for this pool's workers (n8n then takes concurrency from N8N_CONCURRENCY_PRODUCTION_LIMIT, same as the default worker)."
   }
 
   validation {
@@ -3031,7 +3046,7 @@ variable "n8n_credentials_overwrite_secret_ref" {
 # added in section 12; n8n runtime controls are added in section 7 onward.
 
 variable "n8n_domain" {
-  description = "Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The chart's Ingress object writes the matching `host:` rule and n8n's `N8N_HOST` from this value. n8n_domain is also always the canonical editor identity: it renders as `N8N_EDITOR_BASE_URL` and, unless n8n_webhook_url overrides it, as `N8N_WEBHOOK_URL` too."
+  description = "Fully-qualified domain name n8n is served on (e.g. n8n.example.com). Must match the CN/SAN on the TLS certificate the App Gateway terminates with. The module's own Ingress (ingress.tf) writes the matching `host:` rule. n8n_domain is also always the canonical editor identity: it renders as `N8N_EDITOR_BASE_URL` (chart-set from `editor.url`) and, unless n8n_webhook_url overrides it, as `N8N_WEBHOOK_URL` (chart-set from `webhook.url`) too."
   type        = string
 
   validation {
@@ -3041,7 +3056,7 @@ variable "n8n_domain" {
 }
 
 variable "n8n_webhook_url" {
-  description = "Optional override for the base URL n8n advertises as N8N_WEBHOOK_URL (port-aws-040-enhancements section 11 / design.md decision 8). Null retains https://<n8n_domain>, the same value used for N8N_EDITOR_BASE_URL. Set this only when webhook traffic is advertised on a different host, port, or base path than the editor UI — for example examples/split-ingress, where a public gateway terminates webhook traffic on a separate hostname from the private admin gateway. Must be an absolute HTTPS base URL with a host, no embedded credentials, whitespace, query string, or fragment, and a valid optional port (1-65535); a supplied path or trailing slash is preserved as-is. For an n8n_image_tag older than 2.30.0, which does not read N8N_WEBHOOK_URL, the module also renders the same value as the legacy WEBHOOK_URL. Editor identity (N8N_EDITOR_BASE_URL), N8N_HOST, and the internal service protocol/port are independent of this value. This input only changes what n8n advertises: it does not create a DNS record, certificate, listener, or additional route by itself — the caller remains responsible for routing the advertised host."
+  description = "Optional override for the base URL n8n advertises as N8N_WEBHOOK_URL (port-aws-040-enhancements section 11 / design.md decision 8). Null retains https://<n8n_domain>, the same value used for N8N_EDITOR_BASE_URL. Set this only when webhook traffic is advertised on a different host, port, or base path than the editor UI — for example examples/split-ingress, where a public gateway terminates webhook traffic on a separate hostname from the private admin gateway. Must be an absolute HTTPS base URL with a host, no embedded credentials, whitespace, query string, or fragment, and a valid optional port (1-65535); a supplied path or trailing slash is preserved as-is. For an n8n_image_tag older than 2.30.0, which does not read N8N_WEBHOOK_URL, the module also renders the same value as the legacy WEBHOOK_URL. Editor identity (N8N_EDITOR_BASE_URL) and the internal service port are independent of this value. This input only changes what n8n advertises: it does not create a DNS record, certificate, listener, or additional route by itself — the caller remains responsible for routing the advertised host."
   type        = string
   default     = null
 
@@ -3055,7 +3070,7 @@ variable "n8n_webhook_url" {
 }
 
 variable "n8n_additional_domains" {
-  description = "Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n_domain. n8n_domain remains canonical for N8N_HOST and the editor URL, and supplies the default N8N_WEBHOOK_URL unless n8n_webhook_url overrides it. The supplied Key Vault certificate must cover every name."
+  description = "Additional fully-qualified hostnames routed by the module-managed Ingress. Names are normalized to lowercase and receive the same five webhook routes plus the main catch-all as n8n_domain. n8n_domain remains canonical for the editor URL, and supplies the default N8N_WEBHOOK_URL unless n8n_webhook_url overrides it. The supplied Key Vault certificate must cover every name."
   type        = list(string)
   default     = []
   nullable    = false
@@ -3560,7 +3575,7 @@ variable "n8n_license_key_secret_ref" {
 }
 
 variable "n8n_encryption_key_secret_ref" {
-  description = "Existing Kubernetes Secret carrying the n8n encryption key, for callers who manage this credential outside Terraform — for example a key backed up from another n8n installation. Mutually exclusive with n8n_encryption_key. Different in shape from n8n_license_key_secret_ref: the chart's secretRefs.existingSecret (n8n.tf) names one Secret that n8n reads FOUR keys from — N8N_ENCRYPTION_KEY, N8N_HOST, N8N_PORT, and N8N_PROTOCOL — so this replaces kubernetes_secret.n8n_encryption_key entirely, and your Secret must carry every one of them: N8N_HOST is var.n8n_domain, N8N_PORT is \"5678\", N8N_PROTOCOL is \"http\". key must be exactly \"N8N_ENCRYPTION_KEY\" — the chart hardcodes this key name and honors no override, unlike n8n_license_key_secret_ref's key. When set, the n8n_encryption_key output is null because Terraform does not know the value. The module does not read the Secret's value."
+  description = "Existing Kubernetes Secret carrying the n8n encryption key, for callers who manage this credential outside Terraform — for example a key backed up from another n8n installation. Mutually exclusive with n8n_encryption_key. The chart's secretRefs.existingSecret (n8n.tf) reads only N8N_ENCRYPTION_KEY from the named Secret (or N8N_ENCRYPTION_KEY_FILE, which this module does not use); N8N_HOST, N8N_PORT and N8N_PROTOCOL are no longer read from it as of chart 2.0, so this replaces kubernetes_secret.n8n_encryption_key with a Secret that needs only the one key — any other keys in it are ignored. key must be exactly \"N8N_ENCRYPTION_KEY\" — the chart hardcodes this key name and honors no override, unlike n8n_license_key_secret_ref's key. When set, the n8n_encryption_key output is null because Terraform does not know the value. The module does not read the Secret's value."
   type = object({
     name = string
     key  = string

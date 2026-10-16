@@ -21,6 +21,57 @@ chart's templates or value schema. Bumping the chart version can also change
 what values the chart accepts and what the chart renders, so treat it as the
 larger-blast-radius change of the two.
 
+## Moving to chart 2.0
+
+This module targets n8n Helm chart `2.0` ([n8n-hosting#250](https://github.com/n8n-io/n8n-hosting/pull/250),
+still unreleased). `n8n_chart_version`'s default stays `1.14.0` on this
+branch; the default moves to `2.0.0` only once that release exists, in
+lockstep with this change, so read this section as the shipped behavior of
+`feat/chart-2.0`, not a plan for the future.
+
+- **`config.extraEnv` becomes per-component maps** (chart decision 0012).
+  The chart's single shared list, plus `queueMode.workerExtraEnv`, are
+  replaced by `env.shared`, `env.worker`, and `env.webhookProcessor` flat
+  `NAME: value` maps. `n8n.tf` builds these from the module's existing
+  inputs; nothing user-facing changes except one pod roll, because every
+  n8n pod's environment moves from `valueFrom` list entries into ConfigMaps
+  the chart loads with `envFrom`.
+- **`n8n_worker_concurrency` is a tombstone.** The chart no longer renders
+  `queueMode.workerConcurrency`, and its render fails if that value is set
+  together with `executions.concurrency.productionLimit`. This module
+  always sets `productionLimit` from `n8n_execution_concurrency_limit`,
+  which n8n now uses as each worker's concurrency, so
+  `n8n_worker_concurrency` is validated null-only (like
+  `n8n_available_binary_data_modes` before it) and has no effect anymore.
+  Remove it from your configuration; `n8n_execution_concurrency_limit` is
+  the one input that governs worker concurrency.
+- **The caller-managed encryption Secret needs only one key.** The chart's
+  `secretRefs.existingSecret` (`n8n_encryption_key_secret_ref`) used to
+  require `N8N_ENCRYPTION_KEY`, `N8N_HOST`, `N8N_PORT`, and `N8N_PROTOCOL`
+  in one Secret. Chart 2.0 reads only `N8N_ENCRYPTION_KEY` from it; the
+  chart sets `N8N_PORT` from `service.port` itself and never sets
+  `N8N_HOST` or `N8N_PROTOCOL`. A Secret that still carries the other three
+  keeps working — the chart ignores the extra keys — so there is nothing
+  to migrate on an existing Secret.
+- **Public URLs come from `editor.url` / `webhook.url`, not `N8N_HOST` /
+  `N8N_PROTOCOL`.** `n8n.tf` sets both values explicitly from `n8n_domain`
+  and `n8n_webhook_url`, so n8n's public editor and webhook URLs no longer
+  depend on the removed Secret keys. `N8N_HOST` and `N8N_PROTOCOL` are
+  dropped from `local.n8n_managed_env_names`: the chart never sets either,
+  so a caller may still render them through `n8n_extra_env` if some other
+  integration needs them.
+- **`n8n_postgres_ssl_enabled_env` is removed.** It worked around
+  n8n-hosting#175 by setting `DB_POSTGRESDB_SSL_ENABLED=true` through
+  `config.extraEnv` whenever the effective `ssl_mode` was not `disable`.
+  Chart 2.0 includes the upstream fix and sets the variable itself from
+  `database.ssl.enabled`; see [`docs/postgresql-tls.md`](./postgresql-tls.md).
+- **`WEBHOOK_URL` legacy-image fallback renamed `n8n_legacy_webhook_url_env`.**
+  A `locals.tf` rename only, matching the chart's current naming; no
+  behavior change.
+
+Every pod restarts once on this upgrade, because its environment moves into
+the new per-component ConfigMaps.
+
 ## Moving from chart 1.13.0 to 1.14.0
 
 `helm_release.n8n` plans the `version` change plus the removal of the
