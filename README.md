@@ -246,6 +246,9 @@ stays `true` on this path, because the chart separately gates
 `N8N_MULTI_MAIN_SETUP_ENABLED` on `license.enabled`, not on which credential
 backs it — multi-main leader election still requires `feat:multipleMainInstances`
 on the certificate itself. The module never reads the Secret's value.
+`N8N_LICENSE_CERT` falls under the module's reserved `N8N_LICENSE_` prefix, so
+it is always rejected at plan time in `n8n_extra_env`; supply the certificate
+through `n8n_license_cert_secret_ref` instead.
 
 ## Credential overwrites
 
