@@ -412,7 +412,7 @@ See [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastr
 
 Microsoft associates Azure usage with a partner through [Customer Usage Attribution](https://learn.microsoft.com/en-us/partner-center/marketplace-offers/azure-partner-customer-usage-attribution) (CUA), a tracking ID registered in Partner Center. It is not tag-based. For Terraform, Microsoft documents setting the azurerm provider's `partner_id` argument (a GUID, `pid-<guid>`, or `pid-<guid>-partnercenter`), or the `ARM_PARTNER_ID` environment variable, in the caller's own provider configuration.
 
-This module configures no providers, so it has no attribution input. Every example's `provider "azurerm"` block sets `partner_id = var.partner_id` (default `null`, which falls back to `ARM_PARTNER_ID`), and callers of the root module set it in their own provider block the same way. It reports usage attribution only and is separate from n8n licensing and telemetry. n8n's own tracking ID has not been issued yet, so no value is shipped by default.
+This module configures no providers, so it has no attribution input. Every example's `provider "azurerm"` block sets `partner_id = var.partner_id`, which defaults to n8n's Microsoft-issued tracking GUID so usage is attributed to n8n. Set `partner_id = null` to opt out; the provider then falls back to `ARM_PARTNER_ID`. Because provider configuration wins over the environment, a non-null default overrides `ARM_PARTNER_ID`. Callers of the root module set `partner_id` in their own provider block the same way. It reports usage attribution only and is separate from n8n licensing and telemetry.
 
 ## Ingress, DNS, and TLS
 

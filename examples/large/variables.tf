@@ -81,9 +81,9 @@ variable "n8n_main_hpa_min_replicas" {
 }
 
 variable "partner_id" {
-  description = "Azure Customer Usage Attribution (CUA) tracking ID for the azurerm provider's partner_id, which Microsoft documents as the Terraform route. Null (the default) sends no partner_id and falls back to the ARM_PARTNER_ID environment variable. Accepts `<guid>`, `pid-<guid>`, or `pid-<guid>-partnercenter`."
+  description = "Azure Customer Usage Attribution (CUA) tracking ID for the azurerm provider's partner_id, which Microsoft documents as the Terraform route. Defaults to n8n's Microsoft-issued tracking GUID; set to null to opt out, which sends no partner_id and falls back to the ARM_PARTNER_ID environment variable. Accepts `<guid>`, `pid-<guid>`, or `pid-<guid>-partnercenter`."
   type        = string
-  default     = null
+  default     = "f1198e81-0323-4ce9-9753-ed1a8c596b19"
 
   validation {
     condition     = var.partner_id == null ? true : can(regex("(?i)^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|pid-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-partnercenter)?)$", var.partner_id))

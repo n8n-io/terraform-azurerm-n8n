@@ -9,11 +9,11 @@ a tracking GUID registered in Partner Center. It is not tag-based.
 Microsoft documents the Terraform route as the `azurerm` provider's
 `partner_id` argument (or `ARM_PARTNER_ID`), which adds `pid-<guid>` to the
 provider's user agent. The module configures no providers, so only the
-caller's provider block can set it. n8n's tracking GUID has not been issued.
+caller's provider block can set it. n8n's tracking GUID is issued by Microsoft.
 
 ## What Changes
 
-- Every example declares `partner_id` (default `null`) and passes it to its
+- Every example declares `partner_id` (default n8n's GUID; `null` opts out) and passes it to its
   `provider "azurerm"` block, so an operator sets one variable (or
   `ARM_PARTNER_ID`) and the example's resources, including the module's, are
   attributed.

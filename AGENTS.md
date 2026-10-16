@@ -685,7 +685,7 @@ provider configuration can set, so the module has no attribution input. An
 earlier draft created an empty `pid-<guid>` ARM deployment; it was dropped
 because attribution follows the deployment that creates the resources, so a
 standalone empty deployment would not attribute AKS, PostgreSQL or Redis.
-Every example declares `partner_id` (default `null`) and passes it to its
+Every example declares `partner_id` (default n8n's Microsoft-issued GUID, `null` opts out) and passes it to its
 `provider "azurerm"` block; the example variable-parity check requires all
 nine to match. Do not port AWS #200's node launch-template tagging: AKS
 applies cluster `tags` to the node resource group's resources and node-pool
