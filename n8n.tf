@@ -896,3 +896,53 @@ resource "time_sleep" "n8n_helm_settle" {
 
   depends_on = [helm_release.n8n]
 }
+
+# ── Pod disruption budgets ────────────────────────────────────────────────────
+# The chart (checked on 1.16.0) renders a budget for the main pods only, so the
+# webhook processors and the default worker get theirs here, selecting the
+# labels the chart puts on those Deployments' pods. maxUnavailable = 1, not
+# minAvailable: minAvailable = 1 on a one-replica Deployment (the default
+# worker floor) would block every voluntary eviction and stall AKS node-image
+# upgrades and autoscaler scale-downs. Referencing helm_release.n8n.name orders
+# each budget after the release on create and before it on destroy.
+resource "kubernetes_pod_disruption_budget_v1" "n8n_webhook" {
+  count = var.n8n_webhook_pdb_enabled ? 1 : 0
+
+  metadata {
+    name      = "n8n-webhook-processor"
+    namespace = local.n8n_namespace
+  }
+
+  spec {
+    max_unavailable = "1"
+
+    selector {
+      match_labels = {
+        "app.kubernetes.io/name"      = "n8n"
+        "app.kubernetes.io/component" = "webhook-processor"
+        "app.kubernetes.io/instance"  = helm_release.n8n.name
+      }
+    }
+  }
+}
+
+resource "kubernetes_pod_disruption_budget_v1" "n8n_worker" {
+  count = var.n8n_worker_pdb_enabled ? 1 : 0
+
+  metadata {
+    name      = "n8n-worker"
+    namespace = local.n8n_namespace
+  }
+
+  spec {
+    max_unavailable = "1"
+
+    selector {
+      match_labels = {
+        "app.kubernetes.io/name"      = "n8n"
+        "app.kubernetes.io/component" = "worker"
+        "app.kubernetes.io/instance"  = helm_release.n8n.name
+      }
+    }
+  }
+}

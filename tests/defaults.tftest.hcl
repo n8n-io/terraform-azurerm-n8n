@@ -12246,3 +12246,66 @@ run "runner_tag_with_null_image_tag_warns" {
 
   expect_failures = [check.task_runner_image_tag_matches_application_version]
 }
+
+# The chart renders a budget for main only; these two are module-owned. The
+# selectors must match the labels the chart puts on the pods or the budget
+# guards nothing, and mocks cannot catch a typo there, so pin them (checked
+# against helm template of chart 1.16.0).
+run "webhook_and_worker_pdbs_default_to_max_unavailable_one" {
+  command = plan
+
+  assert {
+    condition = (
+      kubernetes_pod_disruption_budget_v1.n8n_webhook[0].spec[0].max_unavailable == "1" &&
+      kubernetes_pod_disruption_budget_v1.n8n_webhook[0].spec[0].selector[0].match_labels == tomap({
+        "app.kubernetes.io/name"      = "n8n"
+        "app.kubernetes.io/component" = "webhook-processor"
+        "app.kubernetes.io/instance"  = "n8n"
+      })
+    )
+    error_message = "The webhook-processor budget must allow one unavailable pod and select the chart's webhook-processor pod labels."
+  }
+
+  assert {
+    condition = (
+      kubernetes_pod_disruption_budget_v1.n8n_worker[0].spec[0].max_unavailable == "1" &&
+      kubernetes_pod_disruption_budget_v1.n8n_worker[0].spec[0].selector[0].match_labels == tomap({
+        "app.kubernetes.io/name"      = "n8n"
+        "app.kubernetes.io/component" = "worker"
+        "app.kubernetes.io/instance"  = "n8n"
+      })
+    )
+    error_message = "The worker budget must allow one unavailable pod and select the chart's default worker pod labels."
+  }
+
+  assert {
+    condition     = kubernetes_pod_disruption_budget_v1.n8n_webhook[0].metadata[0].namespace == "n8n" && kubernetes_pod_disruption_budget_v1.n8n_worker[0].metadata[0].namespace == "n8n"
+    error_message = "Both budgets must live in the n8n namespace with the pods they select."
+  }
+}
+
+run "webhook_and_worker_pdbs_can_be_disabled_independently" {
+  command = plan
+
+  variables {
+    n8n_webhook_pdb_enabled = false
+  }
+
+  assert {
+    condition     = length(kubernetes_pod_disruption_budget_v1.n8n_webhook) == 0 && length(kubernetes_pod_disruption_budget_v1.n8n_worker) == 1
+    error_message = "n8n_webhook_pdb_enabled = false must drop only the webhook-processor budget."
+  }
+}
+
+run "worker_pdb_can_be_disabled_independently" {
+  command = plan
+
+  variables {
+    n8n_worker_pdb_enabled = false
+  }
+
+  assert {
+    condition     = length(kubernetes_pod_disruption_budget_v1.n8n_worker) == 0 && length(kubernetes_pod_disruption_budget_v1.n8n_webhook) == 1
+    error_message = "n8n_worker_pdb_enabled = false must drop only the worker budget."
+  }
+}
