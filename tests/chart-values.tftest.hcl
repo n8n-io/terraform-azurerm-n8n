@@ -84,7 +84,7 @@ run "multi_main" {
   command = plan
 
   assert {
-    condition = { for env in yamldecode(helm_release.n8n.values[0]).webhookProcessor.extraEnv : env.name => env.value } == {
+    condition = yamldecode(helm_release.n8n.values[0]).env.webhookProcessor == {
       EXECUTIONS_DATA_SAVE_ON_SUCCESS        = "all"
       EXECUTIONS_DATA_SAVE_ON_ERROR          = "all"
       EXECUTIONS_DATA_SAVE_ON_PROGRESS       = "false"
@@ -145,7 +145,7 @@ run "save_policy" {
   }
 
   assert {
-    condition = { for env in yamldecode(helm_release.n8n.values[0]).webhookProcessor.extraEnv : env.name => env.value } == {
+    condition = yamldecode(helm_release.n8n.values[0]).env.webhookProcessor == {
       EXECUTIONS_DATA_SAVE_ON_SUCCESS        = "none"
       EXECUTIONS_DATA_SAVE_ON_ERROR          = "all"
       EXECUTIONS_DATA_SAVE_ON_PROGRESS       = "true"
@@ -166,7 +166,7 @@ run "save_policy_inverse" {
   }
 
   assert {
-    condition = { for env in yamldecode(helm_release.n8n.values[0]).webhookProcessor.extraEnv : env.name => env.value } == {
+    condition = yamldecode(helm_release.n8n.values[0]).env.webhookProcessor == {
       EXECUTIONS_DATA_SAVE_ON_SUCCESS        = "all"
       EXECUTIONS_DATA_SAVE_ON_ERROR          = "none"
       EXECUTIONS_DATA_SAVE_ON_PROGRESS       = "false"
@@ -232,9 +232,9 @@ run "split_url" {
 }
 
 # Worker-only environment (port-aws-050-enhancements section 2). The chart
-# renders queueMode.workerExtraEnv on the worker container only, so
-# check-n8n-chart.sh asserts both presence on deployment-worker and absence on
-# deployment-main and deployment-webhook-processor.
+# renders env.worker on the worker container only, so check-n8n-chart.sh
+# asserts both presence on deployment-worker and absence on deployment-main
+# and deployment-webhook-processor.
 run "worker_extra_env" {
   command = plan
 

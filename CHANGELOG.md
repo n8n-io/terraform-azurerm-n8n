@@ -11,6 +11,52 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Added
 
+- **Breaking (in progress): targets n8n Helm chart `2.0`** (unreleased
+  upstream, [n8n-hosting#250](https://github.com/n8n-io/n8n-hosting/pull/250)).
+  `n8n_chart_version`'s default stays `1.14.0` on this branch and moves to
+  `2.0.0` only once that chart version is released, in lockstep with this
+  change; see `docs/upgrading-n8n.md`.
+  - The chart's shared `config.extraEnv` list and `queueMode.workerExtraEnv`
+    become per-component maps (`env.shared`, `env.worker`,
+    `env.webhookProcessor`); `n8n.tf` builds these from existing inputs.
+    Every n8n pod rolls once, because its environment moves from
+    `valueFrom` entries into ConfigMaps loaded with `envFrom`.
+  - `n8n_worker_concurrency` is a removed tombstone (null-only validation,
+    like `n8n_available_binary_data_modes` before it): chart 2.0 no longer
+    renders `queueMode.workerConcurrency` and fails the render if it is set
+    together with `executions.concurrency.productionLimit`.
+    `n8n_execution_concurrency_limit` is the one input governing worker
+    concurrency now, since n8n takes it from
+    `N8N_CONCURRENCY_PRODUCTION_LIMIT`.
+  - The caller-managed encryption Secret (`n8n_encryption_key_secret_ref`)
+    now needs only `N8N_ENCRYPTION_KEY`; the chart's own `existingSecret`
+    no longer reads `N8N_HOST`, `N8N_PORT`, or `N8N_PROTOCOL` from it. A
+    Secret that still carries those three keeps working — the chart
+    ignores them.
+  - n8n's public URLs are now set explicitly from `editor.url` and
+    `webhook.url` (`n8n_domain` / `n8n_webhook_url`). `N8N_HOST` and
+    `N8N_PROTOCOL` are dropped from `local.n8n_managed_env_names`, because
+    the chart never sets either.
+  - `n8n_postgres_ssl_enabled_env` (the module's `DB_POSTGRESDB_SSL_ENABLED`
+    workaround for n8n-hosting#175) is removed: chart 2.0 includes the
+    upstream fix and sets the variable itself.
+  - The `WEBHOOK_URL` legacy-image fallback local is renamed
+    `n8n_legacy_webhook_url_env` to match the chart's current naming; no
+    behavior change.
+  - Audited every other chart `2.0` template/values/schema change
+    ([#90](https://github.com/n8n-io/terraform-azurerm-n8n/issues/90),
+    decisions 0002-0009 and 0020; `queueMode.workerGroups` is out of
+    scope, matching `worker-pools.tf`'s own chart-feature gate). None
+    needs a module code change: the PDB, multi-main/licence, per-role
+    security context, image digest, entrypoint, task-runner liveness
+    probe, Postgres TLS Secret, encryption-key-file, `extraObjects`, and
+    persistence-annotation changes are all inert for this module's
+    inputs. Two are visible in what gets deployed without any input
+    change — single-main's PDB disappears instead of rendering with
+    `minAvailable: 0`, and the task-runner sidecar gains a default
+    liveness probe — see `docs/upgrading-n8n.md` and `AGENTS.md`'s
+    "Chart 2.0 adoption" section.
+
 - Seven opt-in AKS network and identity inputs, all defaulting to the
   module's current behavior so an existing caller sees no plan diff
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)):

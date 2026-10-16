@@ -520,12 +520,14 @@ into one of the references above then makes the n8n Helm release wait for the
 Secret. This ordering supports a cold deployment in one `terraform apply`.
 
 `n8n_encryption_key_secret_ref` has one shape difference worth calling out:
-the chart's `secretRefs.existingSecret` contract expects **one Secret with
-four keys** — `N8N_ENCRYPTION_KEY`, `N8N_HOST`, `N8N_PORT`, and
-`N8N_PROTOCOL` — not just the encryption key by itself, and the chart
-hardcodes the key name `N8N_ENCRYPTION_KEY` (the `key` field on the object
-must be exactly that string). `n8n_license_key_secret_ref` has no such
-restriction; its `key` field can be any name the caller's Secret uses.
+the chart's `secretRefs.existingSecret` contract hardcodes the key name
+`N8N_ENCRYPTION_KEY` (the `key` field on the object must be exactly that
+string). As of chart 2.0 (decision 0012) the chart reads only that one key
+from the Secret; a Secret that also carries `N8N_HOST`, `N8N_PORT`, or
+`N8N_PROTOCOL` from an older chart 1.x setup still works, but those three
+keys are ignored — n8n's public URLs come from `editor.url`/`webhook.url`
+instead (see `docs/upgrading-n8n.md`). `n8n_license_key_secret_ref` has no
+such restriction; its `key` field can be any name the caller's Secret uses.
 
 Because Terraform never reads the encryption-key Secret's value, the
 `n8n_encryption_key` output is explicitly `null` whenever
@@ -602,26 +604,19 @@ small caller-owned Deployment in the n8n namespace (any minimal image, one
 replica) that mounts it, and create it before the n8n Helm release so the
 Secret exists when n8n starts. Otherwise the `*_secret_ref` input points at a
 Secret that never appears, and n8n pods fail with `CreateContainerConfigError`.
-For `n8n_encryption_key_secret_ref`, that Secret must carry all four keys —
-`N8N_ENCRYPTION_KEY`, `N8N_HOST`, `N8N_PORT`, and `N8N_PROTOCOL` — so the
-`SecretProviderClass` needs vault objects for all four. **Never point
-autorotation at the `N8N_ENCRYPTION_KEY` vault object.** n8n cannot rotate
-its encryption key in place: changing it makes every credential already
-stored in n8n's database permanently unrecoverable. When
-`n8n_encryption_key_secret_ref` is set (as in this scenario), the
+For `n8n_encryption_key_secret_ref`, that Secret needs only one key,
+`N8N_ENCRYPTION_KEY`, so the `SecretProviderClass` needs a vault object for
+just that one. **Never point autorotation at the `N8N_ENCRYPTION_KEY` vault
+object.** n8n cannot rotate its encryption key in place: changing it makes
+every credential already stored in n8n's database permanently unrecoverable.
+When `n8n_encryption_key_secret_ref` is set (as in this scenario), the
 `n8n_encryption_key` output is `null` and the "Back up the n8n encryption
 key" upgrade step's `terraform output -raw n8n_encryption_key` command
 does not apply; back up the key from wherever the caller-managed Secret's
 contents originated instead, see [Post-deployment
 setup](./post-deployment.md#capture-the-n8n-encryption-key). A rotated
 vault secret, like a lost backup, silently bricks the deployment on the
-next sync.
-Keep that vault object a static value. `N8N_HOST`, `N8N_PORT`, and
-`N8N_PROTOCOL` have no such restriction and can be plain Key Vault secrets
-holding static values or genuinely rotated ones. For rotation, restart
-every n8n workload that consumes this Secret; the chart provides these
-keys as environment variables, which running pods do not refresh when CSI
-autorotation updates the Secret's content.
+next sync. Keep that vault object a static value.
 See [Microsoft's Secrets Store CSI Driver
 documentation](https://learn.microsoft.com/azure/aks/csi-secrets-store-driver)
 for the `SecretProviderClass` schema. External Secrets Operator is an

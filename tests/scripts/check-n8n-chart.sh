@@ -12,9 +12,16 @@
 # which this script never passes), so a fixture that violates the chart
 # schema fails the corresponding `helm template` invocation.
 #
+# N8N_CHART_PATH=/path/to/chart renders against a local chart directory
+# instead of pulling var.n8n_chart_version from the OCI registry. This is how
+# the check runs against a chart that is not published yet (e.g. a chart 2.0
+# candidate checked out from an open n8n-hosting pull request): the pinned
+# default stays untouched and the registry pull is skipped entirely.
+#
 # Local usage:
 #   terraform init -backend=false   # once, from the repo root
 #   tests/scripts/check-n8n-chart.sh
+#   N8N_CHART_PATH=/path/to/n8n-hosting/charts/n8n tests/scripts/check-n8n-chart.sh
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
@@ -55,8 +62,16 @@ console() {
 }
 
 chart_version=$(console <<< 'var.n8n_chart_version')
-echo "== Pulling n8n chart ${chart_version} =="
-helm pull "oci://ghcr.io/n8n-io/n8n-helm-chart/n8n" --version "$chart_version" --untar --untardir "$tmp"
+if [[ -n "${N8N_CHART_PATH:-}" ]]; then
+  [[ -f "${N8N_CHART_PATH}/Chart.yaml" ]] \
+    || { echo "N8N_CHART_PATH=${N8N_CHART_PATH} has no Chart.yaml" >&2; exit 1; }
+  chart_dir="$N8N_CHART_PATH"
+  echo "== Using local n8n chart at ${chart_dir} (N8N_CHART_PATH; pinned version ${chart_version} not pulled) =="
+else
+  chart_dir="$tmp/n8n"
+  echo "== Pulling n8n chart ${chart_version} =="
+  helm pull "oci://ghcr.io/n8n-io/n8n-helm-chart/n8n" --version "$chart_version" --untar --untardir "$tmp"
+fi
 
 # Worker pools (early alpha) render only on a chart that carries
 # queueMode.workerGroups, which no numbered release does yet; the official
@@ -100,10 +115,49 @@ render() {
   local values_file="$1"
   local out_prefix="$2"
   local template="$3"
-  local chart_dir="${4:-$tmp/n8n}"
-  helm template n8n "$chart_dir" -f "$values_file" \
+  local dir="${4:-$chart_dir}"
+  helm template n8n "$dir" -f "$values_file" \
     --show-only "templates/${template}.yaml" > "$tmp/${out_prefix}-${template}.yaml"
   console <<< "jsonencode(yamldecode(file(\"$tmp/${out_prefix}-${template}.yaml\")))" > "$tmp/${out_prefix}-${template}.json"
+}
+
+# One env ConfigMap per component (decision 0012) renders as several YAML
+# documents from one `--show-only templates/configmap.yaml` call: shared
+# (fullname, no suffix), plus main/worker/webhookProcessor/taskRunner
+# (fullname with a component suffix) for whichever of those this fixture's
+# topology renders. render() assumes one document per file, so this splits
+# the multi-document output on its "---" separators and names each resulting
+# file by the component its own ConfigMap's name identifies, not by a fixed
+# position: the set and order of components a fixture renders depends on
+# its topology (queueMode, webhookProcessor.enabled, taskRunners.enabled).
+render_configmaps() {
+  local values_file="$1"
+  local out_prefix="$2"
+  local dir="${3:-$chart_dir}"
+  local raw="$tmp/${out_prefix}-configmap-raw.yaml"
+  helm template n8n "$dir" -f "$values_file" \
+    --show-only templates/configmap.yaml > "$raw"
+  local doc_dir="$tmp/${out_prefix}-configmap-docs"
+  mkdir -p "$doc_dir"
+  awk -v dir="$doc_dir" '
+    BEGIN { n = 0; file = dir "/0.yaml" }
+    /^---$/ { n++; file = dir "/" n ".yaml"; next }
+    { print > file }
+  ' "$raw"
+  local f json name component
+  for f in "$doc_dir"/*.yaml; do
+    [[ -s "$f" ]] || continue
+    json=$(console <<< "jsonencode(yamldecode(file(\"$f\")))")
+    name=$(echo "$json" | jq -r '.metadata.name')
+    case "$name" in
+      *-main) component=main ;;
+      *-worker) component=worker ;;
+      *-webhook-processor) component=webhookProcessor ;;
+      *-task-runner) component=taskRunner ;;
+      *) component=shared ;;
+    esac
+    echo "$json" > "$tmp/${out_prefix}-configmap-${component}.json"
+  done
 }
 
 echo "== Rendering default multi-main values fixture =="
@@ -147,34 +201,44 @@ export_values worker_pools_authenticated "$tmp/worker-pools-auth-values.json"
 echo "== Rendering paused worker autoscaling values fixture (pause with a zero hold count) =="
 export_values worker_pause "$tmp/worker-pause-values.json"
 
-for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker configmap; do
+for template in deployment-main deployment-worker deployment-webhook-processor hpa-main pdb scaledobject-worker; do
   render "$tmp/multi-main-values.json" multi-main "$template"
 done
+render_configmaps "$tmp/multi-main-values.json" multi-main
 
-for template in deployment-main hpa-main pdb; do
+# pdb.yaml is omitted entirely once this is: one main pod, no HPA floor
+# above 1 (chart decision 0004, unrelated to the env-map restructuring;
+# landed alongside it). `helm template --show-only` errors when a named
+# template renders nothing at all, so it is asserted on below against the
+# full single-main render instead of through render().
+for template in deployment-main hpa-main; do
   render "$tmp/single-main-values.json" single-main "$template"
 done
+helm template n8n "$chart_dir" -f "$tmp/single-main-values.json" > "$tmp/single-main-full.yaml"
+
+# Env values the module sets through the chart's native config (database,
+# executions, redis.worker, heap, URLs, ...) and through env.<component>
+# maps land in ConfigMaps now, not in these three containers' own `env:`
+# lists (decision 0012); render_configmaps replaces the deployment renders
+# below for fixtures whose assertions are only about those values. A
+# fixture that also has a deployment-level assertion (volumes, resources,
+# strategy) still renders the deployment templates it needs.
+render_configmaps "$tmp/pg-runtime-values.json" pg-runtime
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
-  render "$tmp/pg-runtime-values.json" pg-runtime "$template"
-done
-
-for template in deployment-main deployment-worker deployment-webhook-processor configmap; do
   render "$tmp/ssl-ca-values.json" ssl-ca "$template"
 done
+render_configmaps "$tmp/ssl-ca-values.json" ssl-ca
 
-for template in deployment-main deployment-worker deployment-webhook-processor configmap; do
-  render "$tmp/worker-timing-values.json" worker-timing "$template"
-done
+render_configmaps "$tmp/worker-timing-values.json" worker-timing
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  render "$tmp/save-policy-values.json" save-policy "$template"
-  render "$tmp/save-policy-inverse-values.json" save-policy-inverse "$template"
-done
+render_configmaps "$tmp/save-policy-values.json" save-policy
+render_configmaps "$tmp/save-policy-inverse-values.json" save-policy-inverse
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/heap-values.json" heap "$template"
 done
+render_configmaps "$tmp/heap-values.json" heap
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   render "$tmp/task-runner-config-values.json" task-runner-config "$template"
@@ -184,13 +248,9 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
   render "$tmp/dns-values.json" dns "$template"
 done
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  render "$tmp/split-url-values.json" split-url "$template"
-done
+render_configmaps "$tmp/split-url-values.json" split-url
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  render "$tmp/worker-extra-env-values.json" worker-extra-env "$template"
-done
+render_configmaps "$tmp/worker-extra-env-values.json" worker-extra-env
 
 render "$tmp/worker-pause-values.json" worker-pause scaledobject-worker
 
@@ -277,148 +337,108 @@ jq -e '.spec.strategy.type == "Recreate" and ((.spec.strategy | has("rollingUpda
 jq -e '.spec.minReplicas == 1 and .spec.maxReplicas == 1' "$tmp/single-main-hpa-main.json" >/dev/null \
   || { echo "FAIL: single-main hpa-main must clamp to 1/1 regardless of the configured maximum of 20" >&2; exit 1; }
 
-jq -e '.spec.minAvailable == 0' "$tmp/single-main-pdb.json" >/dev/null \
-  || { echo "FAIL: single-main PDB must allow voluntary eviction with minAvailable = 0" >&2; exit 1; }
+# Chart decision 0004: the main PDB renders only once main can run more
+# than one pod (replicaCount or hpa.main.minReplicas above 1). Single-main
+# clamps both to 1, so the chart now omits the PDB entirely rather than
+# rendering minAvailable = 0; the module's pdb.minAvailable = 0 (for a
+# chart that still gates only on pdb.enabled) never reaches a cluster.
+# single-main-full.yaml is raw multi-document YAML (not one JSON object),
+# so this checks the rendered text directly rather than through jq.
+grep -q "^kind: PodDisruptionBudget$" "$tmp/single-main-full.yaml" \
+  && { echo "FAIL: single-main must render no PodDisruptionBudget (chart decision 0004: one main pod, no HPA floor above 1)" >&2; exit 1; }
 
-echo "PASS: single-main passes chart schema validation with one main, HPA 1/1, Recreate, and PDB minimum 0"
+echo "PASS: single-main passes chart schema validation with one main, HPA 1/1, Recreate, and no PodDisruptionBudget"
 
 echo "== Verify runtime manifests (execution save policy, URL naming) =="
 
-# Check all roles: webhook processors decide final retention for production
-# webhooks even though the chart omits its native save-policy env on that role.
+# executions.data.* (chart-native) reaches the main and worker ConfigMaps;
+# the chart omits it for the webhook-processor role, so env.webhookProcessor
+# (module-set) carries the same four keys there. All three now land in a
+# ConfigMap the container loads with envFrom, not its own env list
+# (decision 0012).
 for fixture in multi-main save-policy save-policy-inverse; do
   case "$fixture" in
     multi-main)          success=all  error=all  progress=false manual=true ;;
     save-policy)         success=none error=all  progress=true  manual=false ;;
     save-policy-inverse) success=all  error=none progress=false manual=true ;;
   esac
-  for template in deployment-main deployment-worker deployment-webhook-processor; do
+  for component in main worker webhookProcessor; do
     jq -e --arg success "$success" --arg error "$error" --arg progress "$progress" --arg manual "$manual" '
-      [.spec.template.spec.containers[0].env[] | select(.name | startswith("EXECUTIONS_DATA_SAVE_"))] as $entries
-      | ($entries | length) == 4
-      and ([$entries[] | {key: .name, value: .value}] | from_entries) == {
-        "EXECUTIONS_DATA_SAVE_ON_SUCCESS": $success,
-        "EXECUTIONS_DATA_SAVE_ON_ERROR": $error,
-        "EXECUTIONS_DATA_SAVE_ON_PROGRESS": $progress,
-        "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS": $manual
-      }
-    ' "$tmp/${fixture}-${template}.json" >/dev/null \
-      || { echo "FAIL: ${fixture} ${template} must render each execution save-policy entry exactly once with the expected value" >&2; exit 1; }
+      .data.EXECUTIONS_DATA_SAVE_ON_SUCCESS == $success
+      and .data.EXECUTIONS_DATA_SAVE_ON_ERROR == $error
+      and .data.EXECUTIONS_DATA_SAVE_ON_PROGRESS == $progress
+      and .data.EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS == $manual
+    ' "$tmp/${fixture}-configmap-${component}.json" >/dev/null \
+      || { echo "FAIL: ${fixture} ${component} ConfigMap must carry the expected execution save-policy values" >&2; exit 1; }
   done
 done
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e --arg url "https://${domain}" '
-    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WEBHOOK_URL")][0].value == $url
-  ' "$tmp/multi-main-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} is missing the current N8N_WEBHOOK_URL environment entry" >&2; exit 1; }
+# N8N_WEBHOOK_URL and N8N_EDITOR_BASE_URL are chart-native as of chart 2.0
+# (rendered from webhook.url/editor.url into the shared ConfigMap; the
+# chart's Secret no longer carries N8N_HOST/N8N_PROTOCOL to build a fallback
+# from), so one shared-ConfigMap check replaces the old per-container scan.
+jq -e --arg url "https://${domain}" '
+  .data.N8N_WEBHOOK_URL == $url
+  and .data.N8N_EDITOR_BASE_URL == $url
+  and (.data | has("WEBHOOK_URL") | not)
+' "$tmp/multi-main-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the shared ConfigMap is missing the current N8N_WEBHOOK_URL/N8N_EDITOR_BASE_URL values, or unexpectedly carries the deprecated WEBHOOK_URL alias" >&2; exit 1; }
 
-  jq -e --arg url "https://${domain}" '
-    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_EDITOR_BASE_URL")][0].value == $url
-  ' "$tmp/multi-main-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} is missing the current N8N_EDITOR_BASE_URL environment entry" >&2; exit 1; }
-
-  jq -e '
-    ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_WEBHOOK_URL")] | length == 1)
-    and ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_EDITOR_BASE_URL")] | length == 1)
-  ' "$tmp/multi-main-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} must render exactly one N8N_WEBHOOK_URL and one N8N_EDITOR_BASE_URL entry" >&2; exit 1; }
-
-  jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "WEBHOOK_URL")] | length == 0
-  ' "$tmp/multi-main-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} unexpectedly renders the deprecated WEBHOOK_URL alias" >&2; exit 1; }
-done
-
-# Chart 1.14.0 (#184) renamed this ConfigMap key from WEBHOOK_URL to
-# N8N_WEBHOOK_URL; either one here would duplicate the module's own env entry.
-jq -e '(.data | has("WEBHOOK_URL") or has("N8N_WEBHOOK_URL")) | not' "$tmp/multi-main-configmap.json" >/dev/null \
-  || { echo "FAIL: the chart ConfigMap unexpectedly carries a WEBHOOK_URL or N8N_WEBHOOK_URL key (webhook.url or ingress must remain unset)" >&2; exit 1; }
-
-echo "PASS: execution save-policy values and current URL naming are correct on every applicable container"
+echo "PASS: execution save-policy values and current URL naming are correct in every applicable ConfigMap"
 
 echo "== Verify split editor/webhook URL manifests (n8n_webhook_url override) =="
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e --arg url "https://${domain}" '
-    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_EDITOR_BASE_URL")][0].value == $url
-  ' "$tmp/split-url-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} N8N_EDITOR_BASE_URL must stay on n8n_domain when n8n_webhook_url is overridden" >&2; exit 1; }
+jq -e --arg editor "https://${domain}" '
+  .data.N8N_EDITOR_BASE_URL == $editor
+  and .data.N8N_WEBHOOK_URL == "https://hooks.test.example.com:8443/n8n/"
+' "$tmp/split-url-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the shared ConfigMap must keep N8N_EDITOR_BASE_URL on n8n_domain and N8N_WEBHOOK_URL on the caller-supplied override" >&2; exit 1; }
 
-  jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WEBHOOK_URL")][0].value == "https://hooks.test.example.com:8443/n8n/"
-  ' "$tmp/split-url-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} N8N_WEBHOOK_URL must equal the caller-supplied override, preserved as-is" >&2; exit 1; }
-
-  jq -e '
-    ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_WEBHOOK_URL")] | length == 1)
-    and ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_EDITOR_BASE_URL")] | length == 1)
-  ' "$tmp/split-url-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} must render exactly one N8N_WEBHOOK_URL and one N8N_EDITOR_BASE_URL entry in the split fixture" >&2; exit 1; }
-done
-
-echo "PASS: split editor/webhook URL override renders on every application pod family without a duplicate chart URL"
+echo "PASS: split editor/webhook URL override renders in the shared ConfigMap without a duplicate chart URL"
 
 echo "== Verify PostgreSQL runtime-tuning manifests (connection/ping timing) =="
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e '
-    (.spec.template.spec.containers[0].env | map(select(.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"))[0].value) == "45000"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "DB_PING_TIMEOUT_MS"))[0].value) == "15000"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "DB_PING_INTERVAL_SECONDS"))[0].value) == "5"
-    and (.spec.template.spec.containers[0].env | map(select(.name == "DB_PING_MAX_FAILURES_BEFORE_RECOVERY"))[0].value) == "6"
-  ' "$tmp/pg-runtime-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} is missing one or more PostgreSQL runtime-tuning environment values" >&2; exit 1; }
-done
+jq -e '
+  .data.DB_POSTGRESDB_CONNECTION_TIMEOUT == "45000"
+  and .data.DB_PING_TIMEOUT_MS == "15000"
+  and .data.DB_PING_INTERVAL_SECONDS == "5"
+  and .data.DB_PING_MAX_FAILURES_BEFORE_RECOVERY == "6"
+' "$tmp/pg-runtime-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the shared ConfigMap is missing one or more PostgreSQL runtime-tuning values" >&2; exit 1; }
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e '
-    ([.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT")] | length == 0)
-    and ([.spec.template.spec.containers[0].env[] | select(.name == "DB_PING_TIMEOUT_MS")] | length == 0)
-  ' "$tmp/multi-main-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} unexpectedly renders PostgreSQL runtime-tuning values in the default fixture (all four inputs null)" >&2; exit 1; }
-done
+jq -e '
+  (.data | has("DB_POSTGRESDB_CONNECTION_TIMEOUT") | not)
+  and (.data | has("DB_PING_TIMEOUT_MS") | not)
+' "$tmp/multi-main-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the default fixture (all four inputs null) unexpectedly renders PostgreSQL runtime-tuning values" >&2; exit 1; }
 
-echo "PASS: PostgreSQL connection/ping timing renders on all three application pod families and is omitted by default"
+echo "PASS: PostgreSQL connection/ping timing renders in the shared ConfigMap and is omitted by default"
 
 echo "== Verify PostgreSQL TLS CA manifests (DB_POSTGRESDB_SSL_ENABLED / DB_POSTGRESDB_SSL_CA) =="
 
-# Regression check for the bug this fixture exists to catch: the pinned
-# chart renders database.ssl.enabled into a ConfigMap key named
-# DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
-# upstream). The module works around this with its own
-# DB_POSTGRESDB_SSL_ENABLED entry in config.extraEnv; assert on the
-# container env directly so a future chart bump that fixes the upstream
-# name does not silently mask a regression in the module's own workaround.
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_SSL_ENABLED")] | length == 1
-    and .[0].value == "true"
-  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} must carry exactly one DB_POSTGRESDB_SSL_ENABLED=true entry when the effective ssl_mode is not disable" >&2; exit 1; }
-done
+# Chart 2.0 fixed the upstream bug this fixture used to catch
+# (n8n-io/n8n-hosting#175): DB_POSTGRESDB_SSL_ENABLED is now chart-native,
+# rendered directly from database.ssl.enabled into the shared ConfigMap, so
+# the module's former config.extraEnv workaround for it is gone (locals.tf).
+jq -e '.data.DB_POSTGRESDB_SSL_ENABLED == "true"' "$tmp/ssl-ca-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the shared ConfigMap must carry DB_POSTGRESDB_SSL_ENABLED=true when the effective ssl_mode is not disable" >&2; exit 1; }
 
 # The CA is delivered through the chart-native database.ssl.ca value, so it
-# lives in the chart's own ConfigMap: a Helm rollback restores it and the
-# chart's checksum/config annotation rolls the pods when it changes. n8n reads
-# DB_POSTGRESDB_SSL_CA as PEM content, so the ConfigMap must carry the
+# lives in the chart's own shared ConfigMap: a Helm rollback restores it and
+# the chart's checksum/config annotation rolls the pods when it changes. n8n
+# reads DB_POSTGRESDB_SSL_CA as PEM content, so the ConfigMap must carry the
 # certificate text itself (trimmed by the module), not a file path.
 jq -e '.data.DB_POSTGRESDB_SSL_CA == "-----BEGIN CERTIFICATE-----\nMIIFake\n-----END CERTIFICATE-----"' \
-  "$tmp/ssl-ca-configmap.json" >/dev/null \
-  || { echo "FAIL: the chart ConfigMap must carry the trimmed PEM content as DB_POSTGRESDB_SSL_CA" >&2; exit 1; }
+  "$tmp/ssl-ca-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the shared ConfigMap must carry the trimmed PEM content as DB_POSTGRESDB_SSL_CA" >&2; exit 1; }
 
 jq -e '.data | has("DB_POSTGRESDB_SSL_CA") | not' \
-  "$tmp/multi-main-configmap.json" >/dev/null \
+  "$tmp/multi-main-configmap-shared.json" >/dev/null \
   || { echo "FAIL: the default fixture (no postgres_ssl_ca_pem) must not render DB_POSTGRESDB_SSL_CA" >&2; exit 1; }
 
 for template in deployment-main deployment-worker deployment-webhook-processor; do
   jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_SSL_CA" and .valueFrom.configMapKeyRef.key == "DB_POSTGRESDB_SSL_CA")] | length == 1
-  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} must source exactly one DB_POSTGRESDB_SSL_CA from the chart ConfigMap" >&2; exit 1; }
-
-  jq -e '
-    ([.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_SSL_CA_FILE")] | length == 0)
+    ([.spec.template.spec.containers[0].env[]? | select(.name == "DB_POSTGRESDB_SSL_CA_FILE")] | length == 0)
     and ([.spec.template.spec.volumes[]? | select(.name == "postgres-ssl-ca")] | length == 0)
   ' "$tmp/ssl-ca-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} must not carry a module-managed CA file, volume, or DB_POSTGRESDB_SSL_CA_FILE" >&2; exit 1; }
@@ -430,7 +450,7 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
     || { echo "FAIL: ${template} must carry the chart checksum/config pod annotation" >&2; exit 1; }
 done
 
-echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders on every application pod family and postgres_ssl_ca_pem reaches n8n as PEM content through the chart ConfigMap"
+echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders in the shared ConfigMap and postgres_ssl_ca_pem reaches n8n as PEM content there"
 
 echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval/graceful shutdown timeout) =="
 
@@ -439,24 +459,14 @@ jq -e '
   and .data.QUEUE_WORKER_LOCK_RENEW_TIME == "15000"
   and .data.QUEUE_WORKER_STALLED_INTERVAL == "45000"
   and .data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT == "45"
-' "$tmp/worker-timing-configmap.json" >/dev/null \
-  || { echo "FAIL: the chart ConfigMap is missing one or more Bull worker timing overrides" >&2; exit 1; }
-
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e '
-    ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_LOCK_DURATION")] | length == 1)
-    and ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_LOCK_RENEW_TIME")] | length == 1)
-    and ([.spec.template.spec.containers[0].env[] | select(.name == "QUEUE_WORKER_STALLED_INTERVAL")] | length == 1)
-    and ([.spec.template.spec.containers[0].env[] | select(.name == "N8N_GRACEFUL_SHUTDOWN_TIMEOUT")] | length == 1)
-  ' "$tmp/worker-timing-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} is missing one or more Bull worker timing ConfigMap references" >&2; exit 1; }
-done
+' "$tmp/worker-timing-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the shared ConfigMap is missing one or more Bull worker timing overrides" >&2; exit 1; }
 
 jq -e '
   .data.QUEUE_WORKER_LOCK_DURATION == "60000"
   and .data.QUEUE_WORKER_LOCK_RENEW_TIME == "10000"
   and .data.QUEUE_WORKER_STALLED_INTERVAL == "30000"
-' "$tmp/multi-main-configmap.json" >/dev/null \
+' "$tmp/multi-main-configmap-shared.json" >/dev/null \
   || { echo "FAIL: the default fixture (all worker timing inputs null) must retain the chart's own pinned defaults (60000/10000/30000 ms) unchanged" >&2; exit 1; }
 
 # check.graceful_shutdown_fits_grace_period compares against
@@ -465,42 +475,36 @@ jq -e '
 # the default fails here until the local is updated.
 expected_shutdown_default=$(console <<< 'local.n8n_chart_default_graceful_shutdown_timeout')
 jq -e --arg expected "$expected_shutdown_default" '.data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT == $expected' \
-  "$tmp/multi-main-configmap.json" >/dev/null \
-  || { echo "FAIL: chart ${chart_version} renders N8N_GRACEFUL_SHUTDOWN_TIMEOUT=$(jq -r '.data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT' "$tmp/multi-main-configmap.json") by default, but local.n8n_chart_default_graceful_shutdown_timeout is ${expected_shutdown_default}; update the local" >&2; exit 1; }
+  "$tmp/multi-main-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: chart ${chart_version} renders N8N_GRACEFUL_SHUTDOWN_TIMEOUT=$(jq -r '.data.N8N_GRACEFUL_SHUTDOWN_TIMEOUT' "$tmp/multi-main-configmap-shared.json") by default, but local.n8n_chart_default_graceful_shutdown_timeout is ${expected_shutdown_default}; update the local" >&2; exit 1; }
 
-jq -e '.data.QUEUE_WORKER_MAX_STALLED_COUNT == "1"' "$tmp/worker-timing-configmap.json" >/dev/null \
+jq -e '.data.QUEUE_WORKER_MAX_STALLED_COUNT == "1"' "$tmp/worker-timing-configmap-shared.json" >/dev/null \
   || { echo "FAIL: the chart's own QUEUE_WORKER_MAX_STALLED_COUNT default must remain untouched (this module exposes no such input)" >&2; exit 1; }
 
-echo "PASS: Bull worker timing overrides render exactly once per name on every application pod family, and the default fixture keeps the chart's own pinned defaults"
+echo "PASS: Bull worker timing overrides render exactly once in the shared ConfigMap, and the default fixture keeps the chart's own pinned defaults"
 
 echo "== Verify application heap ceiling manifests (NODE_OPTIONS) =="
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "NODE_OPTIONS")] | length == 1
-    and .[0].value == "--max-old-space-size=768"
-  ' "$tmp/heap-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} must render exactly one NODE_OPTIONS=--max-old-space-size=768 entry when n8n_node_max_old_space_size_mb is set" >&2; exit 1; }
+jq -e '.data.NODE_OPTIONS == "--max-old-space-size=768"' "$tmp/heap-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the shared ConfigMap must carry NODE_OPTIONS=--max-old-space-size=768 when n8n_node_max_old_space_size_mb is set" >&2; exit 1; }
 
+for template in deployment-main deployment-worker deployment-webhook-processor; do
   jq -e '.spec.template.spec.containers[0].resources == '"$(jq -c '.spec.template.spec.containers[0].resources' "$tmp/multi-main-${template}.json")"'' \
     "$tmp/heap-${template}.json" >/dev/null \
     || { echo "FAIL: ${template} container resource limits/requests must stay unchanged when the heap ceiling is set" >&2; exit 1; }
 done
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "NODE_OPTIONS")] | length == 0
-  ' "$tmp/multi-main-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} unexpectedly renders NODE_OPTIONS in the default fixture (n8n_node_max_old_space_size_mb null)" >&2; exit 1; }
-done
+jq -e '.data | has("NODE_OPTIONS") | not' "$tmp/multi-main-configmap-shared.json" >/dev/null \
+  || { echo "FAIL: the default fixture (n8n_node_max_old_space_size_mb null) unexpectedly renders NODE_OPTIONS" >&2; exit 1; }
 
-echo "PASS: the application heap ceiling renders exactly one NODE_OPTIONS entry on every application pod family without changing container resources, and is omitted by default"
+echo "PASS: the application heap ceiling renders exactly once in the shared ConfigMap without changing container resources, and is omitted by default"
 
 echo "== Verify caller-managed task-runner launcher configuration manifests (customConfig mount) =="
 
 # Chart 1.12.0 and later (n8n-hosting #179) render the task-runner sidecar on
 # main only in standalone mode; this module always runs queue mode, so only
-# the worker carries the sidecar and the launcher mount.
+# the worker carries the sidecar and the launcher mount. Unaffected by
+# decision 0012: this is a volume/volumeMount, not an environment value.
 jq -e '
   (.spec.template.spec.containers | map(select(.name == "task-runner"))[0].volumeMounts | map(select(.name == "task-runner-config"))[0])
   == {"name": "task-runner-config", "mountPath": "/etc/n8n-task-runners.json", "subPath": "n8n-task-runners.json", "readOnly": true}
@@ -551,27 +555,20 @@ echo "PASS: pod DNS configuration is identical on all three pod families with no
 
 echo "== Verify worker-only environment manifests (queueMode.workerExtraEnv) =="
 
-jq -e '
-  [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_ONLY_SETTING")] | length == 1
-  and .[0].value == "worker-only"
-' "$tmp/worker-extra-env-deployment-worker.json" >/dev/null \
-  || { echo "FAIL: deployment-worker must render exactly one N8N_WORKER_ONLY_SETTING entry from n8n_worker_extra_env" >&2; exit 1; }
+jq -e '.data.N8N_WORKER_ONLY_SETTING == "worker-only"' "$tmp/worker-extra-env-configmap-worker.json" >/dev/null \
+  || { echo "FAIL: the worker ConfigMap must carry N8N_WORKER_ONLY_SETTING from n8n_worker_extra_env" >&2; exit 1; }
 
-for template in deployment-main deployment-webhook-processor; do
-  jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_ONLY_SETTING")] | length == 0
-  ' "$tmp/worker-extra-env-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} must not receive n8n_worker_extra_env entries (worker-only)" >&2; exit 1; }
+for component in shared main webhookProcessor; do
+  f="$tmp/worker-extra-env-configmap-${component}.json"
+  [[ -e "$f" ]] || continue
+  jq -e '.data | has("N8N_WORKER_ONLY_SETTING") | not' "$f" >/dev/null \
+    || { echo "FAIL: the ${component} ConfigMap must not receive n8n_worker_extra_env entries (worker-only)" >&2; exit 1; }
 done
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "N8N_WORKER_ONLY_SETTING")] | length == 0
-  ' "$tmp/multi-main-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} unexpectedly renders a worker-only entry in the default fixture (n8n_worker_extra_env empty)" >&2; exit 1; }
-done
+jq -e '.data | has("N8N_WORKER_ONLY_SETTING") | not' "$tmp/multi-main-configmap-worker.json" >/dev/null \
+  || { echo "FAIL: the worker ConfigMap unexpectedly renders a worker-only entry in the default fixture (n8n_worker_extra_env empty)" >&2; exit 1; }
 
-echo "PASS: n8n_worker_extra_env renders on the worker container only, and is omitted by default"
+echo "PASS: n8n_worker_extra_env renders in the worker ConfigMap only, and is omitted by default"
 
 echo "== Verify worker pools manifests against the preview chart (${preview_chart_version}) =="
 
@@ -664,25 +661,12 @@ done
 (( scanned > 0 )) || { echo "FAIL: the deprecated-env scan found no rendered manifests to check" >&2; exit 1; }
 echo "PASS: N8N_AVAILABLE_BINARY_DATA_MODES absent from all ${scanned} rendered manifests"
 
-echo "== Self-test: duplicate managed environment-entry detector =="
-# This does not scan module output; it proves the jq expression the checks
-# above rely on actually flags a duplicate name, rather than being a
-# vacuously true no-op.
-duplicate_fixture='[{"name":"N8N_WEBHOOK_URL","value":"a"},{"name":"N8N_WEBHOOK_URL","value":"b"}]'
-dup_count=$(echo "$duplicate_fixture" | jq '[.[].name] | group_by(.) | map(select(length > 1)) | length')
-if [[ "$dup_count" -eq 0 ]]; then
-  echo "FAIL: the duplicate-entry detector did not flag an intentionally duplicated fixture" >&2
-  exit 1
-fi
-
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  dup_count=$(jq '[.spec.template.spec.containers[0].env[].name] | group_by(.) | map(select(length > 1)) | length' "$tmp/multi-main-${template}.json")
-  if [[ "$dup_count" -ne 0 ]]; then
-    echo "FAIL: ${template} renders duplicate environment entry names" >&2
-    exit 1
-  fi
-done
-echo "PASS: duplicate-entry detector is effective, and no module-rendered container has a duplicate name"
-
+# No duplicate-managed-environment-entry self-test here: decision 0012
+# replaced every chart-rendered env list with Terraform/Helm maps (env.*,
+# chartEnvOverrides.*, the chart's own chartEnv), which cannot carry a
+# literal duplicate key by construction, and chart 2.0 itself fails the
+# render if the module's map sets a key the chart already computes
+# (decision 0020). The failure mode the old self-test defended against no
+# longer exists in a rendered manifest to scan for.
 echo
 echo "PASS: check-n8n-chart.sh (chart ${chart_version})"

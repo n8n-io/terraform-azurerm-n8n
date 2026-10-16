@@ -29,7 +29,6 @@ locals {
     webhook_max_replicas         = 80
     worker_min_replicas          = 20
     worker_max_replicas          = 160
-    worker_concurrency           = 40
     appgw_autoscale_min_capacity = 2
     appgw_autoscale_max_capacity = 30
   }
@@ -214,7 +213,6 @@ module "n8n" {
   n8n_webhook_hpa_max_replicas = local.tier.webhook_max_replicas
   n8n_worker_keda_min_replicas = local.tier.worker_min_replicas
   n8n_worker_keda_max_replicas = local.tier.worker_max_replicas
-  n8n_worker_concurrency       = local.tier.worker_concurrency
 
   n8n_webhook_cpu_request    = "500m"
   n8n_webhook_cpu_limit      = "1500m"

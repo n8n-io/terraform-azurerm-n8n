@@ -93,7 +93,6 @@ run "large_tier_plan" {
       webhook_max_replicas         = 80
       worker_min_replicas          = 20
       worker_max_replicas          = 160
-      worker_concurrency           = 40
       appgw_autoscale_min_capacity = 2
       appgw_autoscale_max_capacity = 30
     }

@@ -216,15 +216,35 @@ summarize_and_exit() {
 }
 
 # Value of one env var on the n8n container of a Deployment's pod template.
-# Only literal `value` entries: the module renders pool and feature-flag vars
-# that way, so a valueFrom here would itself be a surprise. Exit status is
-# kubectl's own (see trigger_field below); a caller that already knows the
-# Deployment exists must check it, not read an error the same as "unset".
+# Literal `value` entries first: the module renders pool and feature-flag
+# vars that way on a chart that still puts them in the container's own `env`
+# list, so a `valueFrom` here would itself be a surprise. Chart >= 2.0 (n8n
+# chart decision 0012) instead renders these into a per-component ConfigMap
+# that the container loads with `envFrom`, so a literal match is retried
+# there before giving up: list every configMapRef the matching container
+# carries and read $var out of each one in turn. Exit status is kubectl's
+# own (see trigger_field below); a caller that already knows the Deployment
+# exists must check it, not read an error the same as "unset".
 deploy_env() {
   local deploy="$1" var="$2"
-  kubectl get deploy -n "$NAMESPACE" "$deploy" \
+  local value
+  value=$(kubectl get deploy -n "$NAMESPACE" "$deploy" \
     -o jsonpath="{.spec.template.spec.containers[?(@.name==\"n8n-worker\")].env[?(@.name==\"$var\")].value}{.spec.template.spec.containers[?(@.name==\"n8n-main\")].env[?(@.name==\"$var\")].value}{.spec.template.spec.containers[?(@.name==\"n8n\")].env[?(@.name==\"$var\")].value}" \
-    2>/dev/null
+    2>/dev/null) || return 1
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  local configmaps
+  configmaps=$(kubectl get deploy -n "$NAMESPACE" "$deploy" \
+    -o jsonpath="{.spec.template.spec.containers[?(@.name==\"n8n-worker\")].envFrom[*].configMapRef.name} {.spec.template.spec.containers[?(@.name==\"n8n-main\")].envFrom[*].configMapRef.name} {.spec.template.spec.containers[?(@.name==\"n8n\")].envFrom[*].configMapRef.name}" \
+    2>/dev/null) || return 1
+  local cm
+  for cm in $configmaps; do
+    value=$(kubectl get configmap -n "$NAMESPACE" "$cm" -o jsonpath="{.data.$var}" 2>/dev/null) || return 1
+    [[ -n "$value" ]] && { printf '%s' "$value"; return 0; }
+  done
+  return 0
 }
 
 # Whole ScaledObject as JSON, empty if absent.

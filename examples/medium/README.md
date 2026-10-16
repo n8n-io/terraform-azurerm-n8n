@@ -9,7 +9,7 @@ A sustained-production reference tier with more warm AKS and n8n capacity than `
 | AKS | Two pools, `Standard_D8s_v5`, 3 to 10 nodes per pool, Standard SKU tier |
 | n8n main | 3 to 16 replicas, 1500m CPU and 3 Gi memory requests |
 | n8n webhook | 4 to 24 replicas, 500m CPU and 1 Gi memory requests |
-| n8n workers | 4 to 30 replicas, concurrency 20, 750m CPU and 2 Gi memory requests |
+| n8n workers | 4 to 30 replicas, 750m CPU and 2 Gi memory requests |
 | PostgreSQL | `GP_Standard_D4s_v3`, 128 GB, 14-day backups |
 | Redis | `Balanced_B5`, single replica |
 | Storage | Private Azure Blob with ZRS |

@@ -2421,11 +2421,6 @@ run "managed_postgres_defaults_to_require" {
     condition     = local.postgres_connection.ssl_mode == "require"
     error_message = "local.postgres_connection.ssl_mode must default to require on the managed path."
   }
-
-  assert {
-    condition     = length(local.n8n_postgres_ssl_enabled_env) == 1 && one([for env in local.n8n_postgres_ssl_enabled_env : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == "true"
-    error_message = "local.n8n_postgres_ssl_enabled_env must set DB_POSTGRESDB_SSL_ENABLED=true whenever ssl_mode is not disable, working around the chart's DB_POSTGRESDB_SSL name bug (n8n-io/n8n-hosting#175)."
-  }
 }
 
 run "managed_postgres_verify_full_sets_ssl_mode" {
@@ -2451,23 +2446,6 @@ run "rejects_malformed_postgres_managed_ssl_mode" {
   expect_failures = [
     var.postgres_managed_ssl_mode,
   ]
-}
-
-run "external_postgres_disable_omits_ssl_enabled_env" {
-  command = plan
-
-  variables {
-    create_database            = false
-    postgres_external_host     = "external-pg.example.com"
-    postgres_external_username = "n8n_app"
-    postgres_external_password = "super-secret-external-password"
-    postgres_external_ssl_mode = "disable"
-  }
-
-  assert {
-    condition     = length(local.n8n_postgres_ssl_enabled_env) == 0
-    error_message = "local.n8n_postgres_ssl_enabled_env must be empty when the effective ssl_mode is disable."
-  }
 }
 
 # The CA reaches n8n through the chart-native database.ssl.ca value, which the
@@ -2510,13 +2488,8 @@ run "postgres_ssl_ca_pem_reaches_the_chart_and_sets_ssl_enabled_env" {
   }
 
   assert {
-    condition     = one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == "true"
-    error_message = "config.extraEnv must set DB_POSTGRESDB_SSL_ENABLED=true so n8n actually enables TLS, independent of the chart's own (misnamed) ConfigMap key."
-  }
-
-  assert {
-    condition     = length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_POSTGRESDB_SSL_CA_FILE" || env.name == "DB_POSTGRESDB_SSL_CA"]) == 0
-    error_message = "The CA must not be delivered through config.extraEnv; DB_POSTGRESDB_SSL_CA comes from the chart ConfigMap only."
+    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).env.shared), "DB_POSTGRESDB_SSL_CA_FILE") && !contains(keys(yamldecode(helm_release.n8n.values[0]).env.shared), "DB_POSTGRESDB_SSL_CA")
+    error_message = "The CA must not be delivered through env.shared; DB_POSTGRESDB_SSL_CA comes from the chart ConfigMap only."
   }
 
   assert {
@@ -2631,8 +2604,8 @@ run "postgres_ssl_ca_pem_ignored_when_ssl_mode_is_disable" {
   }
 
   assert {
-    condition     = length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if startswith(env.name, "DB_POSTGRESDB_SSL")]) == 0
-    error_message = "No DB_POSTGRESDB_SSL_* entry may render in config.extraEnv when the effective ssl_mode is disable."
+    condition     = length([for k in keys(yamldecode(helm_release.n8n.values[0]).env.shared) : k if startswith(k, "DB_POSTGRESDB_SSL")]) == 0
+    error_message = "No DB_POSTGRESDB_SSL_* entry may render in env.shared when the effective ssl_mode is disable."
   }
 
   expect_failures = [
@@ -3748,8 +3721,8 @@ run "controllers_and_base_n8n_release_in_plan" {
   }
 
   assert {
-    condition     = kubernetes_secret.n8n_encryption_key[0].data.N8N_PROTOCOL == "http"
-    error_message = "n8n must listen over HTTP behind the TLS-terminating Application Gateway."
+    condition     = length(nonsensitive(keys(kubernetes_secret.n8n_encryption_key[0].data))) == 1 && contains(nonsensitive(keys(kubernetes_secret.n8n_encryption_key[0].data)), "N8N_ENCRYPTION_KEY")
+    error_message = "The chart's secretRefs.env reads only N8N_ENCRYPTION_KEY as of chart 2.0; the Secret must carry no other key."
   }
 
   assert {
@@ -4079,12 +4052,12 @@ run "runtime_controls_defaults_render_in_helm_values" {
   assert {
     condition = (
       yamldecode(helm_release.n8n.values[0]).config.timezone == "UTC" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_LEVEL"]) == "info" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LOG_OUTPUT"]) == "console" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://n8n.example.com" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://n8n.example.com" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_PROXY_HOPS"]) == "1" &&
-      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "WEBHOOK_URL"]) == 0
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_LOG_LEVEL"] == "info" &&
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_LOG_OUTPUT"] == "console" &&
+      yamldecode(helm_release.n8n.values[0]).webhook.url == "https://n8n.example.com" &&
+      yamldecode(helm_release.n8n.values[0]).editor.url == "https://n8n.example.com" &&
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_PROXY_HOPS"] == "1" &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).env.shared), "WEBHOOK_URL")
     )
     error_message = "Timezone, logging, canonical webhook/editor URLs, and one trusted proxy hop must render into the shared chart configuration without the deprecated WEBHOOK_URL name."
   }
@@ -4121,7 +4094,7 @@ run "runtime_controls_defaults_render_in_helm_values" {
 
   assert {
     condition = (
-      var.n8n_worker_concurrency == 10 &&
+      var.n8n_worker_concurrency == null &&
       var.n8n_execution_timeout == 7200 &&
       var.n8n_execution_timeout_max == 7200 &&
       var.n8n_execution_concurrency_limit == 100 &&
@@ -4133,7 +4106,7 @@ run "runtime_controls_defaults_render_in_helm_values" {
 
   assert {
     condition = (
-      yamldecode(helm_release.n8n.values[0]).queueMode.workerConcurrency == 10 &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).queueMode), "workerConcurrency") &&
       yamldecode(helm_release.n8n.values[0]).executions.timeout == 7200 &&
       yamldecode(helm_release.n8n.values[0]).executions.timeoutMax == 7200 &&
       yamldecode(helm_release.n8n.values[0]).executions.concurrency.productionLimit == 100 &&
@@ -4187,7 +4160,7 @@ run "runtime_controls_defaults_render_in_helm_values" {
       yamldecode(helm_release.n8n.values[0]).taskRunners.resources.requests.memory == "512Mi" &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.resources.limits.cpu == "1" &&
       yamldecode(helm_release.n8n.values[0]).taskRunners.resources.limits.memory == "1Gi" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_RUNNERS_TASK_REQUEST_TIMEOUT"]) == "300"
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_RUNNERS_TASK_REQUEST_TIMEOUT"] == "300"
     )
     error_message = "Task-runner enablement, derived image, Python support, resources, and timeouts must render into Helm values."
   }
@@ -4206,14 +4179,14 @@ run "runtime_controls_defaults_render_in_helm_values" {
 
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN"]) == "false" &&
-      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if contains([
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN"] == "false" &&
+      length([for k in keys(yamldecode(helm_release.n8n.values[0]).env.shared) : k if contains([
         "N8N_TEMPLATES_ENABLED",
         "N8N_PERSONALIZATION_ENABLED",
         "N8N_REINSTALL_MISSING_PACKAGES",
         "N8N_COMMUNITY_PACKAGES_PREVENT_LOADING",
         "N8N_COMMUNITY_PACKAGES_REGISTRY",
-      ], env.name)]) == 0
+      ], k)]) == 0
     )
     error_message = "The floating-license safeguard must always render false while default-on or default-off feature variables remain omitted."
   }
@@ -4244,7 +4217,7 @@ run "n8n_proxy_hops_override_renders_in_helm_values" {
 
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_PROXY_HOPS"]) == "2"
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_PROXY_HOPS"] == "2"
     )
     error_message = "n8n_proxy_hops must override the rendered N8N_PROXY_HOPS value for a caller-owned ingress with extra proxy hops."
   }
@@ -4276,7 +4249,7 @@ run "n8n_proxy_hops_accepts_zero" {
 
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_PROXY_HOPS"]) == "0"
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_PROXY_HOPS"] == "0"
     )
     error_message = "n8n_proxy_hops = 0 must be accepted and render N8N_PROXY_HOPS=0 for a deployment with no HTTP proxy in front of n8n."
   }
@@ -4313,8 +4286,8 @@ run "omits_webhook_url_override_by_default" {
 
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://n8n.example.com" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://n8n.example.com"
+      yamldecode(helm_release.n8n.values[0]).webhook.url == "https://n8n.example.com" &&
+      yamldecode(helm_release.n8n.values[0]).editor.url == "https://n8n.example.com"
     )
     error_message = "A null n8n_webhook_url must retain https://<n8n_domain> as both the webhook and editor base URLs."
   }
@@ -4346,8 +4319,8 @@ run "accepts_split_editor_and_webhook_hosts" {
 
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://hooks.example.com" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_EDITOR_BASE_URL"]) == "https://admin.example.com"
+      yamldecode(helm_release.n8n.values[0]).webhook.url == "https://hooks.example.com" &&
+      yamldecode(helm_release.n8n.values[0]).editor.url == "https://admin.example.com"
     )
     error_message = "A supplied n8n_webhook_url must advertise the public webhook host while the editor base URL stays on n8n_domain."
   }
@@ -4378,7 +4351,7 @@ run "accepts_webhook_url_with_valid_port_and_base_path" {
 
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_WEBHOOK_URL"]) == "https://hooks.example.com:8443/n8n/"
+      yamldecode(helm_release.n8n.values[0]).webhook.url == "https://hooks.example.com:8443/n8n/"
     )
     error_message = "A caller-supplied webhook URL with a valid port and base path must be preserved as-is."
   }
@@ -4471,7 +4444,6 @@ run "rejects_reserved_url_environment_names_in_extra_env" {
     n8n_extra_env = [
       { name = "N8N_WEBHOOK_URL", value = "https://override.example.com" },
       { name = "N8N_EDITOR_BASE_URL", value = "https://override.example.com" },
-      { name = "N8N_HOST", value = "override.example.com" },
     ]
   }
 
@@ -4703,7 +4675,6 @@ run "runtime_control_overrides_render_in_helm_values" {
     n8n_webhook_cpu_limit                   = "900m"
     n8n_webhook_memory_request              = "768Mi"
     n8n_webhook_memory_limit                = "1536Mi"
-    n8n_worker_concurrency                  = 25
     n8n_execution_timeout                   = -1
     n8n_execution_timeout_max               = 14400
     n8n_execution_concurrency_limit         = -1
@@ -4740,12 +4711,12 @@ run "runtime_control_overrides_render_in_helm_values" {
   assert {
     condition = (
       yamldecode(helm_release.n8n.values[0]).config.timezone == "Europe/Berlin" &&
-      yamldecode(helm_release.n8n.values[0]).queueMode.workerConcurrency == 25 &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).queueMode), "workerConcurrency") &&
       yamldecode(helm_release.n8n.values[0]).executions.timeout == -1 &&
       yamldecode(helm_release.n8n.values[0]).executions.concurrency.productionLimit == -1 &&
       yamldecode(helm_release.n8n.values[0]).executions.pruning.maxCount == 0
     )
-    error_message = "Runtime overrides must flow through chart-native timezone, queue, execution, and pruning values."
+    error_message = "Runtime overrides must flow through chart-native timezone, execution, and pruning values, and queueMode.workerConcurrency must never render (removed in chart 2.0)."
   }
 
   assert {
@@ -4792,9 +4763,9 @@ run "runtime_control_overrides_render_in_helm_values" {
         N8N_REINSTALL_MISSING_PACKAGES          = "true"
         N8N_COMMUNITY_PACKAGES_PREVENT_LOADING  = "true"
         N8N_COMMUNITY_PACKAGES_REGISTRY         = "https://npm.internal.example.com:4873/repository/npm"
-      } : one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == name]) == value
+      } : lookup(yamldecode(helm_release.n8n.values[0]).env.shared, name, null) == value
     ])
-    error_message = "Every environment-backed runtime override must render on all n8n pod families through config.extraEnv."
+    error_message = "Every environment-backed runtime override must render on all n8n pod families through env.shared."
   }
 }
 
@@ -4864,7 +4835,6 @@ run "rejects_runtime_values_outside_supported_ranges" {
   command = plan
 
   variables {
-    n8n_worker_concurrency                = 0
     n8n_execution_timeout                 = 0
     n8n_execution_timeout_max             = 0
     n8n_execution_concurrency_limit       = 0
@@ -4877,7 +4847,6 @@ run "rejects_runtime_values_outside_supported_ranges" {
   }
 
   expect_failures = [
-    var.n8n_worker_concurrency,
     var.n8n_execution_timeout,
     var.n8n_execution_timeout_max,
     var.n8n_execution_concurrency_limit,
@@ -4890,11 +4859,24 @@ run "rejects_runtime_values_outside_supported_ranges" {
   ]
 }
 
+# Tombstone for the input removed after 0.1.0 (chart 2.0 dropped
+# queueMode.workerConcurrency). Any non-null value, including the old
+# default of 10, must fail with the migration message rather than be
+# silently ignored.
+run "rejects_removed_worker_concurrency" {
+  command = plan
+
+  variables {
+    n8n_worker_concurrency = 10
+  }
+
+  expect_failures = [var.n8n_worker_concurrency]
+}
+
 run "rejects_fractional_runtime_counts_and_durations" {
   command = plan
 
   variables {
-    n8n_worker_concurrency                = 1.5
     n8n_execution_timeout                 = 1.5
     n8n_execution_timeout_max             = 1.5
     n8n_execution_concurrency_limit       = 1.5
@@ -4907,7 +4889,6 @@ run "rejects_fractional_runtime_counts_and_durations" {
   }
 
   expect_failures = [
-    var.n8n_worker_concurrency,
     var.n8n_execution_timeout,
     var.n8n_execution_timeout_max,
     var.n8n_execution_concurrency_limit,
@@ -5035,8 +5016,8 @@ run "custom_image_volumes_and_environment_render_on_all_pods" {
     condition = (
       length(yamldecode(helm_release.n8n.values[0]).extraVolumes) == 3 &&
       length(yamldecode(helm_release.n8n.values[0]).extraVolumeMounts) == 3 &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_CUSTOM_EXTENSIONS"]) == "/opt/n8n-nodes" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "N8N_DEFAULT_LOCALE"]) == "de"
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_CUSTOM_EXTENSIONS"] == "/opt/n8n-nodes" &&
+      yamldecode(helm_release.n8n.values[0]).env.shared["N8N_DEFAULT_LOCALE"] == "de"
     )
     error_message = "Top-level all-pod volumes, the extension path, and safe additional environment values must render once in the shared chart contract."
   }
@@ -5249,8 +5230,8 @@ run "credentials_overwrite_secret_ref_wires_default_key" {
   # silently drop the env entry, the volume, or the mount from the release.
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "CREDENTIALS_OVERWRITE_DATA_FILE"]) == "/etc/n8n/credentials-overwrite/credentials-overwrite.json" &&
-      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "CREDENTIALS_OVERWRITE_DATA"]) == 0 &&
+      yamldecode(helm_release.n8n.values[0]).env.shared["CREDENTIALS_OVERWRITE_DATA_FILE"] == "/etc/n8n/credentials-overwrite/credentials-overwrite.json" &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).env.shared), "CREDENTIALS_OVERWRITE_DATA") &&
       one([for volume in yamldecode(helm_release.n8n.values[0]).extraVolumes : volume.secret.secretName if volume.name == "credentials-overwrite"]) == "n8n-credentials-overwrite" &&
       one([for mount in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : mount.readOnly if mount.name == "credentials-overwrite"]) == true
     )
@@ -5361,7 +5342,7 @@ run "credentials_overwrite_escape_hatch_remains_valid_when_reference_is_null" {
   assert {
     condition = (
       length(local.n8n_credentials_overwrite_env) == 0 &&
-      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "CREDENTIALS_OVERWRITE_DATA_FILE"]) == 1
+      contains(keys(yamldecode(helm_release.n8n.values[0]).env.shared), "CREDENTIALS_OVERWRITE_DATA_FILE")
     )
     error_message = "With the Secret reference unset, the module must not emit its own CREDENTIALS_OVERWRITE_DATA_FILE next to the caller's escape-hatch entry."
   }
@@ -5424,10 +5405,10 @@ run "worker_extra_env_renders_only_on_worker" {
 
   assert {
     condition = (
-      length([for env in yamldecode(helm_release.n8n.values[0]).queueMode.workerExtraEnv : env if env.name == "N8N_WORKER_CUSTOM_TUNING_FLAG"]) == 1 &&
-      !contains(keys(yamldecode(helm_release.n8n.values[0])), "workerExtraEnv")
+      yamldecode(helm_release.n8n.values[0]).env.worker["N8N_WORKER_CUSTOM_TUNING_FLAG"] == "10" &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).env.shared), "N8N_WORKER_CUSTOM_TUNING_FLAG")
     )
-    error_message = "n8n_worker_extra_env must render under queueMode.workerExtraEnv and nowhere else."
+    error_message = "n8n_worker_extra_env must render under env.worker and nowhere else."
   }
 }
 
@@ -5452,10 +5433,9 @@ run "worker_extra_env_omitted_by_default" {
       principal_id = "44444444-4444-4444-4444-444444444444"
     }
   }
-
   assert {
-    condition     = !contains(keys(yamldecode(helm_release.n8n.values[0]).queueMode), "workerExtraEnv")
-    error_message = "queueMode.workerExtraEnv must be omitted entirely when n8n_worker_extra_env is empty (the default), not sent as an empty list."
+    condition     = yamldecode(helm_release.n8n.values[0]).env.worker == {}
+    error_message = "env.worker must render as an empty map when n8n_worker_extra_env is empty (the default)."
   }
 }
 
@@ -5923,32 +5903,26 @@ run "azure_binary_defaults_and_disabled_observability_render" {
         N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME     = "n8ntestn8nfiles"
         N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME   = "n8n-data"
         N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT = "true"
-      } : one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == name]) == value
+      } : lookup(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared, name, null) == value
     ])
     error_message = "Azure binary defaults and DefaultAzureCredential settings must render through the all-pod environment contract."
   }
 
   assert {
-    condition = length([
-      for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
-      if env.name == "N8N_AVAILABLE_BINARY_DATA_MODES"
-    ]) == 0
+    condition     = !contains(keys(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared), "N8N_AVAILABLE_BINARY_DATA_MODES")
     error_message = "N8N_AVAILABLE_BINARY_DATA_MODES must not render; n8n 2.x ignores it and logs it as deprecated."
   }
 
   assert {
     condition = length([
-      for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
-      if env.name == "N8N_METRICS" || startswith(env.name, "N8N_OTEL_") || startswith(env.name, "N8N_LOG_STREAMING_")
+      for k in keys(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared) : k
+      if k == "N8N_METRICS" || startswith(k, "N8N_OTEL_") || startswith(k, "N8N_LOG_STREAMING_")
     ]) == 0
     error_message = "Metrics, OpenTelemetry, and log-streaming variables must be absent at their disabled defaults."
   }
 
   assert {
-    condition = one([
-      for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value
-      if env.name == "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS"
-    ]) == "true"
+    condition     = yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared["N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS"] == "true"
     error_message = "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS must always render true now that no shared-filesystem mode exists."
   }
 }
@@ -5999,8 +5973,8 @@ run "azure_execution_mode_is_independent_from_binary_mode" {
 
   assert {
     condition = (
-      one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == "N8N_DEFAULT_BINARY_DATA_MODE"]) == "database" &&
-      one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == "N8N_EXECUTION_DATA_STORAGE_MODE"]) == "azure" &&
+      yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared["N8N_DEFAULT_BINARY_DATA_MODE"] == "database" &&
+      yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared["N8N_EXECUTION_DATA_STORAGE_MODE"] == "azure" &&
       local.n8n_azure_storage_enabled &&
       length(azurerm_storage_management_policy.n8n_binary) == 0
     )
@@ -6052,12 +6026,12 @@ run "connection_string_auth_takes_precedence" {
 
   assert {
     condition = (
-      one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == "N8N_EXTERNAL_STORAGE_AZURE_CONNECTION_STRING"]) == "DefaultEndpointsProtocol=https;AccountName=n8ntestn8nfiles;AccountKey=synthetic" &&
-      length([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env if contains([
+      yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared["N8N_EXTERNAL_STORAGE_AZURE_CONNECTION_STRING"] == "DefaultEndpointsProtocol=https;AccountName=n8ntestn8nfiles;AccountKey=synthetic" &&
+      length([for k in keys(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared) : k if contains([
         "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME",
         "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_KEY",
         "N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT",
-      ], env.name)]) == 0
+      ], k)]) == 0
     )
     error_message = "Connection-string authentication must take precedence and omit account-name, account-key, and auto-detect variables."
   }
@@ -6204,7 +6178,7 @@ run "retained_azure_read_access_renders_existing_container_connection" {
         N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME   = "existing-container"
         N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_NAME     = "existingaccount"
         N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT = "true"
-      } : contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = name, value = value })
+      } : lookup(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared, name, null) == value
     ])
     error_message = "Retained Azure read access on a caller-managed container must render that container's connection with workload-identity auto-detection while both write modes are database."
   }
@@ -6239,12 +6213,9 @@ run "retained_azure_read_access_renders_account_key_connection" {
   assert {
     condition = (
       length(azurerm_role_assignment.n8n_blob_data_contributor) == 0 &&
-      contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME", value = "n8n-data" }) &&
-      contains(yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv, { name = "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_KEY", value = "synthetic-storage-account-key" }) &&
-      length([
-        for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
-        if env.name == "N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT"
-      ]) == 0
+      lookup(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared, "N8N_EXTERNAL_STORAGE_AZURE_CONTAINER_NAME", null) == "n8n-data" &&
+      lookup(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared, "N8N_EXTERNAL_STORAGE_AZURE_ACCOUNT_KEY", null) == "synthetic-storage-account-key" &&
+      !contains(keys(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared), "N8N_EXTERNAL_STORAGE_AZURE_AUTH_AUTO_DETECT")
     )
     error_message = "Retained Azure read access with account-key authentication must render the container and account key, no auto-detection, and no workload-identity role assignment."
   }
@@ -6276,8 +6247,8 @@ run "database_only_modes_render_no_azure_connection" {
 
   assert {
     condition = length([
-      for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env
-      if startswith(env.name, "N8N_EXTERNAL_STORAGE_AZURE_")
+      for k in keys(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared) : k
+      if startswith(k, "N8N_EXTERNAL_STORAGE_AZURE_")
     ]) == 0
     error_message = "Without an Azure mode or azure_blob_retain_read_access, no Azure storage connection variable may render."
   }
@@ -6335,10 +6306,12 @@ run "renders_legacy_webhook_url_for_pre_2_30_images" {
   }
 
   assert {
-    condition = local.n8n_needs_legacy_webhook_url_env && local.n8n_webhook_url_env == [
-      { name = "N8N_WEBHOOK_URL", value = "https://hooks.example.com" },
-      { name = "WEBHOOK_URL", value = "https://hooks.example.com" },
-    ]
+    condition = (
+      local.n8n_needs_legacy_webhook_url_env &&
+      length(local.n8n_legacy_webhook_url_env) == 1 &&
+      local.n8n_legacy_webhook_url_env[0].name == "WEBHOOK_URL" &&
+      local.n8n_legacy_webhook_url_env[0].value == "https://hooks.example.com"
+    )
     error_message = "An n8n image older than 2.30.0 must receive WEBHOOK_URL with the same value as N8N_WEBHOOK_URL."
   }
 }
@@ -6351,9 +6324,7 @@ run "omits_legacy_webhook_url_from_2_30_0" {
   }
 
   assert {
-    condition = !local.n8n_needs_legacy_webhook_url_env && local.n8n_webhook_url_env == [
-      { name = "N8N_WEBHOOK_URL", value = "https://n8n.example.com" },
-    ]
+    condition     = !local.n8n_needs_legacy_webhook_url_env && length(local.n8n_legacy_webhook_url_env) == 0
     error_message = "n8n 2.30.0 and later read N8N_WEBHOOK_URL, so the deprecated WEBHOOK_URL must not render."
   }
 }
@@ -6464,7 +6435,7 @@ run "observability_controls_render_on_all_pods" {
         N8N_OTEL_TRACES_INJECT_OUTBOUND    = "false"
         N8N_OTEL_TRACES_PRODUCTION_ONLY    = "false"
         N8N_LOG_STREAMING_MANAGED_BY_ENV   = "true"
-      } : one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == name]) == value
+      } : lookup(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared, name, null) == value
     ])
     error_message = "Metrics and every OpenTelemetry control must render through the shared all-pod environment list."
   }
@@ -6481,9 +6452,9 @@ run "observability_controls_render_on_all_pods" {
 
   assert {
     condition = (
-      strcontains(one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == "N8N_LOG_STREAMING_DESTINATIONS"]), "\"type\":\"webhook\"") &&
-      strcontains(one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == "N8N_LOG_STREAMING_DESTINATIONS"]), "\"type\":\"syslog\"") &&
-      strcontains(one([for env in yamldecode(nonsensitive(helm_release.n8n.values[0])).config.extraEnv : env.value if env.name == "N8N_LOG_STREAMING_DESTINATIONS"]), "\"type\":\"sentry\"")
+      strcontains(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared["N8N_LOG_STREAMING_DESTINATIONS"], "\"type\":\"webhook\"") &&
+      strcontains(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared["N8N_LOG_STREAMING_DESTINATIONS"], "\"type\":\"syslog\"") &&
+      strcontains(yamldecode(nonsensitive(helm_release.n8n.values[0])).env.shared["N8N_LOG_STREAMING_DESTINATIONS"], "\"type\":\"sentry\"")
     )
     error_message = "Typed webhook, syslog, and Sentry destinations must be JSON encoded into N8N_LOG_STREAMING_DESTINATIONS."
   }
@@ -7216,10 +7187,7 @@ run "single_main_retains_default_floating_license_detach" {
   }
 
   assert {
-    condition = contains(
-      yamldecode(helm_release.n8n.values[0]).config.extraEnv,
-      { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = "false" },
-    )
+    condition     = yamldecode(helm_release.n8n.values[0]).env.shared["N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN"] == "false"
     error_message = "Single-main must retain the same N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false default as multi-main."
   }
 }
@@ -7247,10 +7215,7 @@ run "multi_main_retains_default_floating_license_detach" {
   }
 
   assert {
-    condition = contains(
-      yamldecode(helm_release.n8n.values[0]).config.extraEnv,
-      { name = "N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN", value = "false" },
-    )
+    condition     = yamldecode(helm_release.n8n.values[0]).env.shared["N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN"] == "false"
     error_message = "Multi-main (the default) must render N8N_LICENSE_DETACH_FLOATING_ON_SHUTDOWN=false."
   }
 }
@@ -9232,10 +9197,10 @@ run "accepts_postgres_runtime_timing_on_external_database" {
 
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"]) == "45000" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_TIMEOUT_MS"]) == "15000" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_INTERVAL_SECONDS"]) == "5" &&
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_PING_MAX_FAILURES_BEFORE_RECOVERY"]) == "6" &&
+      yamldecode(helm_release.n8n.values[0]).env.shared["DB_POSTGRESDB_CONNECTION_TIMEOUT"] == "45000" &&
+      yamldecode(helm_release.n8n.values[0]).env.shared["DB_PING_TIMEOUT_MS"] == "15000" &&
+      yamldecode(helm_release.n8n.values[0]).env.shared["DB_PING_INTERVAL_SECONDS"] == "5" &&
+      yamldecode(helm_release.n8n.values[0]).env.shared["DB_PING_MAX_FAILURES_BEFORE_RECOVERY"] == "6" &&
       length(azurerm_postgresql_flexible_server.n8n) == 0
     )
     error_message = "All four PostgreSQL timing overrides must render on the external database path without creating a managed Flexible Server."
@@ -9267,8 +9232,8 @@ run "accepts_postgres_connection_timeout_zero" {
 
   assert {
     condition = (
-      one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_CONNECTION_TIMEOUT"]) == "0" &&
-      length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_PING_TIMEOUT_MS"]) == 0
+      yamldecode(helm_release.n8n.values[0]).env.shared["DB_POSTGRESDB_CONNECTION_TIMEOUT"] == "0" &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0]).env.shared), "DB_PING_TIMEOUT_MS")
     )
     error_message = "An explicit zero connection timeout must render as DB_POSTGRESDB_CONNECTION_TIMEOUT=0 without implying the independently configured ping timeout."
   }
@@ -9382,11 +9347,11 @@ run "renders_queue_worker_settings_on_redis_worker_block" {
       yamldecode(helm_release.n8n.values[0]).redis.worker.lockRenewTime == 15000 &&
       yamldecode(helm_release.n8n.values[0]).redis.worker.stalledInterval == 45000 &&
       length([
-        for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env
-        if startswith(env.name, "QUEUE_WORKER_")
+        for k in keys(yamldecode(helm_release.n8n.values[0]).env.shared) : k
+        if startswith(k, "QUEUE_WORKER_")
       ]) == 0
     )
-    error_message = "All three worker timing overrides must render on the chart-native redis.worker block, and no QUEUE_WORKER_* name may be duplicated in config.extraEnv."
+    error_message = "All three worker timing overrides must render on the chart-native redis.worker block, and no QUEUE_WORKER_* name may be duplicated in env.shared."
   }
 }
 
@@ -9741,8 +9706,8 @@ run "renders_node_heap_ceiling_on_helm_values" {
   }
 
   assert {
-    condition     = one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "NODE_OPTIONS"]) == "--max-old-space-size=768"
-    error_message = "config.extraEnv must render NODE_OPTIONS=--max-old-space-size=768 when n8n_node_max_old_space_size_mb is set."
+    condition     = yamldecode(helm_release.n8n.values[0]).env.shared["NODE_OPTIONS"] == "--max-old-space-size=768"
+    error_message = "env.shared must render NODE_OPTIONS=--max-old-space-size=768 when n8n_node_max_old_space_size_mb is set."
   }
 }
 
@@ -10798,10 +10763,14 @@ run "worker_pools_map_each_pool_to_its_own_queue" {
   }
 }
 
-# Every per-pool sizing attribute is optional and falls back to the module-wide
-# worker setting. A pool that overrides nothing must be sized exactly like the
-# chart's own workers, or the pools quietly get different resources than the
-# deployment they sit beside.
+# Every per-pool resource sizing attribute is optional and falls back to the
+# module-wide worker setting. A pool that overrides nothing must be sized
+# exactly like the chart's own workers, or the pools quietly get different
+# resources than the deployment they sit beside. Concurrency is the one
+# exception: chart 2.0 dropped queueMode.workerConcurrency, so a pool that
+# does not set its own concurrency renders no --concurrency flag at all
+# (n8n_worker_concurrency, the former module-wide fallback, is a removed
+# tombstone), same as the default worker.
 run "worker_pools_inherit_module_wide_worker_sizing" {
   command = plan
 
@@ -10815,13 +10784,13 @@ run "worker_pools_inherit_module_wide_worker_sizing" {
 
   assert {
     condition = (
-      local.n8n_worker_groups[0].concurrency == var.n8n_worker_concurrency &&
+      local.n8n_worker_groups[0].concurrency == null &&
       local.n8n_worker_groups[0].resources.requests.cpu == var.n8n_worker_cpu_request &&
       local.n8n_worker_groups[0].resources.requests.memory == var.n8n_worker_memory_request &&
       local.n8n_worker_groups[0].resources.limits.cpu == var.n8n_worker_cpu_limit &&
       local.n8n_worker_groups[0].resources.limits.memory == var.n8n_worker_memory_limit
     )
-    error_message = "a pool that overrides no sizing must inherit the module-wide n8n_worker_* concurrency and resources"
+    error_message = "a pool that overrides no sizing must render no --concurrency flag and inherit the module-wide n8n_worker_* resources"
   }
 }
 
