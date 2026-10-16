@@ -364,3 +364,14 @@ run "customer_managed_everything_single_main_override" {
     error_message = "Selecting single-main must not change any caller-owned resource targeting."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}
+

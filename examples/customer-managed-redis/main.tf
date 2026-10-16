@@ -275,7 +275,6 @@ module "n8n" {
   app_gateway_keyvault_role_assignment_enabled = true
 
   n8n_license_key = var.n8n_license_key
-
   depends_on = [
     time_sleep.storage_rbac,
     azurerm_private_endpoint.redis,

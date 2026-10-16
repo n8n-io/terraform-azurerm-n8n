@@ -157,3 +157,13 @@ run "large_tier_single_main_override" {
     error_message = "Selecting single-main must not change the external PostgreSQL/PgBouncer contract, including its unchanged pool-size argument."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}

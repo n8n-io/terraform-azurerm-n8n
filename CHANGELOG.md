@@ -11,6 +11,18 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Added
 
+- Every example sets the azurerm provider's `partner_id` from a new
+  `partner_id` variable for Azure Customer Usage Attribution, the Azure
+  counterpart of `terraform-aws-n8n`'s partner tag. It defaults to n8n's
+  Microsoft-issued tracking GUID; set `partner_id = null` to opt out (the
+  provider then falls back to `ARM_PARTNER_ID`). A non-null default overrides
+  `ARM_PARTNER_ID`. The module itself has no attribution input because it
+  configures no providers. Confirmed live: every Azure Resource Manager
+  request of an `examples/small` apply carried `pid-<guid>` in the provider
+  user agent. No node tagging is needed: AKS applies cluster `tags` to the
+  node resource group's resources and node-pool `tags` to the VMSS
+  (unverified live). See `openspec/changes/add-azure-partner-attribution/`.
+
 - Seven opt-in AKS network and identity inputs, all defaulting to the
   module's current behavior so an existing caller sees no plan diff
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)):

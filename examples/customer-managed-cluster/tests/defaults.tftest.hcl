@@ -297,3 +297,13 @@ run "customer_managed_cluster_retention_overrides" {
     error_message = "An explicit blob_delete_retention_days override must pass through to the root module unchanged."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}

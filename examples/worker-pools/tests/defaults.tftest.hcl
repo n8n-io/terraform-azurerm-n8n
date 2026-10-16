@@ -270,3 +270,13 @@ run "worker_pools_example_plan" {
     error_message = "The worker-pools example must preserve its documented node capacity sizing."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}

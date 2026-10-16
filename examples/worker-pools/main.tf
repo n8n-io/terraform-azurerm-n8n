@@ -285,7 +285,6 @@ module "n8n" {
 
   n8n_license_key = var.n8n_license_key
   n8n_image_tag   = var.n8n_image_tag
-
   # ── Chart ───────────────────────────────────────────────────────────────────
   # n8n_chart_version is required by this example: the module default
   # predates queueMode.workerGroups and would render no pools. See the

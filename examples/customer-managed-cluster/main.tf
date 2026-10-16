@@ -246,7 +246,6 @@ module "n8n" {
 
   n8n_domain      = var.n8n_domain
   n8n_license_key = var.n8n_license_key
-
   depends_on = [
     time_sleep.storage_rbac,
     azurerm_kubernetes_cluster.existing,

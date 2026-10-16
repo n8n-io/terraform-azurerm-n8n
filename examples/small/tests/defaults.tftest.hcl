@@ -146,3 +146,13 @@ run "small_tier_blob_delete_retention_days_override" {
     error_message = "Setting blob_delete_retention_days must not change unrelated example outputs."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}
