@@ -202,7 +202,10 @@ locals {
   # The chart creates the workload-identity service account by default. It does
   # not expose imagePullSecrets, so the module takes ownership only when callers
   # provide existing registry Secret names. A distinct name avoids colliding
-  # with the chart-owned account while one apply switches ownership.
+  # with the chart-owned account while one apply switches ownership. Chart 2.0
+  # adds a native top-level imagePullSecrets value (n8n-hosting#180), but it
+  # attaches to the chart's own ServiceAccount, not a workload-identity one, so
+  # this module keeps the distinct-ServiceAccount path.
   n8n_manages_service_account = length(var.n8n_image_pull_secrets) > 0
   n8n_service_account_name    = local.n8n_manages_service_account ? "n8n-enterprise-pull" : "n8n-enterprise"
 

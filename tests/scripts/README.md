@@ -369,10 +369,10 @@ file.
 | `BLOB_CONTAINER_NAME` | *(from `terraform output`)* | Expected Azure Blob container name, cross-checked against the main pod's Blob environment |
 | `N8N_API_KEY` | — | API key for API and workflow execution tests |
 | `LOAD_TEST` | `false` | Set to `true` to run the worker scaling test |
-| `LOAD_REQUESTS` | `100` | Webhook executions to fire during the load test |
-| `LOAD_CONCURRENCY` | `20` | Concurrent in-flight webhook calls |
-| `LOAD_SEED_JOBS` | `40` | Jobs queued in phase 1 to trigger the autoscaler (see [Why 40?](#why-load_seed_jobs--40)) |
-| `LOAD_JOB_DURATION_SECS` | `15` | CPU burn per worker job (seconds) |
+| `LOAD_REQUESTS` | `20` | Webhook executions to fire during the load test (placeholder, uncalibrated for chart 2.0) |
+| `LOAD_CONCURRENCY` | `10` | Concurrent in-flight webhook calls |
+| `LOAD_SEED_JOBS` | `10` | Jobs queued in phase 1 to trigger the autoscaler (placeholder; see [Seed job calibration](#seed-job-calibration)) |
+| `LOAD_JOB_DURATION_SECS` | `5` | CPU burn per worker job (seconds, placeholder) |
 | `SCALE_WAIT_SECS` | `240` | Seconds to wait for the autoscaler to react |
 
 **Priority:** `.env` values → environment variables → Terraform outputs
@@ -425,7 +425,7 @@ default polling interval is 15 s and the ScaledObject's `cooldownPeriod`
 is 300 s, so `SCALE_WAIT_SECS = 240` has comfortable headroom for two or
 three poll cycles before the warning fires.
 
-### Why `LOAD_SEED_JOBS = 40`?
+### Seed job calibration
 
 KEDA only scales when `bull:jobs:wait` exceeds `listLength × replicas`.
 
@@ -438,25 +438,17 @@ whose default is **100**, not the chart's former `workerConcurrency`
 default of 10. With the module's other defaults —
 `n8n_worker_keda_min_replicas = 2` (the floor) and
 `n8n_worker_keda_target_list_length = 5` (the per-replica wait-queue
-target) — the cluster now runs `2 × 100 = 200` jobs concurrently, so the
-seed has to push past `2 × 5 = 10` jobs in the wait queue *and* past the
-200 in-flight slots before KEDA notices: **210 jobs**, not the 30 this
-section used to derive from the chart's old default.
+target) — the cluster runs `2 × 100 = 200` jobs concurrently, so a seed
+that builds queue depth would have to exceed `2 × 5 = 10` waiting jobs
+*and* the 200 in-flight slots: about **210 jobs**.
 
-`LOAD_SEED_JOBS = 40` predates that change and no longer clears this
-floor; recalibrating it is a separate change from the chart 2.0 values
-migration this check-n8n-chart.sh/chart-values-diff.sh/verify-worker-pools.sh
-update covers; do not reuse this default when relying on the autoscaler to
-actually scale up until it is recalibrated against the production-limit
-floor above. Lower (or raise) the seed only alongside
-`n8n_execution_concurrency_limit` or
-`n8n_worker_keda_target_list_length`, whichever moves the floor.
-
-The load-test default also sets `LOAD_JOB_DURATION_SECS = 15` (vs the
-AWS sibling's 10), sized against the chart's old 20-in-flight assumption
-above so the 40 seed jobs wouldn't drain before KEDA's first poll cycle;
-it is subject to the same recalibration note as `LOAD_SEED_JOBS` now that
-the real in-flight ceiling is 200, not 20.
+The current defaults (`LOAD_REQUESTS=20`, `LOAD_SEED_JOBS=10`,
+`LOAD_JOB_DURATION_SECS=5`) are deliberately low **placeholders**, not
+calibrated for chart 2.0. At these values the queue will not build and the
+script's scale-up assertion warns harmlessly. To exercise the autoscaler
+either raise the values to the floor above or lower
+`n8n_execution_concurrency_limit` and `n8n_worker_keda_target_list_length`
+for the test, then pick real defaults.
 
 ## Running against a remote deployment
 

@@ -736,6 +736,73 @@ variable itself from `database.ssl.enabled`.
 `n8n_legacy_webhook_url_env`** to match the chart's current naming; no
 behavior change.
 
+**Every non-env chart 2.0 change is inert for this module.** Issue #90
+audited every other template/values/schema/decision change between chart
+`v1.14.0` and the `feat/chart-2.0` checkout (decisions 0002-0009, 0020;
+`queueMode.workerGroups` is out of scope — see "port-aws-040-enhancements"
+above). None needs a code change:
+
+- **Decision 0004 (PDB renders only with a second main pod).** `n8n.tf`
+  already sends `pdb.minAvailable = 0` for single-main and `1` for
+  multi-main — a pre-existing workaround (port-aws-040-enhancements) for
+  the same problem this chart decision later fixes upstream. On chart 2.0
+  the object is omitted entirely for single-main instead of rendered with
+  `minAvailable = 0`; the operator-facing outcome (voluntary eviction
+  allowed) is identical, one fewer object in the cluster.
+  `check-n8n-chart.sh`'s single-main fixture already asserts the omission
+  against the chart 2.0 checkout.
+- **Decision 0005 (several mains need `multiMain` and a licence).** This
+  module always sets `license.enabled = true` (an Enterprise key is a hard
+  requirement), ties `multiMain.enabled` to the same
+  `n8n_main_hpa_min_replicas > 1` selector that drives `replicaCount` and
+  `hpa.main.maxReplicas`, and clamps the single-main HPA ceiling to `1`
+  (`n8n_main_hpa_effective_max_replicas`). None of decision 0005's three
+  render-time failure conditions can trigger.
+- **Decision 0005 (security context set per role).** The chart's new
+  `podSecurityContext.<role>` / `containerSecurityContext.<role>` maps
+  default to the exact values the old single `securityContext` block and
+  hardcoded container settings rendered; this module sets neither map, so
+  rendered manifests are unchanged.
+- **Decision 0008 (image digest replaces tag).** This module always sets
+  `image.tag` / `taskRunners.image.tag` and never `image.digest`, so the
+  tag path stays in effect.
+- **Decision 0009 (every role starts through the image entrypoint).** This
+  module never sets `command` on an n8n container — `n8n_prestop_sleep`
+  renders the chart's `lifecycle.preStop.command` key, the pod's preStop
+  hook, not the container's entrypoint — so the chart's switch from
+  `command: ["n8n"]` to `args`-only on worker/webhook-processor containers
+  is invisible here.
+- **Decision 0002 (task-runner liveness probe).** The module sets no
+  `taskRunners.probes.*` and no `N8N_RUNNERS_LAUNCHER_HEALTH_CHECK_PORT`,
+  so the chart's new default probe (port 5680, enabled) applies
+  unmodified — an upstream reliability improvement with no module input.
+- **Decision 0002 (Postgres TLS from an existing Secret) and the
+  encryption-key-file decision.** This module only ever sets
+  `database.ssl.ca` inline and `secretRefs.existingSecret` by name
+  (reading exactly `N8N_ENCRYPTION_KEY`); it never sets
+  `database.ssl.key`/`.cert`/`.existingSecret` or
+  `secretRefs.env.N8N_ENCRYPTION_KEY_FILE`, so neither new chart
+  capability changes what this module renders.
+- **Decision 0003 (`extraObjects` rendered with `tpl`) and the new
+  root-level `persistence.annotations`, `hostAliases`, and
+  `imagePullSecrets` chart keys.** This module sets none of them — it
+  manages Ingress, image-pull Secrets, and host-file entries through its
+  own Terraform resources, and `persistence.enabled` stays the chart's
+  `false` default because storage is Azure Blob, not a PVC — so these are
+  additive chart capabilities with no module-side effect.
+- **Decision 0020 (retired keys fail the render).** The only values this
+  chart version retires are the `extraEnv`/`extraEnvFrom` lists and
+  `secretRefs.env.N8N_HOST`/`N8N_PROTOCOL`/`N8N_PORT`, all already covered
+  above.
+
+`tests/scripts/check-n8n-chart.sh` run with `N8N_CHART_PATH` pointed at the
+chart 2.0 checkout passes end to end (aside from the known,
+separately-tracked worker-pools-preview section) with no code change for
+any of the above. `tests/scripts/smoke-test.sh`'s live PDB assertion
+(`minAvailable` 0 or 1, never "absent") still matches reality because
+`n8n_chart_version`'s default stays `1.14.0`; it needs an update only when
+that default actually moves to a `2.0.x` chart.
+
 
 ## What this repo is
 

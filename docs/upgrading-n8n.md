@@ -68,6 +68,16 @@ lockstep with this change, so read this section as the shipped behavior of
 - **`WEBHOOK_URL` legacy-image fallback renamed `n8n_legacy_webhook_url_env`.**
   A `locals.tf` rename only, matching the chart's current naming; no
   behavior change.
+- **Every other chart 2.0 change is inert for this module's inputs** — no
+  variable changes behavior — but two are visible in what gets deployed:
+  - **Single-main's `PodDisruptionBudget` disappears instead of rendering
+    with `minAvailable: 0`.** Same effective behavior (voluntary eviction
+    allowed, no protected replica), one fewer object in the cluster.
+  - **The task-runner sidecar gains a liveness probe** when
+    `n8n_task_runners_enabled = true` (port 5680, 5s initial delay, 6
+    failures over ~3 minutes before a restart). Pods carrying the sidecar
+    roll once to pick it up.
+  See `AGENTS.md`'s "Chart 2.0 adoption" section for the full audit.
 
 Every pod restarts once on this upgrade, because its environment moves into
 the new per-component ConfigMaps.

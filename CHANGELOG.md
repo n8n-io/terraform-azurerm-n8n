@@ -43,6 +43,19 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   - The `WEBHOOK_URL` legacy-image fallback local is renamed
     `n8n_legacy_webhook_url_env` to match the chart's current naming; no
     behavior change.
+  - Audited every other chart `2.0` template/values/schema change
+    ([#90](https://github.com/n8n-io/terraform-azurerm-n8n/issues/90),
+    decisions 0002-0009 and 0020; `queueMode.workerGroups` is out of
+    scope, matching `worker-pools.tf`'s own chart-feature gate). None
+    needs a module code change: the PDB, multi-main/licence, per-role
+    security context, image digest, entrypoint, task-runner liveness
+    probe, Postgres TLS Secret, encryption-key-file, `extraObjects`, and
+    persistence-annotation changes are all inert for this module's
+    inputs. Two are visible in what gets deployed without any input
+    change — single-main's PDB disappears instead of rendering with
+    `minAvailable: 0`, and the task-runner sidecar gains a default
+    liveness probe — see `docs/upgrading-n8n.md` and `AGENTS.md`'s
+    "Chart 2.0 adoption" section.
 
 - Seven opt-in AKS network and identity inputs, all defaulting to the
   module's current behavior so an existing caller sees no plan diff

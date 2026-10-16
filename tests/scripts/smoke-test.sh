@@ -133,26 +133,21 @@ WORKER_MIN=1
 WEBHOOK_MIN=2
 
 # Multi-main optional load-test settings — no-ops unless LOAD_TEST=true.
-# `LOAD_SEED_JOBS=40` was calibrated to clear the pinned chart's stock
-# `queueMode.workerConcurrency=10` × `n8n_worker_keda_min_replicas=2` =
-# 20 in-flight slots AND push at least 10 jobs into `bull:jobs:wait` (the
-# KEDA trigger threshold = `listLength=5` × 2 replicas), which together
-# give KEDA something to scale on. Chart 2.0 no longer renders
-# `queueMode.workerConcurrency` (decision 0012: it fails the render
-# alongside `executions.concurrency.productionLimit`, which this module
-# always sets); each worker's concurrency now comes entirely from
+# PLACEHOLDER DEFAULTS, deliberately low and NOT calibrated for chart 2.0.
+# Chart 2.0 no longer renders `queueMode.workerConcurrency` (it fails the
+# render alongside `executions.concurrency.productionLimit`, which this
+# module always sets); each worker's concurrency now comes entirely from
 # `N8N_CONCURRENCY_PRODUCTION_LIMIT` (`n8n_execution_concurrency_limit`,
-# default 100, not 10 — see tests/scripts/README.md's "Worker scaling
-# test" section for the real in-flight ceiling this implies). Lower the
-# seed only if you've also lowered `n8n_execution_concurrency_limit` or
-# the KEDA target list-length; otherwise the load test can complete
-# without any queue depth ever accumulating and the autoscaler-scale-up
-# assertion warns harmlessly.
+# default 100, not 10), so the in-flight ceiling is far above these seed
+# counts and the queue depth KEDA scales on may never accumulate. The
+# autoscaler-scale-up assertion then warns harmlessly. Raise the values
+# (or lower `n8n_execution_concurrency_limit`) once recalibrated; see
+# tests/scripts/README.md's "Worker scaling test" section.
 LOAD_TEST="${LOAD_TEST:-false}"
-LOAD_REQUESTS="${LOAD_REQUESTS:-100}"
-LOAD_CONCURRENCY="${LOAD_CONCURRENCY:-20}"
-LOAD_SEED_JOBS="${LOAD_SEED_JOBS:-40}"      # phase 1: jobs queued to trigger the autoscaler (see comment above)
-LOAD_JOB_DURATION_SECS="${LOAD_JOB_DURATION_SECS:-15}"
+LOAD_REQUESTS="${LOAD_REQUESTS:-20}"
+LOAD_CONCURRENCY="${LOAD_CONCURRENCY:-10}"
+LOAD_SEED_JOBS="${LOAD_SEED_JOBS:-10}"      # phase 1: jobs queued to trigger the autoscaler (see comment above)
+LOAD_JOB_DURATION_SECS="${LOAD_JOB_DURATION_SECS:-5}"
 SCALE_WAIT_SECS="${SCALE_WAIT_SECS:-240}"
 
 # Curl timeout used by the non-load-test reachability checks.

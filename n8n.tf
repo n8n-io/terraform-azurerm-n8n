@@ -56,7 +56,11 @@ resource "kubernetes_namespace" "n8n" {
 # When callers provide existing registry Secret names, Terraform creates a
 # distinct ServiceAccount that carries those references and the Azure workload
 # identity annotation. Secret contents remain caller-owned and never enter this
-# module's inputs or state through this contract.
+# module's inputs or state through this contract. Chart 2.0 adds a native
+# top-level imagePullSecrets value (n8n-hosting#180) that renders directly on
+# each pod spec using the chart's own ServiceAccount; this module keeps its
+# distinct-ServiceAccount path because the chart's key carries no workload-
+# identity annotation, so adopting it would need this same override anyway.
 resource "kubernetes_service_account_v1" "n8n" {
   count = local.n8n_manages_service_account ? 1 : 0
 
@@ -599,7 +603,11 @@ resource "helm_release" "n8n" {
 
     # Single-main allows voluntary eviction (minAvailable = 0) because
     # Recreate already accepts the resulting downtime; multi-main protects
-    # one available replica during voluntary disruption.
+    # one available replica during voluntary disruption. Chart 2.0 (decision
+    # 0004) renders no PDB at all for single-main instead of one with
+    # minAvailable = 0 — the same operator-facing outcome, one fewer object
+    # in the cluster. check-n8n-chart.sh's single-main fixture asserts that
+    # omission against the chart 2.0 checkout.
     pdb = {
       enabled      = true
       minAvailable = local.n8n_main_multi_enabled ? 1 : 0
