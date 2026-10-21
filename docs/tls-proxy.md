@@ -22,7 +22,7 @@ n8n_extra_env = [
 ]
 ```
 
-- The PEM is stored in a module-managed Secret (`n8n-ca-bundle`) and mounted
+- The PEM is stored in a module-managed Secret (`n8n-ca-bundle-secret`) and mounted
   read-only at `/etc/n8n-certs/ca-bundle.crt` on the main, worker, and
   webhook-processor pods. `NODE_EXTRA_CA_CERTS` points at it. While the input
   is set, `NODE_EXTRA_CA_CERTS` is rejected in `n8n_extra_env`,

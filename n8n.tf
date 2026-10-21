@@ -187,7 +187,7 @@ resource "kubernetes_secret" "n8n_task_runners" {
 }
 
 # Caller-supplied extra CA (n8n_extra_ca_pem). Public certificates only.
-resource "kubernetes_secret" "n8n_ca_bundle" {
+resource "kubernetes_secret_v1" "n8n_ca_bundle" {
   count = local.n8n_extra_ca_enabled ? 1 : 0
 
   metadata {
@@ -726,7 +726,7 @@ resource "helm_release" "n8n" {
     azurerm_federated_identity_credential.n8n_workload,
     kubernetes_service_account_v1.n8n,
     kubernetes_secret.n8n_task_runners,
-    kubernetes_secret.n8n_ca_bundle,
+    kubernetes_secret_v1.n8n_ca_bundle,
     # n8n only exits on an Azure connection failure while Azure is a write
     # mode; for azure_blob_retain_read_access it logs nothing and starts
     # without the Azure reader. Create the grant before the release rolls

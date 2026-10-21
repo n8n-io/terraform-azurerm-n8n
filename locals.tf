@@ -287,7 +287,7 @@ locals {
       {
         name = "ca-bundle"
         secret = {
-          secretName = "n8n-ca-bundle"
+          secretName = local.n8n_extra_ca_secret_name
           items      = [{ key = "ca.crt", path = "ca.crt" }]
         }
       },
@@ -343,7 +343,7 @@ locals {
   # variable rejects it only while the input is set, so callers already
   # delivering a CA through n8n_extra_env keep working.
   n8n_extra_ca_enabled     = var.n8n_extra_ca_pem != null
-  n8n_extra_ca_secret_name = "n8n-ca-bundle"
+  n8n_extra_ca_secret_name = "n8n-ca-bundle-secret"
   n8n_extra_ca_mount_path  = "/etc/n8n-certs/ca-bundle.crt"
 
   n8n_extra_ca_env = local.n8n_extra_ca_enabled ? [

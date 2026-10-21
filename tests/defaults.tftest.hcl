@@ -13259,7 +13259,7 @@ run "extra_ca_default_omits_bundle" {
 
   assert {
     condition = (
-      length(kubernetes_secret.n8n_ca_bundle) == 0 &&
+      length(kubernetes_secret_v1.n8n_ca_bundle) == 0 &&
       length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "NODE_EXTRA_CA_CERTS"]) == 0 &&
       length([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "ca-bundle"]) == 0
     )
@@ -13292,8 +13292,8 @@ run "extra_ca_renders_secret_volume_mount_and_env" {
 
   assert {
     condition = (
-      length(kubernetes_secret.n8n_ca_bundle) == 1 &&
-      kubernetes_secret.n8n_ca_bundle[0].data["ca.crt"] == "-----BEGIN CERTIFICATE-----\nMIIBsynthetic\n-----END CERTIFICATE-----"
+      length(kubernetes_secret_v1.n8n_ca_bundle) == 1 &&
+      kubernetes_secret_v1.n8n_ca_bundle[0].data["ca.crt"] == "-----BEGIN CERTIFICATE-----\nMIIBsynthetic\n-----END CERTIFICATE-----"
     )
     error_message = "The PEM must be stored trimmed under ca.crt in a module-managed Secret."
   }
@@ -13301,7 +13301,7 @@ run "extra_ca_renders_secret_volume_mount_and_env" {
   assert {
     condition = (
       one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "NODE_EXTRA_CA_CERTS"]) == "/etc/n8n-certs/ca-bundle.crt" &&
-      one([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v.secret.secretName if v.name == "ca-bundle"]) == "n8n-ca-bundle" &&
+      one([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v.secret.secretName if v.name == "ca-bundle"]) == "n8n-ca-bundle-secret" &&
       one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "ca-bundle"]).mountPath == "/etc/n8n-certs/ca-bundle.crt" &&
       one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "ca-bundle"]).readOnly == true &&
       one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "ca-bundle"]).subPath == "ca.crt"
