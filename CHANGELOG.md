@@ -511,7 +511,10 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   not change. Older azurerm releases returned the lookup's ID in the casing
   Azure stores, so if `resource_group_name` differs from it only in letter
   case, the first plan after upgrading on such a release can replace the
-  two assignments
+  two assignments, leaving AGIC without `Reader` on the resource group
+  until the new assignments exist. Review the upgrade plan for those two
+  replacements. Do not change the casing of `resource_group_name` to avoid
+  them: that input forces replacement of every module resource that uses it
   ([#59](https://github.com/n8n-io/terraform-azurerm-n8n/issues/59)).
 - The advisory capacity check `autoscaling_maxima_fit_aks_capacity` now
   sizes the worker term from `n8n_worker_keda_paused_replica_count` while
@@ -521,12 +524,17 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   advice in both checks now names `n8n_worker_keda_paused_replica_count`,
   and only when the paused count is what raises the worker term
   ([#65](https://github.com/n8n-io/terraform-azurerm-n8n/issues/65)).
-- `postgres_ssl_ca_pem` now rejects non-ASCII values and values over
-  131050 characters after trimming. The chart passes it to every n8n
-  container as the single environment variable `DB_POSTGRESDB_SSL_CA`, and
-  Linux refuses to start a process whose environment string exceeds 131072
-  bytes, so an oversized bundle used to pass the plan and then fail every
-  pod with `argument list too long`
+- `postgres_ssl_ca_pem` now rejects values over 131050 bytes in UTF-8 after
+  trimming (CRLF line endings count two bytes per line break). The chart
+  passes it to every n8n container as the single environment variable
+  `DB_POSTGRESDB_SSL_CA`, and Linux refuses to start a process whose
+  environment string exceeds 131072 bytes, so in `verify-ca` and
+  `verify-full` an oversized bundle used to pass the plan and then fail
+  every pod with `argument list too long`. The limit applies in every
+  `ssl_mode`: in `disable`, `allow`, `prefer`, and `require` the module
+  ignores the CA, so an oversized bundle there used to plan and run with
+  only a warning, and now fails the plan. Remove it or trim it to the roots
+  you need
   ([#62](https://github.com/n8n-io/terraform-azurerm-n8n/issues/62)).
 - `examples/customer-managed-cluster`, `examples/customer-managed-everything`,
   and `examples/split-ingress` now match the root module's Ingress defaults

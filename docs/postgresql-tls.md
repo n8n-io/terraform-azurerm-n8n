@@ -77,6 +77,15 @@ its own ConfigMap as `DB_POSTGRESDB_SSL_CA`, which every main, worker, and
 webhook-processor pod reads, and n8n passes that value to the TLS connection
 as PEM content. This works for both the managed and external paths.
 
+The trimmed bundle can be at most 131050 bytes in UTF-8. Because the value
+reaches each container as one environment variable, Linux refuses to start
+the process above that size and every pod fails with `argument list too
+long`. CRLF line endings count two bytes per line break, and non-ASCII
+explanatory text outside the `BEGIN`/`END` lines counts its full UTF-8
+length. The module checks this at plan time in every `ssl_mode`, including
+the modes that ignore the CA. If a bundle is too large, keep only the roots
+your server chain needs.
+
 Because the CA is part of the Helm release:
 
 - Changing the CA rolls the pods through the chart's own `checksum/config`

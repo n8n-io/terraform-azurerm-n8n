@@ -2707,7 +2707,7 @@ run "rejects_empty_postgres_ssl_ca_pem" {
 
 # DB_POSTGRESDB_SSL_CA reaches every n8n container as one environment
 # variable; Linux refuses to exec above 131072 bytes for NAME=value plus NUL,
-# so the trimmed value may be at most 131050 characters (issue #62).
+# so the trimmed value may be at most 131050 bytes (issue #62).
 run "rejects_postgres_ssl_ca_pem_over_environment_variable_limit" {
   command = plan
 
@@ -2720,16 +2720,54 @@ run "rejects_postgres_ssl_ca_pem_over_environment_variable_limit" {
   ]
 }
 
-run "rejects_non_ascii_postgres_ssl_ca_pem" {
+# length() counts a CRLF pair as one grapheme cluster, but the chart passes
+# both bytes through. 2016 lines of 64 characters joined by CRLF are 131039
+# graphemes (under the limit) but 133054 bytes (over it) after trimming.
+# range() caps at 1024 values, so the lines come from replace().
+run "rejects_crlf_postgres_ssl_ca_pem_over_limit_in_bytes" {
   command = plan
 
   variables {
-    postgres_ssl_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIFäke\n-----END CERTIFICATE-----\n"
+    postgres_ssl_ca_pem = replace(format("%02016d", 0), "0", "${format("%064d", 1)}\r\n")
   }
 
   expect_failures = [
     var.postgres_ssl_ca_pem,
   ]
+}
+
+# "ő" is one character but two UTF-8 bytes: 131050 characters, 131051 bytes.
+# Runs in verify-full, where the CA reaches the pods; the CRLF run above
+# keeps the default require mode to cover the modes that ignore it.
+run "rejects_multibyte_postgres_ssl_ca_pem_over_limit_in_bytes" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem       = "ő${format("%0131049d", 0)}"
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+# RFC 7468 allows explanatory text outside the BEGIN/END lines, and Node's
+# TLS stack ignores it, so non-ASCII labels (common in bundles cut from
+# Mozilla's CA list) must pass. "ő" plus 131048 characters is exactly
+# 131050 bytes.
+run "accepts_non_ascii_postgres_ssl_ca_pem_at_byte_limit" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-ca"
+    postgres_ssl_ca_pem       = "ő${format("%0131048d", 0)}"
+  }
+
+  assert {
+    condition     = local.postgres_ssl_ca_values.ca == "ő${format("%0131048d", 0)}"
+    error_message = "A non-ASCII CA bundle of exactly 131050 bytes must pass validation and reach database.ssl.ca unchanged."
+  }
 }
 
 # The limit is measured after trimming, because the trimmed value is what
