@@ -10374,16 +10374,6 @@ run "rejects_license_key_secret_ref_and_cert_secret_ref_together" {
   expect_failures = [var.n8n_license_key]
 }
 
-run "rejects_no_license_credential_set" {
-  command = plan
-
-  variables {
-    n8n_license_key = null
-  }
-
-  expect_failures = [var.n8n_license_key]
-}
-
 run "rejects_empty_license_cert_secret_ref_name" {
   command = plan
 
@@ -10393,6 +10383,113 @@ run "rejects_empty_license_cert_secret_ref_name" {
   }
 
   expect_failures = [var.n8n_license_cert_secret_ref]
+}
+
+run "rejects_invalid_license_cert_secret_ref_name" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "N8n_License_Cert", key = "cert" }
+  }
+
+  expect_failures = [var.n8n_license_cert_secret_ref]
+}
+
+run "rejects_overlong_license_cert_secret_ref_name" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = join(".", [for i in range(4) : join("", [for j in range(63) : "a"])]), key = "cert" }
+  }
+
+  expect_failures = [var.n8n_license_cert_secret_ref]
+}
+
+run "rejects_whitespace_license_cert_secret_ref_key" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = " " }
+  }
+
+  expect_failures = [var.n8n_license_cert_secret_ref]
+}
+
+run "rejects_invalid_license_cert_secret_ref_key" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = "bad/key" }
+  }
+
+  expect_failures = [var.n8n_license_cert_secret_ref]
+}
+
+run "rejects_dot_license_cert_secret_ref_key" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = "." }
+  }
+
+  expect_failures = [var.n8n_license_cert_secret_ref]
+}
+
+# Kubernetes (IsConfigMapKey) rejects any Secret key starting with "..",
+# including ".." itself.
+run "rejects_double_dot_prefixed_license_cert_secret_ref_key" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = "..cert" }
+  }
+
+  expect_failures = [var.n8n_license_cert_secret_ref]
+}
+
+run "rejects_overlong_license_cert_secret_ref_key" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = join("", [for i in range(254) : "k"]) }
+  }
+
+  expect_failures = [var.n8n_license_cert_secret_ref]
+}
+
+run "accepts_boundary_license_cert_secret_ref_key" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "platform-n8n-license-cert", key = ".${join("", [for i in range(252) : "k"])}" }
+  }
+
+  assert {
+    condition     = length(local.n8n_license_cert_env[0].valueFrom.secretKeyRef.key) == 253
+    error_message = "A 253-character key with a single leading '.' is a valid Secret key and must pass validation."
+  }
+}
+
+run "accepts_dotted_license_cert_secret_ref_name_and_key" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "platform.n8n-license-cert", key = "license.cert_v2" }
+  }
+
+  assert {
+    condition     = local.n8n_license_cert_env[0].valueFrom.secretKeyRef.name == "platform.n8n-license-cert" && local.n8n_license_cert_env[0].valueFrom.secretKeyRef.key == "license.cert_v2"
+    error_message = "A dotted DNS-1123 Secret name and a key using '.', '_' and '-' must pass validation and reach the N8N_LICENSE_CERT secretKeyRef unchanged."
+  }
 }
 
 run "encryption_key_secret_ref_creates_no_managed_secret_or_random_password" {

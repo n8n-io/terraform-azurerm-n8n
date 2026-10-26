@@ -376,7 +376,11 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `license.existingSecret` block, which only ever maps to
   `N8N_LICENSE_ACTIVATION_KEY`. `license.enabled` stays `true` on this path
   because the chart also gates `N8N_MULTI_MAIN_SETUP_ENABLED` on
-  `license.enabled`, not on which credential backs it. See ["Offline license
+  `license.enabled`, not on which credential backs it. The Secret name must
+  be a valid Kubernetes Secret name and the key a valid Secret key; both are
+  checked at plan time. The certificate must match n8n's instance ID; pin it
+  with `N8N_INSTANCE_ID` through `n8n_extra_env` rather than changing the
+  encryption key. See ["Offline license
   activation"](./README.md#offline-license-activation)
   ([#24](https://github.com/n8n-io/terraform-azurerm-n8n/issues/24)).
 

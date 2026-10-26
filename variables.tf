@@ -3570,8 +3570,23 @@ variable "n8n_license_cert_secret_ref" {
   default = null
 
   validation {
-    condition     = var.n8n_license_cert_secret_ref == null ? true : (trimspace(var.n8n_license_cert_secret_ref.name) != "" && trimspace(var.n8n_license_cert_secret_ref.key) != "")
-    error_message = "n8n_license_cert_secret_ref.name and .key must be non-empty when set."
+    condition = (
+      var.n8n_license_cert_secret_ref == null ? true :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", var.n8n_license_cert_secret_ref.name))
+      && length(var.n8n_license_cert_secret_ref.name) <= 253
+    )
+    error_message = "n8n_license_cert_secret_ref.name must be a DNS-1123 subdomain of 253 characters or fewer, which is what Kubernetes requires of a Secret name: lowercase alphanumerics, hyphens and dots, starting and ending with an alphanumeric, with no empty label (e.g. \"n8n-license-cert\")."
+  }
+
+  validation {
+    condition = (
+      var.n8n_license_cert_secret_ref == null ? true :
+      can(regex("^[-._a-zA-Z0-9]+$", var.n8n_license_cert_secret_ref.key))
+      && length(var.n8n_license_cert_secret_ref.key) <= 253
+      && var.n8n_license_cert_secret_ref.key != "."
+      && !startswith(var.n8n_license_cert_secret_ref.key, "..")
+    )
+    error_message = "n8n_license_cert_secret_ref.key must be a valid Secret key of 253 characters or fewer: alphanumerics, '-', '_' and '.' only, not '.' and not starting with '..' (e.g. \"cert\")."
   }
 }
 
