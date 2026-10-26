@@ -83,8 +83,9 @@ the process above that size and every pod fails with `argument list too
 long`. CRLF line endings count two bytes per line break, and non-ASCII
 explanatory text outside the `BEGIN`/`END` lines counts its full UTF-8
 length. The module checks this at plan time in every `ssl_mode`, including
-the modes that ignore the CA. If a bundle is too large, keep only the roots
-your server chain needs.
+the modes that never deliver the CA, so a bundle that cannot work fails
+before you switch to a verifying mode. If a bundle is too large, keep only
+the roots your server chain needs.
 
 Because the CA is part of the Helm release:
 
