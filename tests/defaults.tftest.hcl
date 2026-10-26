@@ -13,13 +13,7 @@
 #    provider this module declares is mocked so `terraform init` /
 #    `terraform test` succeed without an azurerm/kubernetes/helm backend.)
 
-mock_provider "azurerm" {
-  mock_data "azurerm_resource_group" {
-    defaults = {
-      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg"
-    }
-  }
-}
+mock_provider "azurerm" {}
 mock_provider "kubernetes" {}
 mock_provider "helm" {}
 mock_provider "random" {}
@@ -824,6 +818,121 @@ run "capacity_warns_when_tainted_system_pool_leaves_one_pool_too_small" {
   }
 
   expect_failures = [check.autoscaling_maxima_fit_aks_capacity]
+}
+
+# While paused, KEDA holds the worker Deployment at the paused count, which
+# may exceed n8n_worker_keda_max_replicas, so the capacity model must size
+# the worker term from it (issue #64). 100 held workers cannot fit the
+# default node pools, and they also exceed the default PostgreSQL budget.
+run "capacity_warns_when_paused_replica_count_exceeds_node_capacity" {
+  command = plan
+
+  variables {
+    aks_node_count_max                   = 4
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 100
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == 100
+    error_message = "A paused count of 100 above the worker max must size the capacity model's worker term, got ${local.n8n_worker_modeled_max_replicas}."
+  }
+
+  assert {
+    condition     = local.n8n_worker_paused_count_drives_worker_term
+    error_message = "A paused count above the worker max drives the worker term, so both checks' advice must name n8n_worker_keda_paused_replica_count."
+  }
+
+  expect_failures = [
+    check.autoscaling_maxima_fit_aks_capacity,
+    check.postgres_pool_size_fits_known_max_connections,
+  ]
+}
+
+run "capacity_keeps_worker_max_for_lower_paused_replica_count" {
+  command = plan
+
+  variables {
+    aks_node_count_max                   = 4
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 1
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == var.n8n_worker_keda_max_replicas
+    error_message = "A paused count below the worker max must leave the worker term at the maximum."
+  }
+}
+
+# A paused count equal to the worker max does not raise the worker term, so
+# lowering it would not help and the advice must not name it.
+run "paused_replica_count_equal_to_worker_max_does_not_drive_worker_term" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_pause                = true
+    n8n_worker_keda_paused_replica_count = 10
+    n8n_worker_keda_max_replicas         = 10
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == 10 && !local.n8n_worker_paused_count_drives_worker_term
+    error_message = "A paused count equal to the worker max must leave the worker term at the maximum without naming the paused count in the advice."
+  }
+}
+
+# The Reader scope comes from the AGIC identity's resource ID, not a data
+# source, so a caller's module-level depends_on cannot make it unknown at plan
+# time (issue #59). It must be exactly the resource group's ID, with no
+# provider or resource-type suffix.
+run "agic_reader_scope_is_the_resource_group_id_of_the_agic_identity" {
+  command = plan
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.agic
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-agic"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = local.agic_resource_group_scope == "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg"
+    error_message = "The AGIC Reader scope must be the /subscriptions/<sub>/resourceGroups/<rg> prefix of the AGIC identity's ID, got ${coalesce(local.agic_resource_group_scope, "null")}."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.agic_rg_reader[0].scope == local.agic_resource_group_scope && azurerm_role_assignment.agic_addon_rg_reader[0].scope == local.agic_resource_group_scope
+    error_message = "Both AGIC Reader role assignments must use local.agic_resource_group_scope."
+  }
+}
+
+run "agic_reader_scope_is_null_without_ingress" {
+  command = plan
+
+  variables {
+    create_ingress = false
+  }
+
+  assert {
+    condition     = local.agic_resource_group_scope == null
+    error_message = "No AGIC scope may be computed when create_ingress is false."
+  }
+}
+
+run "capacity_keeps_worker_max_when_pause_has_no_count" {
+  command = plan
+
+  variables {
+    aks_node_count_max    = 4
+    n8n_worker_keda_pause = true
+  }
+
+  assert {
+    condition     = local.n8n_worker_modeled_max_replicas == var.n8n_worker_keda_max_replicas
+    error_message = "A pause with a null count must leave the worker term at the maximum."
+  }
 }
 
 run "rejects_zero_aks_node_os_disk_size_gb" {
@@ -2594,6 +2703,87 @@ run "rejects_empty_postgres_ssl_ca_pem" {
   expect_failures = [
     var.postgres_ssl_ca_pem,
   ]
+}
+
+# DB_POSTGRESDB_SSL_CA reaches every n8n container as one environment
+# variable; Linux refuses to exec above 131072 bytes for NAME=value plus NUL,
+# so the trimmed value may be at most 131050 bytes (issue #62).
+run "rejects_postgres_ssl_ca_pem_over_environment_variable_limit" {
+  command = plan
+
+  variables {
+    postgres_ssl_ca_pem = format("%0131051d", 0)
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+# length() counts a CRLF pair as one grapheme cluster, but the chart passes
+# both bytes through. 2016 lines of 64 characters joined by CRLF are 131039
+# graphemes (under the limit) but 133054 bytes (over it) after trimming.
+# range() caps at 1024 values, so the lines come from replace().
+run "rejects_crlf_postgres_ssl_ca_pem_over_limit_in_bytes" {
+  command = plan
+
+  variables {
+    postgres_ssl_ca_pem = replace(format("%02016d", 0), "0", "${format("%064d", 1)}\r\n")
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+# "ő" is one character but two UTF-8 bytes: 131050 characters, 131051 bytes.
+# Runs in verify-full, where the CA reaches the pods; the CRLF run above
+# keeps the default require mode to cover the modes that ignore it.
+run "rejects_multibyte_postgres_ssl_ca_pem_over_limit_in_bytes" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-full"
+    postgres_ssl_ca_pem       = "ő${format("%0131049d", 0)}"
+  }
+
+  expect_failures = [
+    var.postgres_ssl_ca_pem,
+  ]
+}
+
+# RFC 7468 allows explanatory text outside the BEGIN/END lines, and Node's
+# TLS stack ignores it, so non-ASCII labels (common in bundles cut from
+# Mozilla's CA list) must pass. "ő" plus 131048 characters is exactly
+# 131050 bytes.
+run "accepts_non_ascii_postgres_ssl_ca_pem_at_byte_limit" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-ca"
+    postgres_ssl_ca_pem       = "ő${format("%0131048d", 0)}"
+  }
+
+  assert {
+    condition     = local.postgres_ssl_ca_values.ca == "ő${format("%0131048d", 0)}"
+    error_message = "A non-ASCII CA bundle of exactly 131050 bytes must pass validation and reach database.ssl.ca unchanged."
+  }
+}
+
+# The limit is measured after trimming, because the trimmed value is what
+# reaches the chart: 131050 characters plus surrounding whitespace passes.
+run "accepts_postgres_ssl_ca_pem_at_environment_variable_limit" {
+  command = plan
+
+  variables {
+    postgres_managed_ssl_mode = "verify-ca"
+    postgres_ssl_ca_pem       = "\n${format("%0131050d", 0)}\n\n"
+  }
+
+  assert {
+    condition     = length(local.postgres_ssl_ca_values.ca) == 131050
+    error_message = "A CA bundle of exactly 131050 characters after trimming must pass validation and reach database.ssl.ca."
+  }
 }
 
 # With ssl_mode = "disable", any non-empty CA would make n8n build a TLS

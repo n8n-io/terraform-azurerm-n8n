@@ -13,13 +13,6 @@ mock_provider "time" {}
 mock_provider "kubectl" {}
 
 override_data {
-  target = data.azurerm_resource_group.n8n
-  values = {
-    id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg"
-  }
-}
-
-override_data {
   target = data.azurerm_kubernetes_cluster.existing[0]
   values = {
     id              = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ContainerService/managedClusters/n8ntest-aks"
