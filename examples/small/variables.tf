@@ -91,14 +91,37 @@ variable "aks_availability_zones" {
 }
 
 variable "n8n_license_key" {
-  description = "n8n Enterprise license activation key."
+  description = "n8n Enterprise license activation key. Leave null only when n8n_license_cert_secret_ref supplies an offline license certificate instead; the root module requires exactly one license credential."
   type        = string
+  default     = null
   sensitive   = true
 
   validation {
-    condition     = trimspace(var.n8n_license_key) != "" && var.n8n_license_key != "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
+    condition     = var.n8n_license_key == null || (trimspace(coalesce(var.n8n_license_key, "x")) != "" && var.n8n_license_key != "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY")
     error_message = "n8n_license_key must contain a real n8n Enterprise license key, not the example placeholder."
   }
+}
+
+# no validation: the root module validates the Secret name and key format and
+# the one-license-credential rule.
+variable "n8n_license_cert_secret_ref" {
+  description = "Optional caller-managed Kubernetes Secret (name and key) in the n8n namespace holding a base64-encoded offline license certificate, passed through to the root module's n8n_license_cert_secret_ref. Set n8n_license_key = null when using it. Null (the default) keeps the license-key path. See the root README, \"Offline license activation\"."
+  type = object({
+    name = string
+    key  = string
+  })
+  default = null
+}
+
+# no validation: the root module rejects reserved and duplicate names.
+variable "n8n_extra_env" {
+  description = "Additional non-secret environment variables for every n8n application container, passed through to the root module's n8n_extra_env. Empty (the default) adds none. For example, pin N8N_INSTANCE_ID here so an offline license certificate matches the deployment's instance ID."
+  type = list(object({
+    name  = string
+    value = string
+  }))
+  default  = []
+  nullable = false
 }
 
 variable "n8n_main_hpa_min_replicas" {

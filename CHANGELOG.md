@@ -380,7 +380,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   be a valid Kubernetes Secret name and the key a valid Secret key; both are
   checked at plan time. The certificate must match n8n's instance ID; pin it
   with `N8N_INSTANCE_ID` through `n8n_extra_env` rather than changing the
-  encryption key. See ["Offline license
+  encryption key. `examples/small` passes `n8n_license_cert_secret_ref` and
+  `n8n_extra_env` through, and its `n8n_license_key` is now nullable (default
+  `null`) so the example can select the certificate path. See ["Offline license
   activation"](./README.md#offline-license-activation)
   ([#24](https://github.com/n8n-io/terraform-azurerm-n8n/issues/24)).
 

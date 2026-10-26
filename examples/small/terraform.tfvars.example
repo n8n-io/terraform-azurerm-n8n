@@ -4,6 +4,14 @@ n8n_domain           = "n8n.example.com"
 public_dns_zone_name = "example.com"
 n8n_license_key      = "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
 
+# Offline license activation instead of a key (air-gapped clusters): set
+# n8n_license_key = null. The Secret must exist in the n8n namespace before the
+# n8n Helm release installs or rolls, or the pods cannot start.
+# n8n_license_cert_secret_ref = { name = "n8n-license-cert", key = "cert" }
+# Pin the instance ID the certificate was issued for, if it differs from the
+# deployment's derived ID (at least 32 characters):
+# n8n_extra_env = [{ name = "N8N_INSTANCE_ID", value = "<instance ID>" }]
+
 # Restrict the AKS API to operator and CI egress addresses in production.
 # aks_api_authorized_ip_ranges = ["203.0.113.10/32"]
 

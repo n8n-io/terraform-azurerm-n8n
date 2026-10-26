@@ -56,6 +56,11 @@ ALLOW=$(cat <<'EOF_ALLOW'
 # Blob (create_blob_storage = false), so blob_delete_retention_days
 # does not apply.
 -blob_delete_retention_days|customer-managed-storage customer-managed-everything
+# examples/small is the live-test root for offline license activation
+# (PR #51), so only it passes the certificate Secret reference and the
+# n8n_extra_env escape hatch (used to pin N8N_INSTANCE_ID) through.
+-n8n_license_cert_secret_ref|medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
+-n8n_extra_env|medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
 # split-ingress's own two-gateway topology inputs.
 +admin_allowed_cidr_blocks|split-ingress
 +create_webhook_waf_policy|split-ingress
