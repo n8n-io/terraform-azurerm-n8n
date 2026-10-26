@@ -146,3 +146,31 @@ run "small_tier_blob_delete_retention_days_override" {
     error_message = "Setting blob_delete_retention_days must not change unrelated example outputs."
   }
 }
+
+# Offline license activation passthrough. The root module requires exactly one
+# license credential, so this plan only succeeds if n8n_license_cert_secret_ref
+# reaches module.n8n while n8n_license_key stays null.
+run "small_tier_license_cert_secret_ref_passthrough" {
+  command = plan
+
+  variables {
+    n8n_license_key             = null
+    n8n_license_cert_secret_ref = { name = "n8n-license-cert", key = "cert" }
+    n8n_extra_env = [
+      { name = "N8N_INSTANCE_ID", value = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" },
+    ]
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = module.n8n.n8n_url == "https://n8n.test.example.com"
+    error_message = "Selecting the offline certificate path must not change unrelated example outputs."
+  }
+}
