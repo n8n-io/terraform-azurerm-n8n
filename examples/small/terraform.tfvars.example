@@ -4,9 +4,11 @@ n8n_domain           = "n8n.example.com"
 public_dns_zone_name = "example.com"
 n8n_license_key      = "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
 
-# Offline license activation instead of a key (air-gapped clusters): set
-# n8n_license_key = null. The Secret must exist in the n8n namespace before the
-# n8n Helm release installs or rolls, or the pods cannot start.
+# Offline license activation instead of a key (air-gapped clusters): delete
+# the n8n_license_key line above (it defaults to null; do not add a second
+# assignment), then uncomment the line below. The Secret must exist in the n8n
+# namespace before the n8n Helm release installs or rolls, or the pods cannot
+# start.
 # n8n_license_cert_secret_ref = { name = "n8n-license-cert", key = "cert" }
 # Pin the instance ID the certificate was issued for, if it differs from the
 # deployment's derived ID (at least 32 characters):
