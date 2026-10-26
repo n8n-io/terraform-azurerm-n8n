@@ -50,8 +50,10 @@
 # Raised once more to `>= 1.13`: on 1.12.x and older, `terraform test` keeps
 # about one provider plugin process alive per run block until the command
 # exits (issue #63), so the root suite's memory grows with every run and
-# will eventually exhaust a CI runner. 1.13.0 stops the leak. This matches
-# terraform-aws-n8n's floor.
+# will eventually exhaust a CI runner. 1.13.0 does not leak in the
+# measurements behind issue #63 and terraform-aws-n8n#183 (the upstream
+# 1.13.0 changelog does not list the fix). This matches terraform-aws-n8n's
+# floor.
 #
 # No `provider {}` blocks — provider configuration (subscription, auth,
 # kube/helm wiring against the AKS cluster this module creates) is the
