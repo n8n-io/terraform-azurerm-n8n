@@ -943,7 +943,7 @@ run "managed_ingress_strips_the_port_from_x_forwarded_for" {
   command = plan
 
   assert {
-    condition     = local.appgw_ingress_annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == "n8n-strip-xff-port"
+    condition     = kubernetes_ingress_v1.n8n[0].metadata[0].annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == "n8n-strip-xff-port"
     error_message = "The managed Ingress must reference the n8n-strip-xff-port AzureApplicationGatewayRewrite."
   }
 

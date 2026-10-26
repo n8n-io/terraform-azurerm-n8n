@@ -215,7 +215,20 @@ Containers or the application routing add-on. Keep that doc's settings table
 and the caller-owned example Ingress annotations in step with
 `local.appgw_ingress_default_annotations`. `n8n_proxy_hops` guidance follows
 `terraform-aws-n8n`: count only proxies that add an `X-Forwarded-For` entry
-(a layer 4 Azure Load Balancer does not), and `0` is valid.
+(a layer 4 Azure Load Balancer does not), and `0` is valid. Application
+Gateway v2 appends the connecting client's address and source port
+(`IP:port`) to `X-Forwarded-For`, so
+`kubectl_manifest.appgw_rewrite_xff` (an AGIC `AzureApplicationGatewayRewrite`,
+created whenever `create_ingress = true`) sets the header to
+`{var_add_x_forwarded_for_proxy}`, and `local.appgw_ingress_default_annotations`
+references it through `rewrite-rule-set-custom-resource`. Use
+`{var_add_x_forwarded_for_proxy}`, not `{var_client_ip}`, which would drop
+upstream proxy entries and break `n8n_proxy_hops > 1`. AGIC attaches no
+rewrite rule set when an Ingress carries both `rewrite-rule-set` and
+`rewrite-rule-set-custom-resource`, so the module omits its annotation when
+a caller sets `rewrite-rule-set`, and both keys count as module controls for
+`check.ingress_annotations_override_module_controls`. The three caller-owned
+AGIC examples carry the same custom resource and annotation.
 
 **DNS and certificate integration.** Root `dns.tf` accepts at most one
 caller-owned public or private Azure DNS zone ID with a matching explicit,
@@ -801,7 +814,7 @@ These are the things the AWS module does **not** need but this module
 **does** — they exist because Azure managed services have specific failure
 modes the prototype encountered. **Preserve them when restructuring.**
 
-Only **two** genuine deltas remain. Everything else either matches the AWS
+Only **three** genuine deltas remain. Everything else either matches the AWS
 sibling's pattern with a different parameter or has been retired — see
 "Historical retirements" below.
 
@@ -822,6 +835,20 @@ sibling's pattern with a different parameter or has been retired — see
    which would force a two-pass apply. The module installs the CR via
    `gavinbunney/kubectl_manifest`, which defers schema resolution to apply
    time and lets a single-pass apply succeed against a fresh cluster.
+3. **`X-Forwarded-For` port rewrite on Application Gateway**
+   (`kubectl_manifest.appgw_rewrite_xff` in `ingress.tf`) — Application
+   Gateway v2 appends the connecting client's address and source port to
+   `X-Forwarded-For`, which breaks n8n's per-IP rate limiter. An AGIC
+   `AzureApplicationGatewayRewrite` sets the header to
+   `{var_add_x_forwarded_for_proxy}`, which keeps incoming entries and
+   appends that client without its port. It does not remove ports that an
+   upstream proxy already wrote into earlier entries. It is a custom
+   resource rather than a Terraform `rewrite_rule_set` because
+   `azurerm_application_gateway.n8n` lists `rewrite_rule_set` in
+   `lifecycle.ignore_changes` (AGIC owns that configuration), and it uses
+   `kubectl_manifest` for the same reason as delta 2.
+   An AWS Application Load Balancer omits the port by default, so this
+   delta has no sibling.
 
 Azure Managed Redis (this module's Redis backend) replacing legacy Azure
 Cache for Redis is a resource-type change, not a structural delta vs AWS —
