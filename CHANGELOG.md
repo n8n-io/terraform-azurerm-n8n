@@ -452,34 +452,44 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   versioned Secret URI, which the App Gateway listener picks up on the
   following `terraform apply`
   ([#14](https://github.com/n8n-io/terraform-azurerm-n8n/issues/14)).
-- **Breaking:** `required_version` is now `>= 1.11` (was `>= 1.9`) and the
-  `azurerm` provider requirement is now `>= 4.39.0, < 5.0.0` (was `~> 4.0`)
-  for the root module and every example. Both are needed to parse and use
-  `postgres_password_write_only`'s `ephemeral` variable and write-only
-  `administrator_password_wo` argument (see "Added" above), and apply
-  module-wide regardless of whether you set that variable, because
-  Terraform parses `ephemeral` and write-only syntax from this module's HCL
-  unconditionally. The argument shipped in azurerm 4.21.0; the floor is
-  4.39.0 because earlier releases sent an empty administrator password
-  when `pg_admin_username` changed with write-only enabled
+- **Breaking:** `required_version` is now `>= 1.13` (0.1.0 declared
+  `>= 1.9`) and the `azurerm` provider requirement is now
+  `>= 4.39.0, < 5.0.0` (was `~> 4.0`) for the root module and every
+  example. Three Terraform releases set the new floor:
+  - **1.11:** `postgres_password_write_only`'s `ephemeral` variable and
+    write-only `administrator_password_wo` argument (see "Added" above)
+    need Terraform 1.10's ephemeral values and 1.11's write-only
+    arguments. Terraform parses that syntax from this module's HCL
+    unconditionally, so the floor applies whether or not you set the
+    variable ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
+  - **1.12:** the `var.x == null || var.x.attr` validations in
+    `variables.tf` rely on `||` short-circuiting, which Terraform added in
+    1.12. On 1.11 and earlier both sides are evaluated, so the plan fails
+    with "Attempt to get attribute from null value" as soon as such an
+    input is null. `pg_maintenance_window` defaults to `null`, so this hits
+    almost every plan of the root module on those versions. 0.1.0 already
+    had that validation, so its own `>= 1.9` was too low.
+  - **1.13:** on Terraform 1.12.x and older, `terraform test` keeps about
+    one provider plugin process alive per run block until the command
+    exits, so memory grows with every run of the root suite (594 runs
+    today; the same leak got `terraform-aws-n8n`'s suite OOM-killed on a
+    16 GB runner). The leak is specific to `terraform test`, not to `plan`
+    or `apply`, but the floor makes `init` reject 1.12 as well. 1.13.0 does
+    not leak in those measurements; the upstream 1.13.0 changelog does not
+    list the fix
+    ([#63](https://github.com/n8n-io/terraform-azurerm-n8n/issues/63)).
+
+  The `azurerm` floor is 4.39.0 because `administrator_password_wo`
+  shipped in 4.21.0, but earlier releases sent an empty administrator
+  password when `pg_admin_username` changed with write-only enabled
   ([hashicorp/terraform-provider-azurerm#29475](https://github.com/hashicorp/terraform-provider-azurerm/issues/29475)).
   `modules/controllers` and the two TLS helper modules keep their existing
-  constraints. Upgrade the Terraform CLI and let
-  the `azurerm` provider resolve within the new range before applying
-  ([#26](https://github.com/n8n-io/terraform-azurerm-n8n/issues/26)).
-- **Breaking:** `required_version` is now `>= 1.12` (was `>= 1.11`) for
-  the root module and every example. The `var.x == null || var.x.attr`
-  validations in `variables.tf` rely on `||` short-circuiting, which
-  Terraform added in 1.12. On 1.11 and earlier both sides are evaluated,
-  so the plan fails with "Attempt to get attribute from null value" as
-  soon as such an input is null. `pg_maintenance_window` defaults to
-  `null`, so this hits almost every plan of the root module on those
-  versions. `modules/controllers` and the two TLS helper modules have no
-  such guards and keep their existing constraints. Module inputs do not
-  change: upgrade the Terraform CLI used locally and in automation, and
-  adjust any caller `required_version` or runtime pin that excludes 1.12
-  (for example `~> 1.11.0`). CI now also runs every `terraform test`
-  suite on 1.12.0, so the floor stays tested.
+  constraints. CI runs every `terraform test` suite on Terraform `1.13.0`
+  as well as on `TF_VERSION`, so the floor stays tested. Module inputs do
+  not change: upgrade the Terraform CLI to 1.13 or newer locally and in
+  automation, adjust any caller `required_version` or runtime pin that
+  excludes 1.13 (for example `~> 1.12.0`), and let the `azurerm` provider
+  resolve within the new range before applying.
 
 - `aks_node_count_min`'s description now states that it sizes both the
   system and user AKS node pools (matching `aks_node_count_max`'s
