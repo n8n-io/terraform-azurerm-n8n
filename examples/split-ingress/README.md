@@ -14,7 +14,7 @@ Two Application Gateways instead of the root module's single one: a public gatew
 AKS's built-in `ingress_application_gateway` addon binds to exactly one Application Gateway per cluster, so serving two gateways from one cluster needs two **standalone** `ingress-azure` Helm releases (not the addon), each with:
 
 - Its own Application Gateway (`azurerm_application_gateway.webhook` / `.admin`).
-- Its own AKS workload-identity user-assigned identity, federated to its own Kubernetes namespace (`agic-webhook` / `agic-admin`) and the chart's fixed `ingress-azure` service account name.
+- Its own AKS workload-identity user-assigned identity, federated to its own Kubernetes namespace (`agic-webhook` / `agic-admin`) and the service account the chart derives from the release name (`<release>-sa-ingress-azure`, so `agic-webhook-sa-ingress-azure` / `agic-admin-sa-ingress-azure`).
 - `Contributor` on only its own gateway (never both — crossing these would let one controller reconfigure the other gateway), `Reader` on the resource group, and `Network Contributor` on only its own gateway subnet (`appgw-webhook` / `appgw-admin`).
 - A distinct `kubernetes.io/ingress.class` value (`azure/application-gateway-webhook` / `azure/application-gateway-admin`) so each install reconciles only the Ingress object that names it.
 

@@ -19,6 +19,14 @@ locals {
   # spec.ingressClassName.
   webhook_ingress_class = "azure/application-gateway-webhook"
   admin_ingress_class   = "azure/application-gateway-admin"
+
+  # Helm release and namespace name of each standalone AGIC install. The
+  # ingress-azure chart names its service account "<release>-sa-ingress-azure"
+  # (unless the release name contains "ingress-azure"), so the federated
+  # identity subjects below derive from these names; renaming a release
+  # without updating its subject breaks workload identity (AADSTS700213).
+  agic_webhook_name = "agic-webhook"
+  agic_admin_name   = "agic-admin"
 }
 
 # ── Webhook Application Gateway (public) ─────────────────────────────────────
@@ -314,8 +322,8 @@ resource "azurerm_application_gateway" "admin" {
 # defense in depth); with one NSG per subnet that restriction really does
 # apply to the admin gateway alone.
 
-# checkov:skip=CKV_AZURE_160:AllowWebhookFrontend intentionally opens 80/443 from Internet: the webhook Application Gateway exists to accept unauthenticated internet webhook traffic. The admin gateway sits in its own subnet with its own VNet-only NSG, which is the isolation this example exists to demonstrate.
 resource "azurerm_network_security_group" "appgw_webhook" {
+  # checkov:skip=CKV_AZURE_160:AllowWebhookFrontend intentionally opens 80/443 from Internet: the webhook Application Gateway exists to accept unauthenticated internet webhook traffic. The admin gateway sits in its own subnet with its own VNet-only NSG, which is the isolation this example exists to demonstrate.
   name                = "${var.friendly_name_prefix}-appgw-webhook-nsg"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
@@ -440,7 +448,8 @@ resource "azurerm_subnet_network_security_group_association" "appgw_admin" {
 
 # ── Standalone AGIC identities and permissions ───────────────────────────────
 # Each AGIC install gets its own workload-identity UAMI, federated to its own
-# namespace + the chart's fixed "ingress-azure" service account name, and
+# namespace + the chart's release-derived "<release>-sa-ingress-azure" service
+# account name (local.agic_webhook_name / local.agic_admin_name), and
 # Contributor on only its own Application Gateway (never both — crossing
 # these would let the webhook controller reconfigure the admin gateway).
 
@@ -488,7 +497,7 @@ resource "azurerm_federated_identity_credential" "agic_webhook" {
   user_assigned_identity_id = azurerm_user_assigned_identity.agic_webhook.id
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = module.n8n.aks_oidc_issuer_url
-  subject                   = "system:serviceaccount:agic-webhook:agic-webhook-sa-ingress-azure"
+  subject                   = "system:serviceaccount:${local.agic_webhook_name}:${local.agic_webhook_name}-sa-ingress-azure"
 }
 
 resource "azurerm_user_assigned_identity" "agic_admin" {
@@ -531,25 +540,25 @@ resource "azurerm_federated_identity_credential" "agic_admin" {
   user_assigned_identity_id = azurerm_user_assigned_identity.agic_admin.id
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = module.n8n.aks_oidc_issuer_url
-  subject                   = "system:serviceaccount:agic-admin:agic-admin-sa-ingress-azure"
+  subject                   = "system:serviceaccount:${local.agic_admin_name}:${local.agic_admin_name}-sa-ingress-azure"
 }
 
 # ── Standalone AGIC Helm releases ─────────────────────────────────────────────
-# Each release lives in its own namespace so both can use the chart's fixed
-# "ingress-azure" service account name without colliding, but both watch the
-# shared n8n namespace for Ingress objects carrying their own
-# kubernetes.io/ingress.class value.
+# Each release lives in its own namespace, and the chart derives each service
+# account name from its release ("<release>-sa-ingress-azure"), so the two
+# installs never collide. Both watch the shared n8n namespace for Ingress
+# objects carrying their own kubernetes.io/ingress.class value.
 
 resource "kubernetes_namespace" "agic_webhook" {
   metadata {
-    name = "agic-webhook"
+    name = local.agic_webhook_name
   }
 
   depends_on = [module.n8n]
 }
 
 resource "helm_release" "agic_webhook" {
-  name       = "agic-webhook"
+  name       = local.agic_webhook_name
   repository = "oci://mcr.microsoft.com/azure-application-gateway/charts"
   chart      = "ingress-azure"
   version    = "1.7.5"
@@ -605,14 +614,14 @@ resource "helm_release" "agic_webhook" {
 
 resource "kubernetes_namespace" "agic_admin" {
   metadata {
-    name = "agic-admin"
+    name = local.agic_admin_name
   }
 
   depends_on = [module.n8n]
 }
 
 resource "helm_release" "agic_admin" {
-  name       = "agic-admin"
+  name       = local.agic_admin_name
   repository = "oci://mcr.microsoft.com/azure-application-gateway/charts"
   chart      = "ingress-azure"
   version    = "1.7.5"

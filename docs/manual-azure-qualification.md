@@ -195,8 +195,18 @@ compatibility check, not a guaranteed no-op.
 
 ### 10. Private DNS resolution
 
-**Setup:** Apply with `create_private_dns_record = true` and a
-`private_dns_zone_id` linked to the AKS VNet.
+**Setup:** Apply with `appgw_frontend_mode = "internal"`, a static
+`appgw_private_ip_address` inside `appgw_subnet_id`,
+`create_private_dns_record = true`, and a `private_dns_zone_id` linked to
+the AKS VNet. A private-only gateway also needs the
+`Microsoft.Network/EnableApplicationGatewayNetworkIsolation` feature
+registered on the subscription, `appgw_subnet_id` delegated to
+`Microsoft.Network/applicationGateways`, and private access to the TLS
+certificate's Key Vault (a `Microsoft.KeyVault` service endpoint on that
+subnet, or a private endpoint with `privatelink.vaultcore.azure.net` linked
+to the VNet); see
+[`docs/troubleshooting.md`](./troubleshooting.md) for the error each missing
+piece produces.
 
 **Expected outcome:** In-cluster and VNet-joined clients resolve
 `var.n8n_domain` to the App Gateway's private frontend IP. External clients
