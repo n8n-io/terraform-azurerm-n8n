@@ -581,6 +581,50 @@ resource "helm_release" "agic_admin" {
 # module output rather than hardcoded so this example cannot drift as n8n
 # adds endpoints.
 
+# ── Client IP without the source port ─────────────────────────────────────────
+# Application Gateway v2 writes X-Forwarded-For as IP:port, so n8n would see
+# req.ip as "203.0.113.7:51234", its rate limiter would log
+# ERR_ERL_INVALID_IP_ADDRESS, and the per-IP limit would key on source ports.
+# {var_add_x_forwarded_for_proxy} keeps upstream entries and appends the client
+# IP without its port, so n8n_proxy_hops keeps its meaning. The root module does
+# the same for its own Ingress (see ingress.tf there). kubectl_manifest defers
+# CRD schema resolution to apply time; the AzureApplicationGatewayRewrite CRD
+# ships with the AGIC Helm chart.
+resource "kubectl_manifest" "appgw_rewrite_xff" {
+  yaml_body = yamlencode({
+    apiVersion = "appgw.ingress.azure.io/v1beta1"
+    kind       = "AzureApplicationGatewayRewrite"
+    metadata = {
+      name      = "n8n-strip-xff-port"
+      namespace = module.n8n.n8n_namespace
+    }
+    spec = {
+      rewriteRules = [{
+        name         = "strip-xff-port"
+        ruleSequence = 100
+        actions = {
+          requestHeaderConfigurations = [{
+            actionType  = "set"
+            headerName  = "X-Forwarded-For"
+            headerValue = "{var_add_x_forwarded_for_proxy}"
+          }]
+        }
+      }]
+    }
+  })
+
+  depends_on = [
+    helm_release.agic_webhook,
+    helm_release.agic_admin,
+  ]
+}
+
+# ── Kubernetes Ingress object ─────────────────────────────────────────────────
+# Every prefix n8n disables on the main pods (taken from the module output,
+# not hardcoded, so this cannot drift as n8n adds endpoints) routes to the
+# webhook-processor Service; everything else falls through to the main
+# editor/API Service.
+
 resource "kubernetes_ingress_v1" "webhook_public" {
   metadata {
     name      = "n8n-webhook-public"
@@ -593,9 +637,10 @@ resource "kubernetes_ingress_v1" "webhook_public" {
       # defaults are a 30 s request timeout and no connection draining. No
       # cookie-based affinity: webhook senders are machines, and webhook
       # processors do not need session persistence.
-      "appgw.ingress.kubernetes.io/request-timeout"             = "300"
-      "appgw.ingress.kubernetes.io/connection-draining"         = "true"
-      "appgw.ingress.kubernetes.io/connection-draining-timeout" = "30"
+      "appgw.ingress.kubernetes.io/request-timeout"                  = "300"
+      "appgw.ingress.kubernetes.io/connection-draining"              = "true"
+      "appgw.ingress.kubernetes.io/connection-draining-timeout"      = "30"
+      "appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource" = "n8n-strip-xff-port"
     }
   }
 
@@ -633,7 +678,10 @@ resource "kubernetes_ingress_v1" "webhook_public" {
     delete = "10m"
   }
 
-  depends_on = [helm_release.agic_webhook]
+  depends_on = [
+    helm_release.agic_webhook,
+    kubectl_manifest.appgw_rewrite_xff,
+  ]
 }
 
 resource "kubernetes_ingress_v1" "admin_internal" {
@@ -654,7 +702,8 @@ resource "kubernetes_ingress_v1" "admin_internal" {
       # example, so each browser must stay on one main pod for its editor and
       # push connection. See
       # https://docs.n8n.io/deploy/host-n8n/configure-n8n/scaling/enable-queue-mode#configuring-multi-main-setup
-      "appgw.ingress.kubernetes.io/cookie-based-affinity" = "true"
+      "appgw.ingress.kubernetes.io/cookie-based-affinity"            = "true"
+      "appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource" = "n8n-strip-xff-port"
     }
   }
 
@@ -727,5 +776,8 @@ resource "kubernetes_ingress_v1" "admin_internal" {
     delete = "10m"
   }
 
-  depends_on = [helm_release.agic_admin]
+  depends_on = [
+    helm_release.agic_admin,
+    kubectl_manifest.appgw_rewrite_xff,
+  ]
 }

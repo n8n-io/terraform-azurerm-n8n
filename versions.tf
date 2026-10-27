@@ -19,8 +19,10 @@
 #   time       — the AKS API warm-up gate, the Key Vault RBAC-propagation
 #                gate, and the post-install Helm settle gate.
 #   kubectl    — the CRD-aware `kubectl_manifest.keda_trigger_authentication`
-#                resource (`hashicorp/kubernetes_manifest` cannot resolve a
-#                CRD Helm installs in the same apply — see AGENTS.md).
+#                and `kubectl_manifest.appgw_rewrite_xff` resources
+#                (`hashicorp/kubernetes_manifest` cannot resolve a CRD that
+#                Helm or the AGIC add-on installs in the same apply — see
+#                AGENTS.md).
 #
 # Sections 2–6 of the align-azure-with-aws-capabilities change move each
 # provider's resources from the two submodules into root concern files

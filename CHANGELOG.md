@@ -536,6 +536,25 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   only a warning, and now fails the plan. Remove it or trim it to the roots
   you need
   ([#62](https://github.com/n8n-io/terraform-azurerm-n8n/issues/62)).
+- n8n's per-IP rate limiter and request logs no longer see the client's
+  source port. Application Gateway v2 writes `X-Forwarded-For` as `IP:port`,
+  so with `N8N_PROXY_HOPS=1` Express reported `req.ip` as `ip:port`, n8n's
+  `express-rate-limit` logged `ERR_ERL_INVALID_IP_ADDRESS` once per main pod,
+  and the per-IP key most likely never grouped one client's requests. The
+  module now creates an AGIC `AzureApplicationGatewayRewrite` that sets
+  `X-Forwarded-For` to `{var_add_x_forwarded_for_proxy}` and references it
+  from the managed Ingress, which keeps entries an upstream proxy such as
+  Azure Front Door added so `n8n_proxy_hops = 2` still resolves the right
+  client. `examples/customer-managed-cluster`,
+  `examples/customer-managed-everything`, and `examples/split-ingress` carry
+  the same rewrite on their Helm-installed AGIC; any other caller-owned AGIC
+  Ingress (`create_ingress = false`) needs it too, see `docs/ingress-options.md`
+  ([#60](https://github.com/n8n-io/terraform-azurerm-n8n/issues/60)). AGIC
+  attaches one rewrite rule set per Ingress, so a `rewrite-rule-set` or
+  `rewrite-rule-set-custom-resource` entry in `ingress_annotations` replaces
+  the module's rewrite (the module drops its own reference when you set
+  `rewrite-rule-set`, since AGIC attaches neither when both are present) and
+  raises the `ingress_annotations_override_module_controls` warning.
 - `examples/customer-managed-cluster`, `examples/customer-managed-everything`,
   and `examples/split-ingress` now match the root module's Ingress defaults
   on their caller-owned AGIC Ingress: `request-timeout = "300"` and 30 s
