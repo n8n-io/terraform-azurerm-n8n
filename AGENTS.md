@@ -1118,7 +1118,7 @@ for dir in . modules/controllers modules/tls-self-signed modules/tls-letsencrypt
   examples/small examples/medium examples/large \
   examples/split-ingress examples/customer-managed-cluster \
   examples/customer-managed-redis examples/customer-managed-storage \
-  examples/customer-managed-everything; do
+  examples/customer-managed-everything examples/worker-pools; do
   terraform -chdir="$dir" providers lock \
     -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64
 done

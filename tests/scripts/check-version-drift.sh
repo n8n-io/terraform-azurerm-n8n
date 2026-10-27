@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# check-version-drift.sh: report currency of every pin in docs/versioning.md
-# against public sources. Never modifies a pin; always exits 0 (this is a
+# check-version-drift.sh: report currency of the pins in docs/versioning.md
+# that public sources can answer (see that doc's "Checking currency" section
+# for what is not covered yet). Never modifies a pin; always exits 0 (this is a
 # report, not a gate) unless a required tool is missing or a pin cannot be
 # read from the repo at all.
 #
@@ -9,12 +10,13 @@
 # (OCI registry tags), and aks_kubernetes_version's default against Azure's
 # published AKS supported-versions page.
 #
-# Deliberately does NOT use endoflife.date for the Kubernetes-version check
-# (port-aws-050-enhancements): that table has no AKS-specific product entry
-# and would misreport AKS's own extended-support windows, which differ from
-# upstream Kubernetes EOL. The AKS learn.microsoft.com page scrape below is
-# best-effort HTML parsing, not a stable API; a parse failure is reported
-# as "unable to determine", not treated as a script error.
+# Reads Azure's own AKS supported-versions page rather than endoflife.date.
+# endoflife.date does have an AKS entry (azure-kubernetes-service, with
+# standard and long-term support dates), and docs/versioning.md cites it as
+# a secondary source, but Microsoft's page stays the primary source here.
+# The AKS learn.microsoft.com page scrape below is best-effort HTML parsing,
+# not a stable API; a parse failure is reported as "unable to determine",
+# not treated as a script error.
 #
 # Usage:
 #   tests/scripts/check-version-drift.sh
