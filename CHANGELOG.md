@@ -491,6 +491,27 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   excludes 1.13 (for example `~> 1.12.0`), and let the `azurerm` provider
   resolve within the new range before applying.
 
+- **Breaking:** `appgw_frontend_mode = "internal"` now requires the new
+  `appgw_private_ip_address` and creates a static private frontend. The module
+  used to request a dynamic address, which Application Gateway v2 rejects
+  (`ApplicationGatewayFrontendIpPrivateIpAddressInvalidAllocationType`, seen
+  live), so the internal mode had never been qualified. A private-only gateway
+  also needs the `Microsoft.Network/EnableApplicationGatewayNetworkIsolation`
+  feature, a subnet delegated to `Microsoft.Network/applicationGateways`, and
+  private access to the certificate's Key Vault (a `Microsoft.KeyVault` service
+  endpoint on that subnet, or a private endpoint for the vault with its
+  `privatelink.vaultcore.azure.net` zone linked to the VNet); without either
+  Azure fails the create with a bare `InternalServerError`. The address is
+  required only while `create_ingress = true`: with caller-owned ingress the
+  frontend settings are inert, so internal mode without an address plans with
+  only the existing inert-tuning warning. Verified live: the
+  gateway created at the static address with no public IP, served HTTPS from
+  inside the VNet, and carried the `X-Forwarded-For` rewrite. Callers who
+  never used the internal mode are unaffected. To upgrade an internal-mode
+  configuration, set `appgw_private_ip_address` to a free address inside
+  `appgw_subnet_id` (not one of the five Azure reserves) and add the subnet
+  delegation and Key Vault access above before applying
+  ([docs/troubleshooting.md](./docs/troubleshooting.md)).
 - `aks_node_count_min`'s description now states that it sizes both the
   system and user AKS node pools (matching `aks_node_count_max`'s
   description), not just "the AKS default node pool"
@@ -536,6 +557,21 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   only a warning, and now fails the plan. Remove it or trim it to the roots
   you need
   ([#62](https://github.com/n8n-io/terraform-azurerm-n8n/issues/62)).
+- `examples/split-ingress` now works on current Azure. Each gateway has its own
+  delegated subnet and NSG (a shared subnet could only carry one, so the
+  VNet-only admin rule and the internet-facing webhook rule applied to both
+  gateways), the admin gateway has a static private address, and both subnets
+  have the Key Vault service endpoint. The AGIC federated identity subjects
+  now match the chart's `<release>-sa-ingress-azure` service accounts, both
+  AGIC releases leave the cluster-scoped IngressClass alone, each AGIC
+  identity has `Managed Identity Operator` on its gateway's TLS identity, and
+  both Ingresses terminate TLS (the admin Ingress also sets `use-private-ip`).
+  It requires the `EnableApplicationGatewayNetworkIsolation` feature (see its
+  README). The example is a reference, not a state-compatible upgrade path:
+  an existing deployment of it replaces its gateway subnet, NSG and NSG
+  association (`appgw` becomes `appgw_webhook` plus `appgw_admin`) and moves
+  both Application Gateways to the new subnets, so plan the change as a
+  redeploy.
 - n8n's per-IP rate limiter and request logs no longer see the client's
   source port. Application Gateway v2 writes `X-Forwarded-For` as `IP:port`,
   so with `N8N_PROXY_HOPS=1` Express reported `req.ip` as `ip:port`, n8n's

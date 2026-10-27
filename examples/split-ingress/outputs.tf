@@ -22,7 +22,7 @@ output "webhook_appgw_fqdn" {
 }
 
 output "admin_appgw_private_ip" {
-  description = "Private IPv4 address of the internal admin Application Gateway's frontend, once AGIC provisions it. Null until then."
+  description = "Static private IPv4 address of the internal admin Application Gateway's frontend, assigned in the appgw-admin subnet."
   value       = try([for c in azurerm_application_gateway.admin.frontend_ip_configuration : c.private_ip_address if c.name == "admin-frontend-ip"][0], null)
 }
 

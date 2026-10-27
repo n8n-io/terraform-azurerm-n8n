@@ -14,8 +14,8 @@ Two Application Gateways instead of the root module's single one: a public gatew
 AKS's built-in `ingress_application_gateway` addon binds to exactly one Application Gateway per cluster, so serving two gateways from one cluster needs two **standalone** `ingress-azure` Helm releases (not the addon), each with:
 
 - Its own Application Gateway (`azurerm_application_gateway.webhook` / `.admin`).
-- Its own AKS workload-identity user-assigned identity, federated to its own Kubernetes namespace (`agic-webhook` / `agic-admin`) and the chart's fixed `ingress-azure` service account name.
-- `Contributor` on only its own gateway (never both — crossing these would let one controller reconfigure the other gateway), `Reader` on the resource group, and `Network Contributor` on the shared `appgw` subnet.
+- Its own AKS workload-identity user-assigned identity, federated to its own Kubernetes namespace (`agic-webhook` / `agic-admin`) and the service account the chart derives from the release name (`<release>-sa-ingress-azure`, so `agic-webhook-sa-ingress-azure` / `agic-admin-sa-ingress-azure`).
+- `Contributor` on only its own gateway (never both — crossing these would let one controller reconfigure the other gateway), `Reader` on the resource group, and `Network Contributor` on only its own gateway subnet (`appgw-webhook` / `appgw-admin`).
 - A distinct `kubernetes.io/ingress.class` value (`azure/application-gateway-webhook` / `azure/application-gateway-admin`) so each install reconciles only the Ingress object that names it.
 
 Both gateways issue lab-grade self-signed certificates from `modules/tls-self-signed`, one per hostname, imported into one shared Key Vault. Replace both with real certificates before production use.
@@ -29,11 +29,22 @@ The root module's `n8n_webhook_url` input (port-aws-040-enhancements section 11)
 
 The public gateway routes every webhook prefix (that is what the mocked tests in `tests/defaults.tftest.hcl` assert), so both n8n's own generated links and a URL you construct yourself against `webhook_base_url` (this example's output, which always matches `n8n_webhook_url`) resolve correctly. This fix only changes what n8n advertises; it does not redesign routing — the public gateway already routed the same five prefixes before this change. The pinned n8n version also uses the configured webhook base for test-webhook and form-trigger URLs in the editor; verify that behavior manually against a real deployment, since it is not covered by the offline chart-rendering check.
 
+## Prerequisites for the private admin gateway
+
+A private-only (no public IP) Application Gateway v2 needs four things, all of which this example sets up except the first:
+
+1. The subscription has `Microsoft.Network/EnableApplicationGatewayNetworkIsolation` registered (`az feature register --namespace Microsoft.Network --name EnableApplicationGatewayNetworkIsolation`, then `az provider register -n Microsoft.Network`). **This is subscription-wide and changes behavior for every Application Gateway v2 in it:** once registered, every v2 gateway must sit in a subnet delegated to `Microsoft.Network/applicationGateways`, including the module's own gateway and the other examples, which do not delegate their subnets.
+2. A subnet delegated to `Microsoft.Network/applicationGateways`. Each gateway gets its own (`appgw-webhook`, `appgw-admin`) and its own NSG, so the VNet-only admin rule cannot be widened by the internet-facing webhook rule.
+3. A static private frontend address; Application Gateway v2 rejects a dynamic one.
+4. A route to Key Vault for the TLS certificate. The gateway has no public IP, so both subnets carry the `Microsoft.KeyVault` service endpoint (a private endpoint for the vault is the other route, but its `privatelink.vaultcore.azure.net` zone must be linked to the VNet). Without either Azure fails the create with a bare `InternalServerError`.
+
+See [`docs/troubleshooting.md`](../../docs/troubleshooting.md) for the errors each missing piece produces.
+
 ## Apply
 
 1. Copy `terraform.tfvars.example` to `terraform.tfvars` and replace the placeholders.
 2. Run `terraform init` and `terraform apply`. AGIC needs both role assignments and the RBAC propagation gates to settle before it can reconcile either gateway; the first Ingress admission can take a few minutes after `apply` reports success.
-3. Point your own DNS at `webhook_appgw_fqdn` (public) and `admin_appgw_private_ip` (private, once AGIC assigns it) once you are ready to move off the self-signed certificates.
+3. Point your own DNS at `webhook_appgw_fqdn` (public) and `admin_appgw_private_ip` (private, the static address this example assigns) once you are ready to move off the self-signed certificates.
 
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
 
@@ -93,7 +104,8 @@ See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for roo
 | [azurerm_federated_identity_credential.agic_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/federated_identity_credential) | resource |
 | [azurerm_federated_identity_credential.agic_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/federated_identity_credential) | resource |
 | [azurerm_key_vault.tls](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/key_vault) | resource |
-| [azurerm_network_security_group.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_security_group) | resource |
+| [azurerm_network_security_group.appgw_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_security_group) | resource |
+| [azurerm_network_security_group.appgw_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_security_group) | resource |
 | [azurerm_public_ip.webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/public_ip) | resource |
 | [azurerm_resource_group.n8n](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
 | [azurerm_resource_group.network](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_group) | resource |
@@ -101,18 +113,22 @@ See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for roo
 | [azurerm_role_assignment.agic_admin_appgw_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_admin_rg_reader](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_admin_subnet_network_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.agic_admin_tls_identity_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_webhook_appgw_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_webhook_rg_reader](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.agic_webhook_subnet_network_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
+| [azurerm_role_assignment.agic_webhook_tls_identity_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.key_vault_operator](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.terraform_blob_data_contributor](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_role_assignment.webhook_tls_cert_kv_reader](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/role_assignment) | resource |
 | [azurerm_subnet.aks](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
-| [azurerm_subnet.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
+| [azurerm_subnet.appgw_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
+| [azurerm_subnet.appgw_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
 | [azurerm_subnet.postgres](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
 | [azurerm_subnet.private_endpoints](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
 | [azurerm_subnet.redis](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet) | resource |
-| [azurerm_subnet_network_security_group_association.appgw](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet_network_security_group_association) | resource |
+| [azurerm_subnet_network_security_group_association.appgw_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet_network_security_group_association) | resource |
+| [azurerm_subnet_network_security_group_association.appgw_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/subnet_network_security_group_association) | resource |
 | [azurerm_user_assigned_identity.admin_tls_cert](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
 | [azurerm_user_assigned_identity.agic_admin](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
 | [azurerm_user_assigned_identity.agic_webhook](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/user_assigned_identity) | resource |
@@ -155,7 +171,7 @@ See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for roo
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_admin_appgw_private_ip"></a> [admin\_appgw\_private\_ip](#output\_admin\_appgw\_private\_ip) | Private IPv4 address of the internal admin Application Gateway's frontend, once AGIC provisions it. Null until then. |
+| <a name="output_admin_appgw_private_ip"></a> [admin\_appgw\_private\_ip](#output\_admin\_appgw\_private\_ip) | Static private IPv4 address of the internal admin Application Gateway's frontend, assigned in the appgw-admin subnet. |
 | <a name="output_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#output\_blob\_delete\_retention\_days) | Effective Blob soft-delete retention window, in days, passed to the root module's blob\_delete\_retention\_days. Null leaves soft delete disabled. |
 | <a name="output_kubectl_config_command"></a> [kubectl\_config\_command](#output\_kubectl\_config\_command) | Command that writes the AKS context into the local kubeconfig. |
 | <a name="output_main_hpa_min_replicas"></a> [main\_hpa\_min\_replicas](#output\_main\_hpa\_min\_replicas) | Effective main-topology floor passed to the root module's n8n\_main\_hpa\_min\_replicas. See module.n8n.n8n\_url for confirmation the module accepted it. |

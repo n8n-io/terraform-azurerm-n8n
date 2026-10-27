@@ -235,6 +235,89 @@ run "split_ingress_plan" {
     )
     error_message = "The rewrite must set X-Forwarded-For to {var_add_x_forwarded_for_proxy} so upstream proxy entries survive and the port is dropped."
   }
+
+  # Private-only Application Gateway v2 needs a delegated subnet, a static
+  # frontend address, and (so the VNet-only admin rule cannot be widened by the
+  # internet-facing webhook rule) its own subnet and NSG.
+  assert {
+    condition = alltrue([
+      for s in [azurerm_subnet.appgw_webhook, azurerm_subnet.appgw_admin] :
+      s.delegation[0].service_delegation[0].name == "Microsoft.Network/applicationGateways"
+    ])
+    error_message = "Both gateway subnets must be delegated to Microsoft.Network/applicationGateways."
+  }
+
+  assert {
+    condition     = azurerm_application_gateway.admin.frontend_ip_configuration[0].private_ip_address_allocation == "Static" && azurerm_application_gateway.admin.frontend_ip_configuration[0].private_ip_address == "10.0.12.10"
+    error_message = "The private-only admin gateway must use a static private frontend address inside its own subnet."
+  }
+
+  assert {
+    condition     = length([for r in azurerm_network_security_group.appgw_admin.security_rule : r if r.source_address_prefix == "Internet"]) == 0 && length([for r in azurerm_network_security_group.appgw_webhook.security_rule : r if r.source_address_prefix == "Internet"]) == 1
+    error_message = "Only the webhook gateway's NSG may admit the Internet; the admin gateway's NSG must not."
+  }
+
+  # A private-only gateway has no route to Key Vault's public endpoint, so both
+  # gateway subnets carry the Key Vault service endpoint (without it Azure fails
+  # the admin gateway create with a bare InternalServerError).
+  assert {
+    condition = alltrue([
+      for s in [azurerm_subnet.appgw_webhook, azurerm_subnet.appgw_admin] :
+      contains(s.service_endpoints, "Microsoft.KeyVault")
+    ])
+    error_message = "Both gateway subnets must carry the Microsoft.KeyVault service endpoint."
+  }
+
+  # Without these annotations AGIC builds only a port-80 listener and serves
+  # webhooks and the editor unencrypted.
+  assert {
+    condition = alltrue([
+      for ingress in [kubernetes_ingress_v1.webhook_public, kubernetes_ingress_v1.admin_internal] :
+      ingress.metadata[0].annotations["appgw.ingress.kubernetes.io/ssl-redirect"] == "true" &&
+      ingress.metadata[0].annotations["appgw.ingress.kubernetes.io/backend-protocol"] == "http" &&
+      ingress.metadata[0].annotations["appgw.ingress.kubernetes.io/appgw-ssl-certificate"] == "appgw-ssl-cert"
+    ])
+    error_message = "Both Ingresses must terminate TLS on the gateway certificate appgw-ssl-cert and redirect plain HTTP."
+  }
+
+  assert {
+    condition = (
+      kubernetes_ingress_v1.admin_internal.metadata[0].annotations["appgw.ingress.kubernetes.io/use-private-ip"] == "true" &&
+      !contains(keys(kubernetes_ingress_v1.webhook_public.metadata[0].annotations), "appgw.ingress.kubernetes.io/use-private-ip")
+    )
+    error_message = "Only the admin Ingress may set use-private-ip: AGIC ignores an Ingress on a gateway with no public IP unless it does."
+  }
+
+  # The ingress-azure chart names its service account <release>-sa-ingress-azure,
+  # so each federated subject must follow its own release's name and namespace
+  # (a mismatch gives AADSTS700213 in the AGIC pod).
+  assert {
+    condition = (
+      azurerm_federated_identity_credential.agic_webhook.subject == "system:serviceaccount:${helm_release.agic_webhook.namespace}:${helm_release.agic_webhook.name}-sa-ingress-azure" &&
+      azurerm_federated_identity_credential.agic_admin.subject == "system:serviceaccount:${helm_release.agic_admin.namespace}:${helm_release.agic_admin.name}-sa-ingress-azure"
+    )
+    error_message = "Each AGIC federated subject must match the chart's service account for that release: system:serviceaccount:<namespace>:<release>-sa-ingress-azure."
+  }
+
+  # Both releases would otherwise try to own the cluster-scoped IngressClass
+  # azure-application-gateway, and Helm rejects the second install.
+  assert {
+    condition = alltrue([
+      for release in [helm_release.agic_webhook, helm_release.agic_admin] :
+      anytrue([for s in release.set : s.name == "kubernetes.ingressClassResource.enabled" && s.value == "false"])
+    ])
+    error_message = "Both AGIC releases must set kubernetes.ingressClassResource.enabled=false."
+  }
+
+  # AGIC assigns the gateway's TLS identity on every gateway update, which needs
+  # Microsoft.ManagedIdentity/userAssignedIdentities/assign/action.
+  assert {
+    condition = alltrue([
+      for ra in [azurerm_role_assignment.agic_webhook_tls_identity_operator, azurerm_role_assignment.agic_admin_tls_identity_operator] :
+      ra.role_definition_name == "Managed Identity Operator"
+    ])
+    error_message = "Each AGIC identity needs Managed Identity Operator on its gateway's TLS identity, or gateway updates fail with LinkedAuthorizationFailed."
+  }
 }
 
 run "waf_policy_omitted_uses_standard_v2" {
