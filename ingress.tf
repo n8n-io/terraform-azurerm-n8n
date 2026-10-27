@@ -249,22 +249,23 @@ resource "azurerm_application_gateway" "n8n" {
 
   tags = merge(local.common_tags, { Name = local.app_gateway_name })
 
+  # Bound the provider's delete wait. The azurerm default is 90 minutes per
+  # operation, and a gateway that landed in provisioningState Failed (for
+  # example after a partially failed first apply) made `terraform destroy`
+  # poll for over an hour after Azure had already marked the delete failed.
+  # Create and update keep the provider default, so a slow but successful
+  # operation is not turned into a failure. The provider stores timeouts in
+  # state only on a create or a real update: a gateway that existed before
+  # this value was added keeps the 90-minute delete default until then.
+  timeouts {
+    delete = "20m"
+  }
+
   # AGIC owns the listener, pool, probe, and path-map blocks it renders from
   # the Ingress. ssl_certificate is deliberately not ignored: AGIC references
   # the module-owned `appgw-ssl-cert` by name and never rewrites it, and
   # ignoring it would silently drop every rotation of
   # var.app_gateway_tls_cert_secret_id on an existing gateway.
-  # Bound the provider's wait. The azurerm default is 90 minutes per operation,
-  # and a gateway that lands in provisioningState Failed (for example after a
-  # partially failed first apply) made `terraform destroy` poll for over an hour
-  # after Azure had already marked the delete failed. Gateways create and delete
-  # in minutes, so these fail fast instead.
-  timeouts {
-    create = "30m"
-    update = "30m"
-    delete = "20m"
-  }
-
   lifecycle {
     ignore_changes = [
       backend_address_pool,

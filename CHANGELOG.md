@@ -582,11 +582,15 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   The root module configures no provider and keeps its `>= 4.39.0` floor;
   callers can set the flag in their own `features` block (see the README).
 - Application Gateways in the module and the examples set
-  `timeouts { create = "30m", update = "30m", delete = "20m" }` as a
-  precaution. The azurerm default is 90 minutes per operation, and in one live
-  run `terraform destroy` kept polling a gateway for over an hour after Azure
-  had marked the delete failed. That hang was not reproduced and its cause is
-  not established, so the timeouts only bound how long such a stall can last.
+  `timeouts { delete = "20m" }` as a precaution. The azurerm default is 90
+  minutes per operation, and in one live run `terraform destroy` kept polling
+  a gateway for over an hour after Azure had marked the delete failed. That
+  hang was not reproduced and its cause is not established, so the timeout
+  only bounds how long such a stall can last. Create and update keep the
+  provider default. The value applies to gateways created after the upgrade;
+  an existing gateway keeps the provider's 90-minute delete default until its
+  next real update, because an apply that changes only `timeouts` is a no-op
+  and does not store the new value in state.
 - n8n's per-IP rate limiter and request logs no longer see the client's
   source port. Application Gateway v2 writes `X-Forwarded-For` as `IP:port`,
   so with `N8N_PROXY_HOPS=1` Express reported `req.ip` as `ip:port`, n8n's

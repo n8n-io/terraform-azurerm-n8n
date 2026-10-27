@@ -217,6 +217,18 @@ run "split_ingress_plan" {
   }
 
   assert {
+    condition = (
+      azurerm_application_gateway.webhook.timeouts.create == null &&
+      azurerm_application_gateway.webhook.timeouts.update == null &&
+      azurerm_application_gateway.webhook.timeouts.delete == "20m" &&
+      azurerm_application_gateway.admin.timeouts.create == null &&
+      azurerm_application_gateway.admin.timeouts.update == null &&
+      azurerm_application_gateway.admin.timeouts.delete == "20m"
+    )
+    error_message = "Both gateways must bound delete to 20m and leave create/update at the provider's default, matching the module's own gateway."
+  }
+
+  assert {
     condition     = kubernetes_ingress_v1.webhook_public.metadata[0].annotations["appgw.ingress.kubernetes.io/rewrite-rule-set-custom-resource"] == yamldecode(kubectl_manifest.appgw_rewrite_xff.yaml_body).metadata.name
     error_message = "Ingress webhook_public must reference the AzureApplicationGatewayRewrite that strips the port from X-Forwarded-For."
   }

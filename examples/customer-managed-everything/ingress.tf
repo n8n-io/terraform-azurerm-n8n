@@ -115,8 +115,6 @@ resource "azurerm_application_gateway" "n8n" {
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-appgw" })
 
   timeouts {
-    create = "30m"
-    update = "30m"
     delete = "20m"
   }
 
