@@ -60,8 +60,9 @@ resource "azurerm_subnet" "aks" {
 # Microsoft.Network/applicationGateways for any private-only (no public IP)
 # Application Gateway v2 and, once a subscription enables
 # EnableApplicationGatewayNetworkIsolation, for every v2 gateway in it. The
-# admin gateway is private-only, so this example needs that preview feature
-# registered on the subscription (see the README). Separate subnets also let
+# admin gateway is private-only, so this example needs that feature (generally
+# available, registered through the portal's Preview features) registered on
+# the subscription (see the README). Separate subnets also let
 # each gateway carry its own NSG: a shared subnet can only have one, so the
 # internet-facing webhook rule and the VNet-only admin rule would have applied
 # to both gateways. The Key Vault service endpoint is what lets the private-only
