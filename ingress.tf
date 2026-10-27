@@ -316,7 +316,11 @@ resource "azurerm_role_assignment" "agic_addon_appgw_subnet_network_contributor"
 # rule set is an AzureApplicationGatewayRewrite custom resource that AGIC
 # reconciles onto the gateway and attaches through the Ingress annotation in
 # local.appgw_ingress_default_annotations. kubectl_manifest defers schema
-# resolution to apply time, like the KEDA TriggerAuthentication.
+# resolution to apply time, like the KEDA TriggerAuthentication. It depends on
+# time_sleep.aks_api_warmup directly, not only through kubernetes_namespace.n8n,
+# so a caller-owned namespace (create_namespace = false) gets the same API
+# readiness gate. create_ingress requires create_aks, so the gate always exists
+# here.
 resource "kubectl_manifest" "appgw_rewrite_xff" {
   count = var.create_ingress ? 1 : 0
 
@@ -344,7 +348,7 @@ resource "kubectl_manifest" "appgw_rewrite_xff" {
 
   depends_on = [
     kubernetes_namespace.n8n,
-    azurerm_kubernetes_cluster.n8n,
+    time_sleep.aks_api_warmup,
   ]
 }
 
