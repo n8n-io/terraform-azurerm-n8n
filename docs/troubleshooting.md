@@ -57,6 +57,59 @@ The empty list is the tell: Flexible Server offers *no* PostgreSQL versions to t
 
 Pick a region where `az postgres flexible-server list-skus -l <region> --query "[0].supportedServerVersions[].name"` lists your `pg_version` (and `pg_sku_name` under `supportedServerEditions`), or set `create_database = false` and point the module at an existing PostgreSQL endpoint. The preflight script checks both the version and the SKU. Resources created before the failure are reused on the next apply.
 
+## `terraform apply`: Azure Managed Redis fails with `InsufficientCapacity`
+
+**Symptom**
+
+`azurerm_managed_redis.n8n` fails after a few minutes of polling:
+
+```text
+Error: creating Redis Enterprise ...: polling after Create: polling failed:
+Code: "InsufficientCapacity"
+Message: "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region."
+```
+
+The Azure resource is left behind in `resourceState = CreateFailed`, and the next `terraform apply` collides with it (`Conflict`).
+
+**Root cause**
+
+Azure Managed Redis is capacity-constrained per region and the constraint is point-in-time: the same `Balanced_B0` request was rejected in `germanywestcentral`, `westeurope`, `northeurope`, and `eastus2` on one day while `centralus`, `eastus`, `westus2`, `westus3`, `swedencentral`, `uksouth`, and `francecentral` accepted it within minutes. There is no capacity API, so a SKU being "available" in the region's catalogue says nothing about whether a create will succeed right now. Retrying the same SKU in the same region rarely helps within the hour; changing SKU (`Balanced_B1`, `MemoryOptimized_M10`) sometimes does, changing region usually does. On 2026-09-22 every SKU family (`Balanced_B0`/`B1`/`B3`, `MemoryOptimized_M10`, `ComputeOptimized_X3`) was rejected in `germanywestcentral` within the same hour while `swedencentral` accepted `Balanced_B0`, so when the probe rejects two families, move region rather than trying a third. See [`docs/redis.md`](./redis.md) for the allowed SKUs and the `NoCluster` ceiling.
+
+**Resolution**
+
+1. Delete the failed orphan before re-applying (Terraform never recorded it): `az redisenterprise delete --name <friendly_name_prefix>-redis --resource-group <resource_group_name> --yes`, where `<resource_group_name>` is the value you passed to the module (the sizing examples use `<friendly_name_prefix>-n8n-rg`).
+2. Change region, change `redis_sku_name`, or set `create_redis = false` with an external Redis endpoint, then run a fresh `terraform plan`; a partial apply safely retains everything created before the Redis failure.
+3. Before the next attempt, run the preflight script with `--probe-redis`: it creates a throwaway cluster of your configured SKU in your configured region (a rejection surfaces in under a minute, success in five to ten) and deletes it, so you learn about capacity before the 15-minute AKS/Postgres/App Gateway build instead of after it.
+
+## `terraform apply`: `helm_release.n8n` times out because the AKS autoscaler can't add a node
+
+**Symptom**
+
+`helm_release.n8n` fails after its full `n8n_helm_timeout` (default 600s) with `context deadline exceeded`, and `atomic = true` rolls the release back. `kubectl -n kube-system get configmap cluster-autoscaler-status` shows the user node pool's `scaleUp.status: Backoff` with:
+
+```text
+errorMessage: |-
+  failed to increase node group size: PUT .../virtualMachineScaleSets/aks-n8nuser-...
+  RESPONSE 409: 409 Conflict
+  ERROR CODE: OperationNotAllowed
+  {"error": {"code": "OperationNotAllowed", "message": "Operation results in exceeding quota limits of Core. Maximum allowed: 10, Current in use: 8, ..."}}
+```
+
+n8n's main/worker/webhook pods sit `Pending` the whole time; the AKS cluster, PostgreSQL, and Redis all created successfully before this.
+
+**Root cause**
+
+The subscription's regional vCPU quota, either the per-VM-family cap (e.g. `standardDSv5Family`) or the aggregate `cores` cap, is too tight for both node pools (the user pool scales `aks_node_count_min..aks_node_count_max` nodes of `aks_node_vm_size`; the system pool scales the same range of the same size unless `aks_system_node_vm_size`/`_count_min`/`_count_max` overrides it) plus whatever else already runs in that region on the subscription. A fresh subscription or a shared sandbox often starts with a `cores` limit of 10. With `Standard_D2s_v5` (2 vCPUs) and the default `aks_node_count_min = 2` on both pools, the two pools start with four nodes (8 vCPUs), and the autoscaler can add only one more node before it reaches that limit.
+
+Node upgrades and pool rotations need quota on top of this. `aks_node_upgrade_max_surge` (default `10%` of the pool's current node count, rounded up to whole nodes, which is one node per pool at the root module's default sizing) adds nodes during a Kubernetes or node-image upgrade. Changing a setting that rotates a pool through `temporary_name_for_rotation` (for example `aks_node_os_disk_size_gb`) briefly creates a temporary copy of that pool. The preflight script checks only the autoscaler ceiling, so leave extra headroom if you plan either operation.
+
+**Resolution**
+
+1. Run `tests/scripts/preflight-region-check.sh` before applying. It checks both the per-family and the aggregate vCPU quota against the worst case (the sum of every planned node pool's `max_count`, per VM family: the user and system pools of every module instance, at one VM size by default or two when `aks_system_node_vm_size` overrides the system pool). When the plan only creates AKS clusters and node pools, a shortfall fails the run before the 15-20 minute build reaches this point. When the plan keeps or replaces an existing cluster, the result is a warning, because `az vm list-usage` may already count that cluster's nodes.
+2. If it fails, request a quota increase: `az quota update --resource-name <cores|standardXxxFamily> --scope /subscriptions/<id>/providers/Microsoft.Compute/locations/<region> --limit-object value=<new> --resource-type dedicated`. This command is part of the `quota` Azure CLI extension (`az extension add -n quota`). Many subscriptions approve this within a minute or two.
+3. After a quota increase, the autoscaler's own backoff (observed up to 10-15 minutes) still has to expire before it retries. A `terraform apply` retry immediately after the quota change can fail the same way. Watch `kubectl -n kube-system get configmap cluster-autoscaler-status -o yaml` until the pool's `scaleUp.status` is no longer `Backoff`, then re-run `terraform apply`.
+4. Alternatively, lower `aks_node_vm_size` or `aks_node_count_max` (which size the user pool, and the system pool too unless overridden), or `aks_system_node_vm_size` or `aks_system_node_count_max` for the system pool alone, or move to a region/subscription with more headroom.
+
 ## `terraform apply`: Application Gateway fails with `ApplicationGatewayNetworkIsolationRequiresSubnetDelegation`
 
 **Symptom**
@@ -124,59 +177,6 @@ Delete the failed gateway before re-applying, because a `Failed` gateway left ou
 ```bash
 az network application-gateway delete -g <rg> -n <name>
 ```
-
-## `terraform apply`: Azure Managed Redis fails with `InsufficientCapacity`
-
-**Symptom**
-
-`azurerm_managed_redis.n8n` fails after a few minutes of polling:
-
-```text
-Error: creating Redis Enterprise ...: polling after Create: polling failed:
-Code: "InsufficientCapacity"
-Message: "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region."
-```
-
-The Azure resource is left behind in `resourceState = CreateFailed`, and the next `terraform apply` collides with it (`Conflict`).
-
-**Root cause**
-
-Azure Managed Redis is capacity-constrained per region and the constraint is point-in-time: the same `Balanced_B0` request was rejected in `germanywestcentral`, `westeurope`, `northeurope`, and `eastus2` on one day while `centralus`, `eastus`, `westus2`, `westus3`, `swedencentral`, `uksouth`, and `francecentral` accepted it within minutes. There is no capacity API, so a SKU being "available" in the region's catalogue says nothing about whether a create will succeed right now. Retrying the same SKU in the same region rarely helps within the hour; changing SKU (`Balanced_B1`, `MemoryOptimized_M10`) sometimes does, changing region usually does. On 2026-09-22 every SKU family (`Balanced_B0`/`B1`/`B3`, `MemoryOptimized_M10`, `ComputeOptimized_X3`) was rejected in `germanywestcentral` within the same hour while `swedencentral` accepted `Balanced_B0`, so when the probe rejects two families, move region rather than trying a third. See [`docs/redis.md`](./redis.md) for the allowed SKUs and the `NoCluster` ceiling.
-
-**Resolution**
-
-1. Delete the failed orphan before re-applying (Terraform never recorded it): `az redisenterprise delete --name <friendly_name_prefix>-redis --resource-group <resource_group_name> --yes`, where `<resource_group_name>` is the value you passed to the module (the sizing examples use `<friendly_name_prefix>-n8n-rg`).
-2. Change region, change `redis_sku_name`, or set `create_redis = false` with an external Redis endpoint, then run a fresh `terraform plan`; a partial apply safely retains everything created before the Redis failure.
-3. Before the next attempt, run the preflight script with `--probe-redis`: it creates a throwaway cluster of your configured SKU in your configured region (a rejection surfaces in under a minute, success in five to ten) and deletes it, so you learn about capacity before the 15-minute AKS/Postgres/App Gateway build instead of after it.
-
-## `terraform apply`: `helm_release.n8n` times out because the AKS autoscaler can't add a node
-
-**Symptom**
-
-`helm_release.n8n` fails after its full `n8n_helm_timeout` (default 600s) with `context deadline exceeded`, and `atomic = true` rolls the release back. `kubectl -n kube-system get configmap cluster-autoscaler-status` shows the user node pool's `scaleUp.status: Backoff` with:
-
-```text
-errorMessage: |-
-  failed to increase node group size: PUT .../virtualMachineScaleSets/aks-n8nuser-...
-  RESPONSE 409: 409 Conflict
-  ERROR CODE: OperationNotAllowed
-  {"error": {"code": "OperationNotAllowed", "message": "Operation results in exceeding quota limits of Core. Maximum allowed: 10, Current in use: 8, ..."}}
-```
-
-n8n's main/worker/webhook pods sit `Pending` the whole time; the AKS cluster, PostgreSQL, and Redis all created successfully before this.
-
-**Root cause**
-
-The subscription's regional vCPU quota, either the per-VM-family cap (e.g. `standardDSv5Family`) or the aggregate `cores` cap, is too tight for both node pools (the user pool scales `aks_node_count_min..aks_node_count_max` nodes of `aks_node_vm_size`; the system pool scales the same range of the same size unless `aks_system_node_vm_size`/`_count_min`/`_count_max` overrides it) plus whatever else already runs in that region on the subscription. A fresh subscription or a shared sandbox often starts with a `cores` limit of 10. With `Standard_D2s_v5` (2 vCPUs) and the default `aks_node_count_min = 2` on both pools, the two pools start with four nodes (8 vCPUs), and the autoscaler can add only one more node before it reaches that limit.
-
-Node upgrades and pool rotations need quota on top of this. `aks_node_upgrade_max_surge` (default `10%` of the pool's current node count, rounded up to whole nodes, which is one node per pool at the root module's default sizing) adds nodes during a Kubernetes or node-image upgrade. Changing a setting that rotates a pool through `temporary_name_for_rotation` (for example `aks_node_os_disk_size_gb`) briefly creates a temporary copy of that pool. The preflight script checks only the autoscaler ceiling, so leave extra headroom if you plan either operation.
-
-**Resolution**
-
-1. Run `tests/scripts/preflight-region-check.sh` before applying. It checks both the per-family and the aggregate vCPU quota against the worst case (the sum of every planned node pool's `max_count`, per VM family: the user and system pools of every module instance, at one VM size by default or two when `aks_system_node_vm_size` overrides the system pool). When the plan only creates AKS clusters and node pools, a shortfall fails the run before the 15-20 minute build reaches this point. When the plan keeps or replaces an existing cluster, the result is a warning, because `az vm list-usage` may already count that cluster's nodes.
-2. If it fails, request a quota increase: `az quota update --resource-name <cores|standardXxxFamily> --scope /subscriptions/<id>/providers/Microsoft.Compute/locations/<region> --limit-object value=<new> --resource-type dedicated`. This command is part of the `quota` Azure CLI extension (`az extension add -n quota`). Many subscriptions approve this within a minute or two.
-3. After a quota increase, the autoscaler's own backoff (observed up to 10-15 minutes) still has to expire before it retries. A `terraform apply` retry immediately after the quota change can fail the same way. Watch `kubectl -n kube-system get configmap cluster-autoscaler-status -o yaml` until the pool's `scaleUp.status` is no longer `Backoff`, then re-run `terraform apply`.
-4. Alternatively, lower `aks_node_vm_size` or `aks_node_count_max` (which size the user pool, and the system pool too unless overridden), or `aks_system_node_vm_size` or `aks_system_node_count_max` for the system pool alone, or move to a region/subscription with more headroom.
 
 ## Changing `aks_node_os_disk_size_gb` on an existing cluster disrupts workloads
 
