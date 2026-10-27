@@ -60,7 +60,7 @@ The module **expects a pre-existing VNet** and five pre-sized subnets (AKS, Appl
 ## Prerequisites
 
 - **Terraform** `>= 1.13` (1.12 is the first release that short-circuits `||` and `&&`, which the module's `var.x == null || var.x.attr` validations need; on 1.11 and earlier they fail whenever such an input is left null. 1.13 stops `terraform test` leaking one provider process per run block, which would exhaust a CI runner as the suite grows. `postgres_admin_password_wo` uses ephemeral input variables (added in 1.10) and write-only arguments (added in 1.11), and 1.9 added the cross-variable validation this module also relies on, e.g. `var.app_gateway_keyvault_id` against `var.app_gateway_keyvault_role_assignment_enabled`).
-- **`hashicorp/azurerm`** `>= 4.39.0, < 5.0.0` (see `versions.tf` for why 4.39.0).
+- **`hashicorp/azurerm`** `>= 4.39.0, < 5.0.0` (see `versions.tf` for why 4.39.0). The recommended `persist_id_on_create_before_polling_for_completion` provider feature in the usage snippet below needs `>= 4.75.0`; the examples require that version.
 - **Azure CLI** `>= 2.50` (`az login`, plus the few imperative steps in the docs under `docs/`); `>= 2.75` to run `tests/scripts/preflight-region-check.sh`, which parses the newer `az postgres flexible-server list-skus` payload and uses the `redisenterprise` extension.
 - **jq** (used by `tests/scripts/preflight-region-check.sh` and the offline chart check; the module itself never shells out to it).
 - **Region preflight (recommended before the first `apply` in a new region or subscription):** run `tests/scripts/preflight-region-check.sh` from your root. It reads the region, sizing, and SKUs from your own `terraform plan` and checks AKS zone support, subscription vCPU quota headroom against the worst case of every node pool at its effective `max_count` (the user pool's `aks_node_vm_size` x `aks_node_count_max`, plus the system pool's effective VM size x effective `max_count`, which default to the same values but can be overridden independently via `aks_system_node_vm_size` / `aks_system_node_count_max`), PostgreSQL Flexible Server version/SKU availability, and (with `--probe-redis`) Azure Managed Redis capacity, the four gaps that otherwise fail 10-20 minutes into an apply. See the first four entries of [`docs/troubleshooting.md`](./docs/troubleshooting.md) and...
@@ -110,7 +110,14 @@ This module declares `required_providers` (`azurerm`, `kubernetes`, `helm`, `ran
 provider "azurerm" {
   storage_use_azuread = true
 
-  features {}
+  features {
+    # Recommended, needs azurerm 4.75.0 or later (remove this line on older
+    # providers, which reject it as an unsupported argument): a resource whose
+    # create fails on Azure's side stays in state as tainted instead of being
+    # orphaned, so the next apply replaces it and destroy removes it. See
+    # docs/troubleshooting.md.
+    persist_id_on_create_before_polling_for_completion = true
+  }
 }
 ```
 

@@ -196,6 +196,15 @@ run "customer_managed_everything_plan" {
   }
 
   assert {
+    condition = (
+      azurerm_application_gateway.n8n.timeouts.create == null &&
+      azurerm_application_gateway.n8n.timeouts.update == null &&
+      azurerm_application_gateway.n8n.timeouts.delete == "20m"
+    )
+    error_message = "The example's gateway must bound delete to 20m and leave create/update at the provider's default, matching the module's own gateway."
+  }
+
+  assert {
     condition     = azurerm_federated_identity_credential.agic.subject == "system:serviceaccount:agic:agic-sa-ingress-azure"
     error_message = "The standalone AGIC identity must federate the service account created by ingress-azure chart 1.7.5."
   }

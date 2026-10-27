@@ -107,6 +107,15 @@ run "customer_managed_cluster_plan" {
   }
 
   assert {
+    condition = (
+      azurerm_application_gateway.n8n.timeouts.create == null &&
+      azurerm_application_gateway.n8n.timeouts.update == null &&
+      azurerm_application_gateway.n8n.timeouts.delete == "20m"
+    )
+    error_message = "The example's gateway must bound delete to 20m and leave create/update at the provider's default, matching the module's own gateway."
+  }
+
+  assert {
     condition     = azurerm_federated_identity_credential.agic.issuer == azurerm_kubernetes_cluster.existing.oidc_issuer_url
     error_message = "The standalone AGIC identity must federate against the caller-owned cluster's own OIDC issuer."
   }

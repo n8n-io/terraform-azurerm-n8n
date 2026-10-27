@@ -7663,6 +7663,15 @@ run "public_application_gateway_ingress_renders_by_default" {
 
   assert {
     condition = (
+      azurerm_application_gateway.n8n[0].timeouts.create == null &&
+      azurerm_application_gateway.n8n[0].timeouts.update == null &&
+      azurerm_application_gateway.n8n[0].timeouts.delete == "20m"
+    )
+    error_message = "The Application Gateway must bound delete to 20m and leave create/update at the provider's default."
+  }
+
+  assert {
+    condition = (
       azurerm_public_ip.appgw[0].allocation_method == "Static" &&
       azurerm_public_ip.appgw[0].sku == "Standard" &&
       length(azurerm_application_gateway.n8n[0].frontend_ip_configuration) == 1

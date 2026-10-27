@@ -4,7 +4,15 @@
 provider "azurerm" {
   storage_use_azuread = true
 
-  features {}
+  features {
+    # Write a resource's ID to state before polling its create to completion.
+    # A resource whose create fails on the Azure side (for example an
+    # Application Gateway that ends in provisioningState Failed) is then kept
+    # as tainted and replaced or destroyed by the next run, instead of being
+    # orphaned outside state, where it blocks the next create, the subnet
+    # delete, and the resource-group delete. Needs azurerm 4.75.0 or later.
+    persist_id_on_create_before_polling_for_completion = true
+  }
 }
 
 # These providers use the AKS local-account certificate returned by the

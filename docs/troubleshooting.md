@@ -172,11 +172,38 @@ resource "azurerm_subnet" "appgw" {
 }
 ```
 
-Delete the failed gateway before re-applying, because a `Failed` gateway left outside Terraform state blocks both the next create and the subnet delete:
+Set `persist_id_on_create_before_polling_for_completion = true` in the azurerm provider's `features` block (azurerm 4.75.0 or later; every example sets it). Terraform then records the gateway's ID before polling the create, so the failed gateway stays in state as tainted and the next `terraform apply` replaces it, and `terraform destroy` removes it. Without the flag the failed gateway is orphaned outside state and blocks both the next create (same name) and the subnet delete, so delete it before re-applying:
 
 ```bash
 az network application-gateway delete -g <rg> -n <name>
 ```
+
+In rare cases Azure refuses to delete a tainted gateway through the API. Try the `az` command above (it uses the same API, so it can fail the same way). If it succeeds, the next `terraform apply` or `terraform destroy` refreshes the address, sees the gateway is gone, and drops it from state, so no `terraform state rm` is needed. Confirm the deletion first: `az network application-gateway show -g <rg> -n <name>` must return `ResourceNotFound`. Run `terraform state rm` on the address only if the gateway cannot be deleted at all and you accept leaving it behind outside Terraform; it then still blocks a gateway with the same name, the subnet delete, and the resource-group delete until Azure support removes it.
+
+## `terraform destroy`: an Application Gateway delete runs for an hour
+
+**Symptom**
+
+`terraform destroy` prints `azurerm_application_gateway...: Still destroying...` for tens of minutes. In one live run Azure marked the delete operation `Failed` after about 7 minutes, the gateway stayed in `provisioningState: Failed`, and the azurerm provider kept polling for over 60 minutes (its per-operation default is 90).
+
+**Root cause**
+
+A gateway left in `Failed` (typically orphaned by a failed first apply, see the previous entry) can reject or stall a delete. Why the provider's poller did not stop on Azure's `Failed` is not established; capture a debug trace if it recurs (below).
+
+**Fix and prevention**
+
+The module and the examples set `timeouts { delete = "20m" }` on their gateways, so a stalled delete fails after at most 20 minutes instead of 90. Create and update keep the provider's 90-minute default, so a slow but successful operation is not cut short. The delete bound covers gateways created after the upgrade, and existing gateways only after their next real update: the azurerm provider stores timeout values in state on a create or an update, and an apply that changes nothing but `timeouts` is a no-op that keeps the stored 90-minute default ([terraform-plugin-sdk#963](https://github.com/hashicorp/terraform-plugin-sdk/issues/963)). Do not replace a healthy gateway just to pick up the new value.
+
+To stop waiting sooner, run this in a second terminal; it returns as soon as Azure marks the gateway `Failed` (it checks every 15 seconds). If the gateway was already `Failed` before the destroy started, it returns at once and proves nothing about the current delete; check the gateway's activity log in the Azure portal instead.
+
+```bash
+az network application-gateway wait -g <rg> -n <name> \
+  --custom "provisioningState=='Failed'" --interval 15 --timeout 1800
+```
+
+Then press Ctrl-C once in the Terraform terminal and wait for it to shut down: Terraform stops polling and tries to write state and release the lock. A second Ctrl-C exits at once and can lose those final state updates. Neither cancels the operation on Azure's side. Delete the gateway with `az network application-gateway delete -g <rg> -n <name>`, confirm it is gone as described in the previous entry, and rerun `terraform destroy` so state catches up.
+
+To see what the provider was polling, rerun with `TF_LOG=DEBUG TF_LOG_PATH=destroy.log`; that trace is what the azurerm and go-azure-sdk maintainers need. A debug log can contain Azure API request and response bodies for the resources in the run, including access keys, connection strings and cluster credentials. Keep the file private, and review and redact it before attaching it to an issue.
 
 ## Changing `aks_node_os_disk_size_gb` on an existing cluster disrupts workloads
 

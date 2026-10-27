@@ -114,6 +114,10 @@ resource "azurerm_application_gateway" "n8n" {
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-appgw" })
 
+  timeouts {
+    delete = "20m"
+  }
+
   lifecycle {
     ignore_changes = [
       backend_address_pool,
