@@ -681,14 +681,18 @@ module or its examples, which set neither argument. Reproduced against real
 helm 2.17.0 state on a local kube-apiserver: 2.17.0 never stores `keyring`
 (its DiffSuppressFunc drops the value while `verify = false`, even when the
 config sets it), and 3.3.0's `suppressKeyring` plans the null state value
-against a non-null config, so any explicit `keyring` fails the first 3.x
-plan. `suppressDescription` copies state into the plan when the config is
+against a non-null config while `verify` is false, so an explicit `keyring`
+with `verify = false` (the default) fails the first 3.x plan. With
+`verify = true` the modifier leaves the configured value in the plan
+(`helm/resource_helm_release.go` lines 229 to 235 at v3.3.0; read from
+source, not reproduced live), so callers must keep a keyring that chart
+verification needs. `suppressDescription` copies state into the plan when the config is
 `""`, so `description = ""` fails when the 2.x state holds null (the argument
 was added after create; 2.x's `new == ""` suppression never wrote it). A
 non-empty `description` planned clean in both cases, and removing the
 arguments fixed every failure, which is what the README's migration section
-tells callers. Do not set either argument on a `helm_release` until upstream
-PR #1714 or #1739 is released.
+tells callers. Do not set either argument on a `helm_release` (`keyring`
+only with `verify = true`) until upstream PR #1714 or #1739 is released.
 
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 

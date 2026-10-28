@@ -649,14 +649,17 @@ the examples set neither argument. Helm provider 3.3.0 has an open bug
 that fails the first plan with `Provider produced invalid plan ... planned an
 invalid value for helm_release.<name>.keyring` (or `.description`):
 
-- Any `keyring` argument fails, because 2.x never stored it in state while
-  `verify` was false.
+- A `keyring` argument fails while `verify` is false (the default), because
+  2.x never stored it in state in that case. With `verify = true` the
+  provider plans the configured keyring normally, so keep a custom keyring
+  that chart signature verification needs.
 - `description = ""` fails when the 2.x state holds no description, for
   example because the argument was added after the release was created.
   A non-empty `description` is not affected.
 
-Remove those arguments from your `helm_release` resources before the first
-3.x plan, and leave them out until upstream fixes
+Remove those arguments (`keyring` only where `verify` is false) from your
+`helm_release` resources before the first 3.x plan, and leave them out until
+upstream fixes
 ([#1714](https://github.com/hashicorp/terraform-provider-helm/pull/1714) or
 [#1739](https://github.com/hashicorp/terraform-provider-helm/pull/1739)) ship
 in a release. A failed plan writes nothing to state, so you can fix the
