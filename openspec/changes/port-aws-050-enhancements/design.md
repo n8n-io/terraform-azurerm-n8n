@@ -85,7 +85,7 @@ completion gate.
 | `check-version-drift.sh` + weekly workflow | Port, adapted | Replace EKS/`endoflife.date` with the AKS supported-versions source (see Decision 5). Wired as a report-only job in the existing workflow; a `schedule:` trigger is a follow-up, so no doc may call it "weekly" until one exists. |
 | `check-helm-chart-coverage.sh` + `docs/helm-chart-coverage.md` | Skip | The check gates a coverage doc Azure never had. Creating the doc is a separate, larger documentation change; do not half-port the gate. Flag for a follow-up. |
 | `chart-values-diff.sh` | Port | Tiny, credential-free, directly useful for the 1.11.0 bump in this change. No Taskfile: expose as a plain script documented in `tests/scripts/README.md`. |
-| `n8n_worker_pools` (alpha), its example, `verify-worker-pools.sh`, pool env-name guards | Port (follow-up, adapted) | Initially skipped as alpha on an unreleased chart branch; re-scoped in once `oci://ghcr.io/n8n-io/n8n-helm-chart/n8n:1.11.0-preview.workerpools.1` was pullable. Two Azure adaptations differ from the AWS shape, both because the AWS premises do not hold here: pool scalers reference the module's existing `TriggerAuthentication` (this module's default worker does too; AWS uses flat metadata), and the n8n 2.39 image floor is a hard validation on `n8n_image_tag` (its default here is a pinned version, not `null`). See Decision 6. |
+| `n8n_worker_pools` (alpha), its example, `verify-worker-pools.sh`, pool env-name guards | Port (follow-up, adapted) | Initially skipped as alpha on an unreleased chart branch; re-scoped in once `oci://ghcr.io/n8n-io/n8n-helm-chart/n8n:1.11.0-preview.workerpools.1` was pullable. Two Azure adaptations differ from the AWS shape, both because the AWS premises do not hold here: pool scalers reference the module's existing `TriggerAuthentication` (this module's default worker does too; AWS uses flat metadata), and the n8n 2.39 image floor is a hard validation on `n8n_image_tag` (its default here was a pinned version, not `null`, when this was written; see Decision 6 for the null default since issue #57). See Decision 6. |
 | `n8n_worker_extra_env` | Port | Generic chart passthrough, independent of pools. Extend the credentials-overwrite conflict validation to cover it. |
 | Deletion controls (5 AWS inputs) | Port, adapted (best effort) | See Decision 3. |
 | `scripts/check-example-parity.sh` | Port | Same drift class across Azure's eight examples. |
@@ -291,7 +291,11 @@ AWS shape rests on is false here:
    `n8n_image_tag` defaults to `null`. Here the variable defaults to a
    pinned version and its regex validation rejects `null`, so the 2.39.0
    floor is fully decidable at plan and is a `validation` on
-   `n8n_image_tag`, next to the existing 2.19 and 2.29 floors.
+   `n8n_image_tag`, next to the existing 2.19 and 2.29 floors. (Since
+   issue #57, `n8n_image_tag` defaults to `null`. The floor stays a
+   `validation`: a null tag passes only when
+   `local.n8n_chart_default_image_current` proves the chart's default
+   meets it, so the preview chart still fails until the tag is pinned.)
 
 The chart pairing stays a `lifecycle.precondition` on `helm_release.n8n`:
 numbered chart versions fail while `n8n_worker_pools` is non-empty unless

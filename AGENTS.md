@@ -685,7 +685,7 @@ release after. Like the AWS sibling, `WEBHOOK_URL` is sent only to
 `n8n_image_tag` versions below 2.30.0 (`local.n8n_needs_legacy_webhook_url_env`),
 the first release that reads `N8N_WEBHOOK_URL`. At the time this module
 always pinned a concrete tag and needed none of AWS's null-tag fallbacks;
-it now has them (see "Null `n8n_image_tag`" below). At the time, `n8n_chart_version` defaulted to
+it now has them (see "Null `n8n_image_tag`" above). At the time, `n8n_chart_version` defaulted to
 `1.13.0`, matching the AWS sibling after `terraform-aws-n8n` #145. Run
 `tests/scripts/chart-values-diff.sh
 <candidate>` before any future bump, but also diff `templates/` directly:

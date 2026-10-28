@@ -51,8 +51,10 @@ byte-identical.
    backup or restore point, or `pg_dump` for an external database) and back
    up the n8n encryption key (`n8n_encryption_key` output, or your own
    Secret).
-4. `terraform apply`. The main pods run the forward-only migrations from
-   `2.35.0` to the chart's `appVersion` during the rollout, inside
+4. `terraform apply`. The first n8n pod to start on the new version (main
+   or worker; the live upgrade saw a worker run them) runs the forward-only
+   migrations from `2.35.0` to the chart's `appVersion` during the rollout,
+   inside
    `n8n_helm_timeout` (600 seconds by default). On a large database, raise
    `n8n_helm_timeout` first.
 5. Rolling back means restoring the database backup with the old tag pinned.
