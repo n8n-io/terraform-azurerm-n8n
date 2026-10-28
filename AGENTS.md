@@ -660,6 +660,40 @@ own validation fails, checks that read that variable are not evaluated, so
 such a run lists only the variable (see
 `worker_pools_reject_a_null_image_tag_on_the_preview_chart`).
 
+## Helm provider 3.x (`feat/helm3`, issue #57)
+
+The `hashicorp/helm` requirement is `~> 3.0` (Plugin Framework). Provider
+`kubernetes`/`exec`/`experiments` are attributes (`= { ... }`), `registry`
+blocks are a `registries` list, `helm_release` `set`/`set_list`/
+`set_sensitive` are lists of objects, `postrender` is an object, and
+`metadata` is a single object (`metadata.revision`, never `metadata[0]`).
+`tests/defaults.tftest.hcl` (`helm_release_revision_output_reads_the_metadata_object`)
+and the split-ingress `set` assertion guard those shapes. The first 3.x plan
+against 2.x state is an expected one-time in-place update of every
+`helm_release`, verified against a real helm 2.17.0 apply on a local
+kube-apiserver: the provider's `recomputeMetadata` sees the upgraded state's
+`set`/`set_list`/`set_sensitive = []` against null config and marks
+`metadata` unknown, and 2.x stored `set` sorted by name. The apply is a Helm
+upgrade with unchanged manifests (revision +1, no object changes) and the
+next plan is clean. Upstream issue hashicorp/terraform-provider-helm#1695
+("Provider produced invalid plan ... keyring/description") does not hit this
+module or its examples, which set neither argument. Reproduced against real
+helm 2.17.0 state on a local kube-apiserver: 2.17.0 never stores `keyring`
+(its DiffSuppressFunc drops the value while `verify = false`, even when the
+config sets it), and 3.3.0's `suppressKeyring` plans the null state value
+against a non-null config while `verify` is false, so an explicit `keyring`
+with `verify = false` (the default) fails the first 3.x plan. With
+`verify = true` the modifier leaves the configured value in the plan
+(`helm/resource_helm_release.go` lines 229 to 235 at v3.3.0; read from
+source, not reproduced live), so callers must keep a keyring that chart
+verification needs. `suppressDescription` copies state into the plan when the config is
+`""`, so `description = ""` fails when the 2.x state holds null (the argument
+was added after create; 2.x's `new == ""` suppression never wrote it). A
+non-empty `description` planned clean in both cases, and removing the
+arguments fixed every failure, which is what the README's migration section
+tells callers. Do not set either argument on a `helm_release` (`keyring`
+only with `verify = true`) until upstream PR #1714 or #1739 is released.
+
 ## Chart 1.13.0 bump (`feat/chart-1.13.0`), historical
 
 This section records the 1.11.0 to 1.13.0 bump. The current default is

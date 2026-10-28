@@ -193,7 +193,7 @@ output "n8n_helm_release_name" {
 
 output "n8n_helm_release_revision" {
   description = "Revision number of the most recent successful n8n Helm install or upgrade."
-  value       = helm_release.n8n.metadata[0].revision
+  value       = helm_release.n8n.metadata.revision
 }
 
 output "n8n_image_tag" {
