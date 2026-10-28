@@ -179,6 +179,26 @@ check "exit 0: the fail step passes" '[[ "$rc" == 0 ]]'
 rc="$(run_step "$w" "$FAIL_STEP" STATUS=)"
 check "the fail step fails when the run step never recorded a status" '[[ "$rc" != 0 ]]'
 
+# ── A report cut short before its summary is not synced ──────────────────
+w="$(new_workdir truncated 1 "Required tool missing: curl")"
+rc="$(run_step "$w" "$RUN_STEP")"
+check "exit 1: the run step itself succeeds" '[[ "$rc" == 0 ]]'
+check "exit 1: status=1 is recorded" 'grep -qx "status=1" "$w/.output"'
+echo "[{\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[],\"body\":\"old\"}]" >"$w/.issues.json"
+rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
+check "exit 1, no summary: the sync step fails" '[[ "$rc" != 0 ]]'
+check "exit 1, no summary: nothing is written to GitHub" '[[ ! -s "$w/.gh.log" ]]'
+rc="$(run_step "$w" "$FAIL_STEP" STATUS=1)"
+check "exit 1: the job fails" '[[ "$rc" != 0 ]]'
+
+# A summary that is not the last line (output continued after it) is not complete either.
+w="$(new_workdir trailing 2 "${ERROR_REPORT}
+bash: line 9: unexpected EOF")"
+run_step "$w" "$RUN_STEP" >/dev/null
+rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"
+check "summary not last: the sync step fails" '[[ "$rc" != 0 ]]'
+check "summary not last: nothing is written to GitHub" '[[ ! -s "$w/.gh.log" ]]'
+
 # ── No report at all leaves the issue alone ───────────────────────────────
 w="$(new_workdir noreport 0 "$CLEAN_REPORT")"
 rc="$(run_step "$w" "$SYNC_STEP" GH_FIXTURE="$w/.issues.json")"

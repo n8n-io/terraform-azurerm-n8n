@@ -72,7 +72,10 @@ jobs:
       # Sync the report to a single tracking issue so a stale pin shows up
       # where every other piece of repo work does, instead of only in a
       # scheduled run's job summary. Runs even when a lookup failed, so the
-      # ERROR lines are synced too.
+      # ERROR lines are synced too, but only for a complete report: one whose
+      # last line is the script's summary. Exit 1 (curl or jq missing) or a
+      # crash leaves no summary, and syncing that would replace the last good
+      # report with a fragment, so the step fails instead.
       - name: sync tracking issue
         if: always()
         shell: bash
@@ -81,6 +84,11 @@ jobs:
         run: |
           if [[ ! -f report.md ]]; then
             echo "::error::no report was produced; leaving the tracking issue unchanged"
+            exit 1
+          fi
+          summary_re='^check-version-drift\.sh: [0-9]+ pin\(s\) behind upstream, [0-9]+ lookup\(s\) failed$'
+          if ! tail -n 1 drift.txt | grep -Eq "$summary_re"; then
+            echo "::error::the drift report is incomplete (no summary line); leaving the tracking issue unchanged"
             exit 1
           fi
           title="Version drift report (automated)"
