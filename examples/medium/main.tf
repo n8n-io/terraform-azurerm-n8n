@@ -302,6 +302,7 @@ module "n8n" {
   public_dns_zone_id       = azurerm_dns_zone.public.id
 
   n8n_license_key = var.n8n_license_key
+  n8n_image_tag   = var.n8n_image_tag
 
   # azurerm_key_vault_key.aks_kms is listed explicitly so terraform destroy
   # always removes the cluster before the KMS key, even after KMS was turned

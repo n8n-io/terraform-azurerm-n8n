@@ -117,7 +117,9 @@ version below 2.39.0.
 #### Scenario: Old image with pools
 
 - **WHEN** `n8n_worker_pools` is non-empty and `n8n_image_tag = "2.38.1"`
-  (or the module default `2.35.0`)
+  (the module default was `2.35.0` when this change was written; since
+  issue #57 the default is `null`, which fails the same validation on the
+  preview chart because its default image cannot be verified)
 - **THEN** the plan SHALL fail on the `n8n_image_tag` validation
 
 #### Scenario: Old image without pools

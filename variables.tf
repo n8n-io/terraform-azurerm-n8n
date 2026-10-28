@@ -1322,7 +1322,7 @@ variable "keda_chart_version" {
 }
 
 variable "n8n_chart_version" {
-  description = "n8n Helm chart version, fetched from n8n_chart_repository (default oci://ghcr.io/n8n-io/n8n-helm-chart). The version-dependent behavior below describes the upstream charts; a mirror must serve this exact version. The default 1.15.0 matches the pin of terraform-aws-n8n #190 and terraform-google-n8n #39. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner, and the first upgrade from an older chart resets the worker count to 1, terminating any surplus worker pods, until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount are usable (added in chart 1.12.0 by #177, reliable only from 1.13.0; see n8n_worker_keda_pause). Inert here: the chart's image.tag default moving from a floating stable tag to its appVersion (this module always sets n8n_image_tag), the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject), and 1.14.0's WEBHOOK_URL to N8N_WEBHOOK_URL rename (chart #184), S3-only N8N_AVAILABLE_BINARY_DATA_MODES removal (chart #185), and aggregated values-validation errors (chart #209): this module sets neither webhook.url nor ingress nor s3 and renders its own N8N_WEBHOOK_URL. 1.15.0 renders database.ssl.enabled as DB_POSTGRESDB_SSL_ENABLED, the name n8n reads, instead of DB_POSTGRESDB_SSL (chart #175); on the upstream repository at a numbered 1.15.0 or newer the module stops setting DB_POSTGRESDB_SSL_ENABLED itself so no container carries it twice, and keeps setting it for older charts, prereleases, and mirrors while PostgreSQL TLS is on (effective ssl_mode other than disable; with disable neither the chart nor the module sets it). 1.15.0's new extraObjects and database.ssl.existingSecret values (chart #219, #222) are not exposed."
+  description = "n8n Helm chart version, fetched from n8n_chart_repository (default oci://ghcr.io/n8n-io/n8n-helm-chart). The version-dependent behavior below describes the upstream charts; a mirror must serve this exact version. The default 1.15.0 matches the pin of terraform-aws-n8n #190 and terraform-google-n8n #39. Functional changes since 1.11.0 that reach this module: the worker Deployment no longer renders spec.replicas once KEDA owns it (chart #201; this module always enables KEDA for workers, so the ScaledObject is the sole owner, and the first upgrade from an older chart resets the worker count to 1, terminating any surplus worker pods, until the HPA restores the floor), main pods lose the task-runner sidecar in queue mode because n8n offloads manual executions to workers (chart #179), and keda.worker.pause / pausedReplicaCount are usable (added in chart 1.12.0 by #177, reliable only from 1.13.0; see n8n_worker_keda_pause). With n8n_image_tag null (the default) the chart's appVersion is the running n8n version (2.42.4 for 1.15.0), so a chart bump is also an n8n upgrade across its database migrations. Inert here: the webhook-processor KEDA pause (this module scales webhook processors with its own HPA in scaling.tf, not the chart's ScaledObject), and 1.14.0's WEBHOOK_URL to N8N_WEBHOOK_URL rename (chart #184), S3-only N8N_AVAILABLE_BINARY_DATA_MODES removal (chart #185), and aggregated values-validation errors (chart #209): this module sets neither webhook.url nor ingress nor s3 and renders its own N8N_WEBHOOK_URL. 1.15.0 renders database.ssl.enabled as DB_POSTGRESDB_SSL_ENABLED, the name n8n reads, instead of DB_POSTGRESDB_SSL (chart #175); on the upstream repository at a numbered 1.15.0 or newer the module stops setting DB_POSTGRESDB_SSL_ENABLED itself so no container carries it twice, and keeps setting it for older charts, prereleases, and mirrors while PostgreSQL TLS is on (effective ssl_mode other than disable; with disable neither the chart nor the module sets it). 1.15.0's new extraObjects and database.ssl.existingSecret values (chart #219, #222) are not exposed."
   type        = string
   default     = "1.15.0"
 
@@ -1362,13 +1362,13 @@ variable "n8n_helm_timeout" {
 }
 
 variable "n8n_image_tag" {
-  description = "Pinned n8n application version used by the main, worker, webhook-processor, and task-runner images. Azure Blob binary and execution-data modes require n8n 2.29.0 or later. Environment-managed log streaming requires n8n 2.19.0 or later. n8n_worker_pools (early alpha) requires n8n 2.39.0 or later. The default 2.35.0 includes the Azure container-scoped credential startup probe fix."
+  description = "n8n application image tag for the main, worker, and webhook-processor pods and, unless n8n_task_runner_image_tag is set, the task-runner sidecar, such as 2.42.4 or 2.42.4-custom. Null (the default) sends no image.tag, so the chart's own default applies. Upstream charts from 1.12.0 use their appVersion (2.42.4 for chart 1.15.0), a fixed version that moves only when n8n_chart_version moves. Charts before 1.12.0 and the 1.11.0-based worker-pools preview use the floating stable tag. Bumping n8n_chart_version therefore upgrades an unpinned application across n8n's database migrations. Pin this in production to upgrade n8n deliberately (docs/upgrading-n8n.md). Floors: Azure Blob modes need 2.29.0, n8n_log_streaming_managed_by_env needs 2.19.0, and n8n_worker_pools (early alpha) needs 2.39.0. They are validated against an explicit tag, and every upstream numbered chart from 1.12.0 meets them. With a null tag on any other chart, check.n8n_image_version_is_known warns instead, and n8n_worker_pools fails the plan until the tag is pinned."
   type        = string
-  default     = "2.35.0"
+  default     = null
 
   validation {
-    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-zA-Z0-9._-]+)?$", var.n8n_image_tag))
-    error_message = "n8n_image_tag must start with a semantic application version such as 2.35.0 or 2.35.0-custom."
+    condition     = var.n8n_image_tag == null || can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-zA-Z0-9._-]+)?$", var.n8n_image_tag))
+    error_message = "n8n_image_tag must be null or start with a semantic application version such as 2.42.4 or 2.42.4-custom."
   }
 
   validation {
@@ -1402,8 +1402,13 @@ variable "n8n_image_tag" {
     # floors above rather than an advisory check: an older image accepts and
     # ignores N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME, so pool
     # workers come up healthy while consuming the default queue and every
-    # pool queue stays empty. Not a no-op, but wrong capacity.
-    condition = !can(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)) ? true : (
+    # pool queue stays empty. Not a no-op, but wrong capacity. A null tag
+    # passes only on a chart whose default image is verified current
+    # (local.n8n_chart_default_image_current, tag-independent so this
+    # validation does not form a cycle through its own variable).
+    condition = var.n8n_image_tag == null ? (
+      length(var.n8n_worker_pools) == 0 || local.n8n_chart_default_image_current
+      ) : !can(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)) ? true : (
       length(var.n8n_worker_pools) > 0 ? (
         tonumber(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)[0]) > 2 ? true : (
           tonumber(regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)", var.n8n_image_tag)[0]) == 2 ? (
@@ -1412,12 +1417,12 @@ variable "n8n_image_tag" {
         )
       ) : true
     )
-    error_message = "n8n_worker_pools requires n8n_image_tag 2.${local.n8n_worker_pools_min_n8n_minor}.0 or later, the first n8n release that reads N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME. Older images accept both variables and ignore them: mains never route to a pool and pool workers consume the default queue, so the pods come up healthy while every pool queue stays empty. Pin n8n_image_tag to 2.${local.n8n_worker_pools_min_n8n_minor}.0 or later, or remove the pools."
+    error_message = "n8n_worker_pools requires n8n_image_tag 2.${local.n8n_worker_pools_min_n8n_minor}.0 or later, the first n8n release that reads N8N_WORKER_POOLS_ENABLED and N8N_WORKER_POOL_NAME. Older images accept both variables and ignore them: mains never route to a pool and pool workers consume the default queue, so the pods come up healthy while every pool queue stays empty. Pin n8n_image_tag to 2.${local.n8n_worker_pools_min_n8n_minor}.0 or later, or remove the pools. With n8n_image_tag null, the chart's default must be a verified upstream numbered chart at 1.12.0 or later; the worker-pools preview and mirrored charts default to a tag this module cannot check (the preview uses the floating stable tag), so pin n8n_image_tag."
   }
 }
 
 variable "n8n_image_repository" {
-  description = "Optional container image repository for every n8n application pod, without a tag or digest. Null uses the chart default docker.n8n.io/n8nio/n8n. Use n8n_image_tag for the application tag. Private registries can use existing dockerconfigjson Secrets named by n8n_image_pull_secrets; this module accepts Secret names only and never registry credentials."
+  description = "Optional container image repository for every n8n application pod, without a tag or digest. Null uses the chart default docker.n8n.io/n8nio/n8n. Use n8n_image_tag for the application tag; with a custom repository and a null tag, a plan-time warning fires because the chart appends its own default tag, which the repository may not carry. Private registries can use existing dockerconfigjson Secrets named by n8n_image_pull_secrets; this module accepts Secret names only and never registry credentials."
   type        = string
   default     = null
 
@@ -2297,18 +2302,18 @@ variable "n8n_task_runners_enabled" {
 }
 
 variable "n8n_task_runner_image_tag" {
-  description = "Optional image tag for the n8nio/runners sidecar. Null inherits n8n_image_tag. Set this to the underlying n8n version when a custom application image uses a suffixed tag, such as n8n_image_tag = \"2.35.0-custom\" with n8n_task_runner_image_tag = \"2.35.0\", so the runner image exists and its protocol matches the application."
+  description = "Optional image tag for the n8nio/runners sidecar. Null inherits n8n_image_tag, or the chart's appVersion when that is also null. Set this to the underlying n8n version when a custom application image uses a suffixed tag, such as n8n_image_tag = \"2.42.4-custom\" with n8n_task_runner_image_tag = \"2.42.4\", so the runner image exists and its protocol matches the application."
   type        = string
   default     = null
 
   validation {
     condition     = var.n8n_task_runner_image_tag == null ? true : can(regex("^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$", var.n8n_task_runner_image_tag))
-    error_message = "n8n_task_runner_image_tag must be null or a valid Docker tag with no whitespace, such as 2.35.0."
+    error_message = "n8n_task_runner_image_tag must be null or a valid Docker tag with no whitespace, such as 2.42.4."
   }
 }
 
 variable "n8n_task_runner_image_repository" {
-  description = "Optional container image repository for the n8nio/runners task-runner sidecar, without a tag or digest. Null uses the chart default n8nio/runners. Set alongside n8n_image_repository when mirroring both images into the same private registry; the two are independent because the application and runner images can live in different repositories on the same mirror. Use n8n_task_runner_image_tag for the runner tag: when it is null the sidecar inherits n8n_image_tag, and a plan-time warning fires because the mirror may not carry that tag. Ignored, with a plan-time warning, when n8n_task_runners_enabled = false. Any private-registry pull access is granted the same way as n8n_image_repository, through n8n_image_pull_secrets on the module-managed ServiceAccount."
+  description = "Optional container image repository for the n8nio/runners task-runner sidecar, without a tag or digest. Null uses the chart default n8nio/runners. Set alongside n8n_image_repository when mirroring both images into the same private registry; the two are independent because the application and runner images can live in different repositories on the same mirror. Use n8n_task_runner_image_tag for the runner tag: when it is null the sidecar inherits n8n_image_tag (or the chart's appVersion when that is also null), and a plan-time warning fires because the mirror may not carry that tag. Ignored, with a plan-time warning, when n8n_task_runners_enabled = false. Any private-registry pull access is granted the same way as n8n_image_repository, through n8n_image_pull_secrets on the module-managed ServiceAccount."
   type        = string
   default     = null
 
@@ -2810,7 +2815,7 @@ variable "n8n_worker_extra_env" {
 # per entry, alongside the chart's own unlabelled worker deployment.
 
 variable "n8n_worker_pools" {
-  description = "EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N_WORKER_POOL_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n_chart_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). Also requires n8n_image_tag 2.39.0 or later (validated on that variable). Each pool's KEDA ScaledObject authenticates to Redis through the same TriggerAuthentication the default worker's scaler uses. An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, n8n_chart_repository's default, at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n_chart_version; a caller who cannot dispatch that Action, or whose Terraform runner has no egress to ghcr.io, can point n8n_chart_repository at their own mirror instead (this redirects only the chart download for `terraform apply`, not the runtime images the cluster's nodes pull; see n8n_image_repository for those). See examples/worker-pools/README.md for the exact command and a private-mirror fallback. A pool's extra_env is rejected at plan time for the same module-managed and deprecated names as n8n_worker_extra_env, and for N8N_WORKER_POOL_NAME, which the pool's name owns."
+  description = "EARLY ALPHA, SUBJECT TO CHANGE WITHOUT NOTICE: tracks n8n's own worker pools feature and the chart support for it, both alpha upstream. Labelled worker pools to run beside the chart's own unlabelled worker deployment. Each entry becomes one queueMode.workerGroups entry in the Helm release, which renders one Deployment (identical to the chart's worker pods but carrying N8N_WORKER_POOL_NAME) and one KEDA ScaledObject watching that pool's own `jobs-<name>` queue, so a pool autoscales on its own backlog rather than the default queue's. Requires an n8n_chart_version whose chart supports queueMode.workerGroups: that feature (n8n-io/n8n-hosting#189) is merged to the chart's preview/worker-pools branch but not released to a numbered chart version, and an older chart accepts the key and renders nothing for it, so a precondition on the Helm release fails the plan for every numbered chart version (only a prerelease, taken at the caller's word, passes). Also requires n8n_image_tag 2.39.0 or later (validated on that variable; set it explicitly unless the chart is an upstream numbered release at 1.12.0 or later). Each pool's KEDA ScaledObject authenticates to Redis through the same TriggerAuthentication the default worker's scaler uses. An official preview build can be published from that branch's Preview chart GitHub Action (n8n-io/n8n-hosting#191) to oci://ghcr.io/n8n-io/n8n-helm-chart, n8n_chart_repository's default, at a version such as 1.11.0-preview.workerpools.1, which is what to pin in n8n_chart_version; a caller who cannot dispatch that Action, or whose Terraform runner has no egress to ghcr.io, can point n8n_chart_repository at their own mirror instead (this redirects only the chart download for `terraform apply`, not the runtime images the cluster's nodes pull; see n8n_image_repository for those). See examples/worker-pools/README.md for the exact command and a private-mirror fallback. A pool's extra_env is rejected at plan time for the same module-managed and deprecated names as n8n_worker_extra_env, and for N8N_WORKER_POOL_NAME, which the pool's name owns."
   type = list(object({
     name         = string
     min_replicas = optional(number, 1)

@@ -4,7 +4,7 @@ The module stores binary data in Azure Blob Storage or PostgreSQL and stores exe
 
 ## Requirements
 
-Azure Blob modes require n8n 2.29.0 or later. The default `n8n_image_tag = "2.35.0"` includes the Azure container-scoped credential startup fix. Keep the application and task-runner images on the same n8n version during every storage rollout.
+Azure Blob modes require n8n 2.29.0 or later. Every chart-default `appVersion` from chart 1.12.0 (2.39.6 and later, used when `n8n_image_tag` is null, the default) and any pinned tag at 2.35.0 or later includes the Azure container-scoped credential startup fix. Keep the application and task-runner images on the same n8n version during every storage rollout.
 
 The license entitlements are separate:
 
