@@ -88,6 +88,7 @@ resource "kubectl_manifest" "my_trigger_authentication" {
 | `keda_namespace` | Effective KEDA namespace name, whether module-created or caller-managed. |
 | `keda_release_name` | Name of the KEDA Helm release this module created, or `null` when `install_keda = false`. |
 | `keda_release_status` | Status of the KEDA Helm release this module created, or `null` when `install_keda = false`. |
+| `keda_chart_version` | Chart version of the KEDA Helm release this module created, or `null` when `install_keda = false`. |
 
 This submodule is not yet part of the repository's `terraform-docs` CI check
 (see `openspec/changes/add-customer-managed-modularity/tasks.md` section 9.1) —

@@ -70,6 +70,11 @@ run "custom_namespace_and_chart_settings_are_honored" {
   }
 
   assert {
+    condition     = output.keda_chart_version == "2.16.1"
+    error_message = "The keda_chart_version output must report the caller-supplied chart version."
+  }
+
+  assert {
     condition     = helm_release.keda[0].timeout == 600 && !helm_release.keda[0].wait && !helm_release.keda[0].atomic && !helm_release.keda[0].cleanup_on_fail
     error_message = "The KEDA release must use the caller-supplied Helm lifecycle settings."
   }
@@ -131,7 +136,7 @@ run "outputs_are_null_on_the_externally_installed_path" {
   }
 
   assert {
-    condition     = output.keda_release_name == null && output.keda_release_status == null
+    condition     = output.keda_release_name == null && output.keda_release_status == null && output.keda_chart_version == null
     error_message = "Release outputs must be explicitly null when install_keda = false, since no release is managed here."
   }
 }
