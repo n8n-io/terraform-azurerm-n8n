@@ -2874,8 +2874,8 @@ run "postgres_ssl_enabled_env_kept_on_the_worker_pools_preview_chart" {
 }
 
 # A prerelease is not trusted even at 1.15.0 or later: its templates are not
-# the verified release's. A later major is compared numerically.
-run "chart_renders_postgres_ssl_enabled_skips_prereleases_and_compares_numerically" {
+# the verified release's.
+run "chart_renders_postgres_ssl_enabled_skips_prereleases" {
   command = plan
 
   variables {
@@ -2897,7 +2897,35 @@ run "chart_renders_postgres_ssl_enabled_on_a_later_major_chart" {
 
   assert {
     condition     = local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 0
-    error_message = "Upstream chart 2.0.0 must count as rendering DB_POSTGRESDB_SSL_ENABLED (numeric compare, not string compare)."
+    error_message = "Upstream chart 2.0.0 must count as rendering DB_POSTGRESDB_SSL_ENABLED."
+  }
+}
+
+# The minor is compared as a number: a text comparison would order "100"
+# before "15" and "9" after it.
+run "chart_renders_postgres_ssl_enabled_compares_the_minor_numerically" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.100.0"
+  }
+
+  assert {
+    condition     = local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 0
+    error_message = "Upstream chart 1.100.0 must count as 1.15.0 or newer (numeric minor compare)."
+  }
+}
+
+run "chart_renders_postgres_ssl_enabled_is_false_below_minor_15" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.9.0"
+  }
+
+  assert {
+    condition     = !local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 1
+    error_message = "Upstream chart 1.9.0 must count as older than 1.15.0 (numeric minor compare) and keep the module's own entry."
   }
 }
 
