@@ -44,8 +44,8 @@ byte-identical.
 
    or the "Application version" table `tests/scripts/smoke-test.sh` prints.
 2. Decide. To stay on that version (recommended for production), set
-   `n8n_image_tag = "2.35.0"` (or whatever step 1 printed) in the same change
-   that upgrades the module, and plan the n8n upgrade separately with
+   `n8n_image_tag = "2.35.0"` (or the tag after the last `:` in the image
+   reference step 1 printed) in the same change that upgrades the module, and plan the n8n upgrade separately with
    [Bumping](#bumping). To accept the move, continue.
 3. Before accepting, take a PostgreSQL backup (a Flexible Server on-demand
    backup or restore point, or `pg_dump` for an external database) and back
@@ -53,8 +53,8 @@ byte-identical.
    Secret).
 4. `terraform apply`. The first n8n pod to start on the new version (main
    or worker; the live upgrade saw a worker run them) runs the forward-only
-   migrations from `2.35.0` to the chart's `appVersion` during the rollout,
-   inside
+   migrations from the version step 1 printed (`2.35.0` if you relied on the
+   old default) to the chart's `appVersion` during the rollout, inside
    `n8n_helm_timeout` (600 seconds by default). On a large database, raise
    `n8n_helm_timeout` first.
 5. Rolling back means restoring the database backup with the old tag pinned.
