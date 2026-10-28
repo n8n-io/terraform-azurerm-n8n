@@ -295,14 +295,15 @@ jobs:
       # needs network or a live cluster, so CI proves syntax, shellcheck,
       # and the --help path only. check-version-drift.sh's own lookups run
       # weekly in version-drift.yml; its version helpers
-      # (tests/scripts/lib/constraints.sh) and that workflow's own shell
-      # steps are tested offline here.
+      # (tests/scripts/lib/constraints.sh), that workflow's own shell steps,
+      # and its issue-sync decision (tests/scripts/drift-issue-sync.sh) are
+      # tested offline here.
       - name: bash -n + shellcheck new scripts
         run: |
           for script in tests/scripts/chart-values-diff.sh tests/scripts/verify-worker-pools.sh \
             tests/scripts/check-version-drift.sh tests/scripts/lib/constraints.sh \
             tests/scripts/test-version-drift-constraints.sh tests/scripts/test-version-drift-workflow.sh \
-            tests/scripts/check-checkov.sh \
+            tests/scripts/drift-issue-sync.sh tests/scripts/check-checkov.sh \
             scripts/check-example-parity.sh scripts/check-variable-banners.sh; do
             bash -n "$script"
             shellcheck -S warning "$script"
@@ -310,6 +311,7 @@ jobs:
           tests/scripts/chart-values-diff.sh --help >/dev/null
           tests/scripts/test-version-drift-constraints.sh
           tests/scripts/test-version-drift-workflow.sh
+          DRIFT_SYNC_SELF_TEST=1 tests/scripts/drift-issue-sync.sh
 
   tflint:
     name: tflint (${{ matrix.target }})

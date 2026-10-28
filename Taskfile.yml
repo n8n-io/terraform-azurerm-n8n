@@ -108,6 +108,7 @@ tasks:
           - tests/scripts/lib/constraints.sh
           - tests/scripts/test-version-drift-constraints.sh
           - tests/scripts/test-version-drift-workflow.sh
+          - tests/scripts/drift-issue-sync.sh
           - tests/scripts/check-checkov.sh
           - scripts/check-example-parity.sh
           - scripts/check-variable-banners.sh
@@ -115,6 +116,7 @@ tasks:
       - ./tests/scripts/chart-values-diff.sh --help >/dev/null
       - ./tests/scripts/test-version-drift-constraints.sh
       - ./tests/scripts/test-version-drift-workflow.sh
+      - DRIFT_SYNC_SELF_TEST=1 ./tests/scripts/drift-issue-sync.sh
 
   chart-diff:
     desc: >-
