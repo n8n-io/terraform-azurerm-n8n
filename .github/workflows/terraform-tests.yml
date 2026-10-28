@@ -24,7 +24,13 @@ env:
   # makes this line the single source of truth for both. Bumping it is a
   # deliberate change: expect a new release to report findings that need
   # triaging in the same commit.
-  CHECKOV_VERSION: "3.3.20"
+  # Ahead of terraform-aws-n8n, which holds 3.3.20 because 3.3.28 and 3.3.29
+  # fail CKV_K8S_14/15/43 on its redis_exporter (terraform-aws-n8n#193).
+  # That does not reproduce here: on 3.3.29 those checks pass on
+  # redis_exporter[0], and the only result changes from 3.3.20 are
+  # CKV2_AZURE_33 and CKV_AZURE_120 moving from failed to passed. Re-check
+  # redis_exporter[0] in pass 2 on every bump.
+  CHECKOV_VERSION: "3.3.29"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   # markdownlint results are version-dependent like checkov's; pinning here
