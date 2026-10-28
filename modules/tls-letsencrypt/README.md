@@ -118,14 +118,25 @@ affected. A forced re-issue on a live Let's Encrypt staging run (acme
 the next plan showed them as drift, the next apply restored them without
 another version, and the plan after that was clean.
 
-The same run showed that the module's `app_gateway_tls_cert_secret_id`
-output is one apply behind a renewal: for the in-place update of the Key
-Vault certificate, the provider plans `secret_id` and `version` as
-unchanged, so after the apply that imported the new version the output
-still pointed at the previous, now revoked, version, and only the next
-apply changed it. An Application Gateway wired to this output keeps
-serving the old certificate until that second apply. This is the provider's
-behavior, seen on acme 2.x as well, not something the 3.x bump changed.
+The same forced re-issue showed that the module's
+`app_gateway_tls_cert_secret_id` output is one apply behind a new
+certificate: for the in-place update of the Key Vault certificate, the
+`azurerm` provider plans `secret_id` and `version` as unchanged, so after
+the apply that imported the new version the output still pointed at the
+previous version, and only the next apply changed it. An Application
+Gateway wired to this output keeps serving the previous certificate until
+that second apply.
+
+A forced re-issue (`-replace`, `taint`, or any change that replaces
+`acme_certificate.n8n`) revokes the previous certificate when it destroys
+it (`revoke_certificate_on_destroy` defaults to `true`), so the gateway
+serves a revoked certificate until the second apply. A renewal triggered
+by `min_days_remaining` updates `acme_certificate.n8n` in place and does
+not revoke the previous certificate. It goes through the same Key Vault
+in-place update, so expect the same one-apply lag, but that path has not
+been verified live. The lag comes from how the `azurerm` provider plans
+the Key Vault certificate, not from the acme provider, so the 3.x bump
+did not change it.
 
 ## Provider configuration
 
