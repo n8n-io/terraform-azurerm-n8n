@@ -269,6 +269,47 @@ check_records "configuration_aliases does not end the entry" \
   }
 }'
 
+check_records "a provider inside a multi-line block comment is not an entry" \
+  'helm|hashicorp/helm|~> 2.12' \
+  'terraform {
+  required_providers {
+    /* retired:
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
+    */
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.12"
+    }
+  }
+}'
+
+check_records "inline block comment, trailing # and // comments" \
+  'time|hashicorp/time|~> 0.14
+tls|hashicorp/tls|~> 4.0' \
+  'terraform {
+  required_providers {
+    time = { /* version = "~> 0.9", */ source = "hashicorp/time", version = "~> 0.14" }
+    tls = {
+      source  = "hashicorp/tls" # was: source = "hashicorp/other"
+      version = "~> 4.0" // was: version = "~> 3.0" }
+    }
+  }
+}'
+
+check_records "a block comment opened and closed around the closing brace" \
+  'acme|vancluever/acme|~> 2.16' \
+  'terraform {
+  required_providers {
+    acme = {
+      source  = "vancluever/acme"
+      version = "~> 2.16" /* pinned for
+      DNS-01 */ }
+  }
+}'
+
 # The repo's own root versions.tf: every provider, in file order.
 cases=$((cases + 1))
 actual="$(provider_records versions.tf | cut -d'|' -f1 | tr '\n' ' ')"

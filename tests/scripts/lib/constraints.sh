@@ -96,10 +96,35 @@ constraint_accepts() {
 # one-line form it also accepts (`helm = { source = "...", version = "..." }`),
 # including a closing brace on the version line. An attribute that is not
 # found is printed empty, so the caller reports an explicit ERROR instead of
-# attributing one entry's source or constraint to another. Comment lines are
-# skipped, since attributes are matched anywhere on a line.
+# attributing one entry's source or constraint to another. Comments are
+# removed first (`#` and `//` to end of line, `/* ... */` within or across
+# lines), since attributes are matched anywhere on a line. A comment marker
+# inside a quoted value is not recognized as such; no provider source or
+# version constraint contains one.
 provider_records() {
   awk '
+    function strip(line,   out, s, lc, d) {
+      out = ""
+      while (line != "") {
+        if (in_bc) {
+          s = index(line, "*/")
+          if (!s) return out
+          line = substr(line, s + 2)
+          in_bc = 0
+          continue
+        }
+        s = index(line, "/*")
+        lc = index(line, "#")
+        d = index(line, "//")
+        if (d && (!lc || d < lc)) lc = d
+        if (lc && (!s || lc < s)) return out substr(line, 1, lc - 1)
+        if (!s) return out line
+        out = out substr(line, 1, s - 1) " "
+        line = substr(line, s + 2)
+        in_bc = 1
+      }
+      return out
+    }
     function attr(line, key,   s) {
       if (!match(line, "(^|[{,[:space:]])" key "[[:space:]]*=[[:space:]]*\"[^\"]*\"")) return ""
       s = substr(line, RSTART, RLENGTH)
@@ -111,7 +136,7 @@ provider_records() {
       if ((v = attr(line, "source")) != "") src = v
       if ((v = attr(line, "version")) != "") ver = v
     }
-    /^[[:space:]]*(#|\/\/)/ { next }
+    { $0 = strip($0) }
     !in_rp && /required_providers[[:space:]]*\{/ { in_rp = 1; next }
     in_rp && !in_p && /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*\{/ {
       name = $0
