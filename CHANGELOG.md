@@ -412,12 +412,16 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   Triggered` warning). That first plan shows every `helm_release` updated
   in place (never replaced): `metadata` and `id` become
   `(known after apply)`, `postrender`, `set_list`, `set_sensitive`, and
-  `set_wo_revision` go to null, and `set` entries are reordered from
-  2.x's sorted order to configuration order. The apply runs one Helm
-  upgrade per release with unchanged values, which raises each revision
-  by one and should not roll any pod. The following plan is clean. 3.x
-  state cannot be read by 2.x, so back up state first. Callers who must
-  stay on helm provider 2.x should pin this module to `~> 0.1.0`. Exception for
+  `set_wo_revision` go to null, `upgrade_install` goes from null to
+  `false`, and `set` goes from `[]` to null (or, for a release with `set`
+  entries, they are reordered from 2.x's sorted order to configuration
+  order). The apply runs one Helm upgrade per release with unchanged
+  values, which raises each revision by one and should not roll any pod.
+  The following plan is clean. The state upgrade is one-way: the 2.x
+  provider cannot read 3.x state, and only restoring a backup taken before
+  the first 3.x apply goes back. Back up state first, and decide before
+  that apply: callers who must stay on helm provider 2.x should pin this
+  module to `~> 0.1.0` before upgrading. Exception for
   callers' own `helm_release` resources (the module and examples set
   neither): helm provider 3.3.0 bug
   [hashicorp/terraform-provider-helm#1695](https://github.com/hashicorp/terraform-provider-helm/issues/1695)

@@ -631,17 +631,23 @@ exception below). The 3.x provider upgrades each
 `UpgradeState Triggered` warning. That first plan also shows every
 `helm_release` (`helm_release.n8n`, `module.controllers.helm_release.keda[0]`,
 and your own) as "updated in-place": `metadata` and `id` become
-`(known after apply)`, and `postrender`, `set_list`, `set_sensitive`, and
-`set_wo_revision` go to null. A release with `set` entries also shows them
-reordered, because 2.x stored `set` sorted by name and 3.x keeps your order.
-No `helm_release` is replaced. Applying runs one Helm upgrade per release with
+`(known after apply)`, `postrender`, `set_list`, `set_sensitive`, and
+`set_wo_revision` go to null, and `upgrade_install` goes from null to `false`.
+A release without `set` entries (such as the module's own) shows `set` going
+from `[]` to null. A release with `set` entries shows them reordered instead,
+because 2.x stored `set` sorted by name and 3.x keeps your order. No
+`helm_release` is replaced. Applying runs one Helm upgrade per release with
 unchanged values, so each release's revision (and the
 `n8n_helm_release_revision` output) goes up by one. The n8n and KEDA charts
 render the same manifests from the same values, so no pods should roll. The
-next plan is clean. There is no supported
-way back to 2.x once 3.x has written the state, so back up the state first.
-Callers who must stay on helm provider 2.x should pin this module to
-`~> 0.1.0`, the last release that requires `~> 2.12`.
+next plan is clean.
+
+The state upgrade is one-way, so decide before the first apply. Once the 3.x
+provider has written the state, the 2.x provider fails to plan with `Resource
+instance managed by newer provider version`, and the only way back is to
+restore a state backup taken before that apply. Back up the state first. If
+you must stay on helm provider 2.x, pin this module to `~> 0.1.0`, the last
+release that requires `~> 2.12`, before you upgrade.
 
 One exception affects only your own `helm_release` resources; the module and
 the examples set neither argument. Helm provider 3.3.0 has an open bug
