@@ -643,8 +643,10 @@ defaults, matching the other scripts in this directory.
 `check-version-drift.sh` compares the pins in
 [`docs/versioning.md`](../../docs/versioning.md#checking-currency) with their
 upstream sources (registry.terraform.io, GitHub releases, the n8n chart's OCI
-registry, the kedacore chart repository, endoflife.date) and prints one
-`DRIFT:`, `OK:`, `ERROR:`, or `INFO:` line per pin, then a summary. It needs
+registry, the kedacore chart repository, endoflife.date) and prints a
+`DRIFT:`, `OK:`, or `INFO:` line for each pin it could check and an `ERROR:`
+line for each failed lookup, then a summary. One `ERROR:` line can stand for
+several pins: a failed kedacore lookup covers both KEDA defaults. It needs
 `curl`, `jq`, and `helm`; no Azure credentials. Exit 0 means every lookup
 succeeded (drift is not a failure); exit 2 means at least one `ERROR:` line.
 Set `GH_TOKEN` to avoid the GitHub API's anonymous rate limit.
