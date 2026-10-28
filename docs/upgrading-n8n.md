@@ -42,6 +42,13 @@ which covers 1.35 and the next AKS minor.
   patched version; the GitHub Advisory Database records `2.21.0` as the
   first patched version of `github.com/kedacore/keda/v2`.
 
+- **Who this applies to.** Only `install_keda = true` (the default), where
+  the module installs KEDA through `modules/controllers`. With
+  `install_keda = false` the module plans no KEDA Helm release and ignores
+  `keda_chart_version`, so nothing below happens on apply: whoever owns
+  that KEDA install upgrades it (to `2.21.0` or later for the security fix
+  above), choosing a release KEDA tests on that cluster's Kubernetes
+  version.
 - **What the next apply does.** A caller that does not pin
   `keda_chart_version` plans one in-place change,
   `module.controllers.helm_release.keda[0]` `2.15.0` to `2.21.0`. The Helm
@@ -51,10 +58,9 @@ which covers 1.35 and the next AKS minor.
   holds its current replica count. Through the root module the release is
   always `atomic` (direct `modules/controllers` callers control this with
   `keda_helm_atomic`, default `true`), so a failed upgrade rolls back to
-  `2.15.0`. KEDA
-  is cluster-wide: with `create_aks = false` the upgrade also changes the
-  controller for every other `ScaledObject` and `ScaledJob` in the
-  cluster.
+  `2.15.0`. KEDA is cluster-wide: the upgrade also changes the controller
+  for every other `ScaledObject` and `ScaledJob` in the cluster, which
+  matters most on a shared cluster with `create_aks = false`.
 - **The jump crosses six minors in one Helm upgrade.** KEDA publishes
   migration notes only for 2.20 to 2.21. The breaking changes on the way
   (2.16 to 2.21) remove the NATS Streaming scaler, remove settings from
@@ -86,10 +92,12 @@ which covers 1.35 and the next AKS minor.
 - **KEDA's own Prometheus metrics.** 2.17 removed the deprecated KEDA
   operator metric names. The module scrapes none of them; update any
   dashboard or alert of your own that does.
-- **Older clusters.** On any cluster below 1.34, whether module-managed
-  (`aks_kubernetes_version`) or caller-managed (`create_aks = false`), pin
-  a release KEDA tests there (`"2.20.2"` on 1.33, `"2.19.0"` on 1.32,
-  `"2.18.3"` on 1.31) as a temporary hold. None of them carries the
+- **Older clusters.** With `install_keda = true`, check the Kubernetes
+  version of the cluster KEDA runs on: `aks_kubernetes_version` when
+  `create_aks = true`, or the caller-managed cluster's own version when
+  `create_aks = false` (`aks_kubernetes_version` does not describe that
+  cluster). Below 1.34, pin a release KEDA tests there (`"2.20.2"` on
+  1.33, `"2.19.0"` on 1.32, `"2.18.3"` on 1.31) as a temporary hold. None of them carries the
   CVE-2026-77524 fix above, so weigh that before holding, and move to the
   default as soon as the cluster reaches 1.34.
 

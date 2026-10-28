@@ -448,8 +448,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   Kubernetes 1.28 to 1.30, outside the module's `aks_kubernetes_version`
   default of `1.35`; 2.21 is tested on 1.34 to 1.36, which also covers the
   next AKS minor. **Upgrade note:**
-  a caller that does not pin `keda_chart_version` gets one in-place change
-  on the next apply, `module.controllers.helm_release.keda[0]`, which
+  with `install_keda = true` (the default), a caller that does not pin
+  `keda_chart_version` gets one in-place change on the next apply,
+  `module.controllers.helm_release.keda[0]`, which
   upgrades the KEDA controller and its CRDs in place (the chart renders the
   CRDs from `templates/`; every KEDA CRD still serves and stores only
   `keda.sh/v1alpha1`; the upgrade from 2.15 adds
@@ -463,11 +464,16 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   scaler still reads `address`, `listName`, `listLength`, and `enableTLS`
   unchanged. In 2.21 a `ScaledObject`'s `Ready` condition no longer
   reflects HPA health, which moved to a new `HPAActive` condition. KEDA is
-  cluster-wide, so with `create_aks = false` the upgrade also affects every
-  other `ScaledObject` and `ScaledJob` in the cluster. On any cluster below
-  1.34, module-managed (`aks_kubernetes_version`) or caller-managed, pin
-  `"2.20.2"` (1.33), `"2.19.0"` (1.32), or `"2.18.3"` (1.31) as a
-  temporary hold, noting that none of them carries the CVE-2026-77524 fix.
+  cluster-wide, so the upgrade also affects every other `ScaledObject` and
+  `ScaledJob` in the cluster, which matters most with `create_aks = false`.
+  With `install_keda = false` the module installs no KEDA and ignores
+  `keda_chart_version`: nothing changes on apply, and whoever owns that
+  KEDA install upgrades it. When the module installs KEDA, compare the pin
+  with the Kubernetes version of the cluster it runs on
+  (`aks_kubernetes_version` only when `create_aks = true`, otherwise the
+  caller-managed cluster's own version). Below 1.34, pin `"2.20.2"`
+  (1.33), `"2.19.0"` (1.32), or `"2.18.3"` (1.31) as a temporary hold,
+  noting that none of them carries the CVE-2026-77524 fix.
   `modules/controllers` gains a `keda_chart_version` output (the installed
   chart version, or `null` when `install_keda = false`). See
   `docs/upgrading-n8n.md`, "Moving from KEDA chart 2.15.0 to 2.21.0"
