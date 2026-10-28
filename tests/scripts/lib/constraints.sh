@@ -90,6 +90,69 @@ constraint_accepts() {
   return "$ok"
 }
 
+# provider_records <versions.tf>
+# Prints one "name|source|constraint" line per required_providers entry, in
+# file order. Handles the multi-line form `terraform fmt` writes and the
+# one-line form it also accepts (`helm = { source = "...", version = "..." }`),
+# including a closing brace on the version line. An attribute that is not
+# found is printed empty, so the caller reports an explicit ERROR instead of
+# attributing one entry's source or constraint to another. Comment lines are
+# skipped, since attributes are matched anywhere on a line.
+provider_records() {
+  awk '
+    function attr(line, key,   s) {
+      if (!match(line, "(^|[{,[:space:]])" key "[[:space:]]*=[[:space:]]*\"[^\"]*\"")) return ""
+      s = substr(line, RSTART, RLENGTH)
+      sub(/^[^"]*"/, "", s)
+      sub(/"$/, "", s)
+      return s
+    }
+    function grab(line) {
+      if ((v = attr(line, "source")) != "") src = v
+      if ((v = attr(line, "version")) != "") ver = v
+    }
+    /^[[:space:]]*(#|\/\/)/ { next }
+    !in_rp && /required_providers[[:space:]]*\{/ { in_rp = 1; next }
+    in_rp && !in_p && /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*\{/ {
+      name = $0
+      sub(/^[[:space:]]*/, "", name)
+      sub(/[[:space:]]*=.*$/, "", name)
+      src = ""; ver = ""; in_p = 1
+      rest = $0
+      sub(/^[^{]*\{/, "", rest)
+      grab(rest)
+      if (rest ~ /\}/) { print name "|" src "|" ver; in_p = 0 }
+      next
+    }
+    in_p {
+      grab($0)
+      if ($0 ~ /\}/) { print name "|" src "|" ver; in_p = 0 }
+      next
+    }
+    in_rp && /^[[:space:]]*\}/ { in_rp = 0 }
+  ' "$1"
+}
+
+# aks_classify <listed> <is_eol> <days until EOL> <warn days>
+# Classifies one aks_release_status answer for the pinned AKS minor. Prints
+# one of: unlisted (endoflife.date does not list the pin), eol (past end of
+# life, by flag or by date), no-eol-date (no published end-of-life date),
+# near-eol (end of life within <warn days>, inclusive), or supported.
+aks_classify() {
+  local listed="$1" is_eol="$2" days="$3" warn="$4"
+  if [[ "$listed" != "true" ]]; then
+    echo unlisted
+  elif [[ "$is_eol" == "true" || "$days" =~ ^-[0-9]+$ ]]; then
+    echo eol
+  elif [[ ! "$days" =~ ^[0-9]{1,9}$ ]]; then
+    echo no-eol-date
+  elif ((10#$days <= warn)); then
+    echo near-eol
+  else
+    echo supported
+  fi
+}
+
 # latest_release
 # Reads candidate versions or tags on stdin, one per line, and prints the
 # highest plain X.Y.Z release. Prereleases (5.10.0-beta1), build metadata,

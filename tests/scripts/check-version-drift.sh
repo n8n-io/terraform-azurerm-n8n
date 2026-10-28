@@ -100,26 +100,6 @@ github_latest_release() {
 
 # ── Terraform providers ────────────────────────────────────────────────────
 
-# provider_records <versions.tf>: one "name|source|constraint" line per
-# required_providers entry. Comment lines never match, since each pattern
-# is anchored on the attribute name.
-provider_records() {
-  awk '
-    /required_providers[[:space:]]*\{/ { in_rp = 1; next }
-    in_rp && !in_p && /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*\{/ {
-      name = $1; src = ""; ver = ""; in_p = 1; next
-    }
-    in_p && /^[[:space:]]*source[[:space:]]*=/ {
-      src = $0; sub(/^[^"]*"/, "", src); sub(/".*$/, "", src); next
-    }
-    in_p && /^[[:space:]]*version[[:space:]]*=/ {
-      ver = $0; sub(/^[^"]*"/, "", ver); sub(/".*$/, "", ver); next
-    }
-    in_p && /^[[:space:]]*\}/ { print name "|" src "|" ver; in_p = 0; next }
-    in_rp && /^[[:space:]]*\}/ { in_rp = 0 }
-  ' "$1"
-}
-
 echo "== Terraform providers (registry.terraform.io) =="
 records=""
 for file in versions.tf modules/*/versions.tf; do
@@ -268,18 +248,21 @@ check_aks() {
     return
   fi
   IFS=$'\t' read -r latest listed is_eol eol_from days <<<"$status"
-  if [[ "$listed" != "true" ]]; then
-    report_error "$display" "pinned ${pinned} is not listed by endoflife.date (newest GA is ${latest})"
-  elif [[ "$is_eol" == "true" ]] || [[ "$days" =~ ^-[0-9]+$ ]]; then
-    report_drift "$display" "$pinned" "$latest" "pinned version is past AKS end of life${eol_from:+ (${eol_from})}"
-  elif [[ ! "$days" =~ ^[0-9]+$ ]]; then
-    report_info "${display} pinned at ${pinned}, latest is ${latest} (no published end-of-life date)"
-  elif ((days <= AKS_EOL_WARN_DAYS)); then
-    report_drift "$display" "$pinned" "$latest" "pinned version reaches AKS end of life on ${eol_from}"
-  else
-    # No day count: the line must not change from week to week by itself.
-    report_info "${display} pinned at ${pinned}, latest is ${latest} (pinned version supported until ${eol_from})"
-  fi
+  case "$(aks_classify "$listed" "$is_eol" "$days" "$AKS_EOL_WARN_DAYS")" in
+    unlisted)
+      report_error "$display" "pinned ${pinned} is not listed by endoflife.date (newest GA is ${latest})" ;;
+    eol)
+      report_drift "$display" "$pinned" "$latest" "pinned version is past AKS end of life${eol_from:+ (${eol_from})}" ;;
+    no-eol-date)
+      report_info "${display} pinned at ${pinned}, latest is ${latest} (no published end-of-life date)" ;;
+    near-eol)
+      report_drift "$display" "$pinned" "$latest" "pinned version reaches AKS end of life on ${eol_from}" ;;
+    supported)
+      # No day count: the line must not change from week to week by itself.
+      report_info "${display} pinned at ${pinned}, latest is ${latest} (pinned version supported until ${eol_from})" ;;
+    *)
+      report_error "$display" "cannot classify the endoflife.date answer for ${pinned}" ;;
+  esac
 }
 check_aks
 

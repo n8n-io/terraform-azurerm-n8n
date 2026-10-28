@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # test-version-drift-constraints.sh: offline, table-driven test for the
 # helpers check-version-drift.sh sources from tests/scripts/lib/constraints.sh:
+# provider_records (which provider constraints does a versions.tf declare?),
 # constraint_accepts (is a provider's latest release inside the repo's
 # constraint?), latest_release (which upstream version or tag is the latest
-# release?), and aks_release_status (what does endoflife.date say about the
-# pinned AKS minor?). No network, no Terraform. Needs bash and jq.
+# release?), aks_release_status (what does endoflife.date say about the
+# pinned AKS minor?), and aks_classify (is that answer DRIFT, INFO, or
+# ERROR?). No network, no Terraform. Needs bash and jq.
 #
 # Usage: tests/scripts/test-version-drift-constraints.sh
 set -uo pipefail
@@ -154,6 +156,124 @@ check_aks "1.3 is not 1.33" 1.3 2026-10-14 \
   "1.36${TAB}false${TAB}false${TAB}${TAB}"
 check_aks "HTML instead of JSON" 1.35 2026-10-14 "" "<html>1.29 1.30 1.31</html>"
 check_aks "unexpected JSON shape" 1.35 2026-10-14 "" '{"releases":[]}'
+
+# ── aks_classify ──────────────────────────────────────────────────────────
+# check_classify <listed> <is_eol> <days> <expected>, with a 90-day window.
+check_classify() {
+  local actual
+  cases=$((cases + 1))
+  actual="$(aks_classify "$1" "$2" "$3" 90)"
+  [[ "$actual" == "$4" ]] || fail "aks_classify '$1' '$2' '$3' -> '$actual', expected '$4'"
+}
+check_classify false false "" unlisted
+check_classify true true -75 eol
+check_classify true true 30 eol                     # the flag alone is enough
+check_classify true false -1 eol                    # the date alone is enough
+check_classify true false "" no-eol-date
+check_classify true false 0 near-eol                # end of life today
+check_classify true false 90 near-eol               # the window is inclusive
+check_classify true false 91 supported
+check_classify true false 168 supported
+check_classify true false 08 near-eol               # leading zero is decimal
+
+# ── provider_records ──────────────────────────────────────────────────────
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# check_records <name> <expected lines, newline separated> <versions.tf body>
+check_records() {
+  local actual
+  cases=$((cases + 1))
+  printf '%s\n' "$3" >"$TMP/versions.tf"
+  actual="$(provider_records "$TMP/versions.tf")"
+  [[ "$actual" == "$2" ]] || fail "provider_records ($1) -> $(printf '%q' "$actual"), expected $(printf '%q' "$2")"
+}
+
+check_records "multi-line form, comments with attribute-like text" \
+  'azurerm|hashicorp/azurerm|>= 4.39.0, < 5.0.0
+helm|hashicorp/helm|~> 2.12' \
+  'terraform {
+  required_version = ">= 1.13"
+
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+      # an old note: version = "~> 3.0", source = "hashicorp/other" }
+      version = ">= 4.39.0, < 5.0.0"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.12"
+    }
+  }
+}'
+
+check_records "one-line entry followed by a multi-line entry" \
+  'helm|hashicorp/helm|~> 2.12
+random|hashicorp/random|~> 3.0' \
+  'terraform {
+  required_providers {
+    helm = { source = "hashicorp/helm", version = "~> 2.12" }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
+  }
+}'
+
+check_records "one-line entry, version first, no spaces" \
+  'tls|hashicorp/tls|~> 4.0' \
+  'terraform {
+  required_providers {
+    tls={version="~> 4.0",source="hashicorp/tls"}
+  }
+}'
+
+check_records "closing brace on the version line" \
+  'time|hashicorp/time|~> 0.14
+kubectl|gavinbunney/kubectl|>= 1.14' \
+  'terraform {
+  required_providers {
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.14" }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = ">= 1.14"
+    }
+  }
+}'
+
+check_records "missing version stays empty, not borrowed from the next entry" \
+  'acme|vancluever/acme|
+tls|hashicorp/tls|~> 4.0' \
+  'terraform {
+  required_providers {
+    acme = { source = "vancluever/acme" }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+  }
+}'
+
+check_records "configuration_aliases does not end the entry" \
+  'azurerm|hashicorp/azurerm|~> 4.0' \
+  'terraform {
+  required_providers {
+    azurerm = {
+      source                = "hashicorp/azurerm"
+      configuration_aliases = [azurerm.dns]
+      version               = "~> 4.0"
+    }
+  }
+}'
+
+# The repo's own root versions.tf: every provider, in file order.
+cases=$((cases + 1))
+actual="$(provider_records versions.tf | cut -d'|' -f1 | tr '\n' ' ')"
+[[ "$actual" == "azurerm kubernetes helm random time kubectl " ]] \
+  || fail "provider_records (root versions.tf) -> '$actual'"
 
 echo "test-version-drift-constraints.sh: ${cases} case(s), ${failures} failure(s)"
 ((failures == 0))
