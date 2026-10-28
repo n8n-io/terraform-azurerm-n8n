@@ -33,14 +33,14 @@ variable "keda_chart_repository" {
 }
 
 variable "keda_chart_version" {
-  description = "KEDA Helm chart version from keda_chart_repository. Pinning the controller keeps the CRD shape any TriggerAuthentication or ScaledObject caller relies on deterministic. Ignored when install_keda = false."
+  description = "KEDA Helm chart version from keda_chart_repository. Pinning the controller keeps the CRD shape any TriggerAuthentication or ScaledObject caller relies on deterministic. KEDA tests the 2.21.0 default on Kubernetes 1.34 through 1.36 (https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility); on any cluster outside that window pin a release whose tested window covers it (2.20.2 on 1.33, 2.19.0 on 1.32, 2.18.3 on 1.31) as a temporary hold. None of those releases carries the fix for KEDA's critical CVE-2026-77524 (GHSA-637c-6jxx-4rwm, privilege escalation from namespace admin to cluster admin through TriggerAuthentication, https://github.com/advisories/GHSA-637c-6jxx-4rwm), which affects every release before 2.21.0; the 2.21.0 default is the first patched release. Ignored when install_keda = false."
   type        = string
-  default     = "2.15.0"
+  default     = "2.21.0"
   nullable    = false
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-.+)?$", var.keda_chart_version))
-    error_message = "keda_chart_version must be a semantic version such as 2.15.0 or 2.15.0-rc1."
+    error_message = "keda_chart_version must be a semantic version such as 2.21.0 or 2.21.0-rc1."
   }
 }
 

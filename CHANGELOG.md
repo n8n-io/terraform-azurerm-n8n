@@ -439,6 +439,45 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
     module sets neither of, and the module renders `N8N_WEBHOOK_URL` itself
     through `config.extraEnv`.
   - #209: chart values validation now reports every failure in one render.
+- **Default `keda_chart_version` bumped to `2.21.0`** (was `2.15.0`) in the
+  root module and `modules/controllers`, matching `terraform-aws-n8n` #159
+  (`terraform-google-n8n` #37 makes the same bump and is still open).
+  Minor-required (see [`docs/versioning.md`](./docs/versioning.md)).
+  `2.21.0` is the first patched release for KEDA's critical CVE-2026-77524
+  (see Security below). KEDA 2.15 is tested only on
+  Kubernetes 1.28 to 1.30, outside the module's `aks_kubernetes_version`
+  default of `1.35`; 2.21 is tested on 1.34 to 1.36, which also covers the
+  next AKS minor. **Upgrade note:**
+  with `install_keda = true` (the default), a caller that does not pin
+  `keda_chart_version` gets one in-place change on the next apply,
+  `module.controllers.helm_release.keda[0]`, which
+  upgrades the KEDA controller and its CRDs in place (the chart renders the
+  CRDs from `templates/`; every KEDA CRD still serves and stores only
+  `keda.sh/v1alpha1`; the upgrade from 2.15 adds
+  `clustercloudeventsources.eventing.keda.sh`, shipped since 2.16).
+  KEDA's pods roll once; nothing in the n8n namespace is replaced. Since
+  2.20 the CRDs carry schema validation (`minimum`, `minLength`,
+  `minItems`, `enum`, `minReplicaCount <= maxReplicaCount`), which the
+  module's `TriggerAuthentication` and the n8n chart's worker
+  `ScaledObject` satisfy. The breaking changes between 2.16 and 2.21 touch
+  scalers and authentication modes the module does not use; the Redis
+  scaler still reads `address`, `listName`, `listLength`, and `enableTLS`
+  unchanged. In 2.21 a `ScaledObject`'s `Ready` condition no longer
+  reflects HPA health, which moved to a new `HPAActive` condition. KEDA is
+  cluster-wide, so the upgrade also affects every other `ScaledObject` and
+  `ScaledJob` in the cluster, which matters most with `create_aks = false`.
+  With `install_keda = false` the module installs no KEDA and ignores
+  `keda_chart_version`: nothing changes on apply, and whoever owns that
+  KEDA install upgrades it. When the module installs KEDA, compare the pin
+  with the Kubernetes version of the cluster it runs on
+  (`aks_kubernetes_version` only when `create_aks = true`, otherwise the
+  caller-managed cluster's own version). Below 1.34, pin `"2.20.2"`
+  (1.33), `"2.19.0"` (1.32), or `"2.18.3"` (1.31) as a temporary hold,
+  noting that none of them carries the CVE-2026-77524 fix.
+  `modules/controllers` gains a `keda_chart_version` output (the installed
+  chart version, or `null` when `install_keda = false`). See
+  `docs/upgrading-n8n.md`, "Moving from KEDA chart 2.15.0 to 2.21.0"
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
   with `validity_in_months` (whole number, 1 to 120, default 12), matching
   the Key Vault certificate policy's own unit. The old input was converted
@@ -721,6 +760,18 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   short before its summary line is not synced; the new
   offline `tests/scripts/test-version-drift-workflow.sh` runs the workflow's
   own steps to check this
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
+
+### Security
+
+- The new `keda_chart_version` default, `2.21.0` (see Changed above), is the
+  first patched release for KEDA's critical CVE-2026-77524
+  ([GHSA-637c-6jxx-4rwm](https://github.com/advisories/GHSA-637c-6jxx-4rwm)):
+  a namespace admin could escalate to cluster admin through a
+  `TriggerAuthentication`. Every earlier KEDA release, including the old
+  `2.15.0` default, is affected. Callers who pin an older
+  `keda_chart_version`, or who manage KEDA themselves with
+  `install_keda = false`, must move to `2.21.0` or later to get the fix
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
 
 ## [0.1.0] - 2026-09-29

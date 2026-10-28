@@ -4029,6 +4029,15 @@ run "controllers_and_base_n8n_release_in_plan" {
     error_message = "The default root plan must install the KEDA Helm release through modules/controllers."
   }
 
+  # The literal root default, read back from the release modules/controllers
+  # plans, so a revert or a broken pass-through both fail here. KEDA 2.21.0 is
+  # the first release tested on Kubernetes 1.36 and the first patched release
+  # for CVE-2026-77524; 2.15.0 was tested only on 1.28 through 1.30.
+  assert {
+    condition     = module.controllers.keda_chart_version == "2.21.0"
+    error_message = "keda_chart_version must default to 2.21.0, got ${coalesce(module.controllers.keda_chart_version, "null")}."
+  }
+
   assert {
     condition     = kubernetes_namespace.n8n[0].metadata[0].name == local.n8n_namespace && kubernetes_namespace.n8n[0].timeouts.delete == "5m"
     error_message = "The n8n namespace must use the root namespace local and preserve its bounded delete timeout."
@@ -9094,6 +9103,11 @@ run "passes_custom_keda_chart_settings_through_to_controllers" {
   assert {
     condition     = module.controllers.keda_release_name == "keda"
     error_message = "modules/controllers must still install KEDA when only the chart repository and version are overridden."
+  }
+
+  assert {
+    condition     = module.controllers.keda_chart_version == "2.16.1"
+    error_message = "The root keda_chart_version must reach the KEDA release in modules/controllers."
   }
 }
 

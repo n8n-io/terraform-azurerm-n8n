@@ -31,8 +31,8 @@ run "installs_keda_by_default" {
   }
 
   assert {
-    condition     = helm_release.keda[0].repository == "https://kedacore.github.io/charts" && helm_release.keda[0].version == "2.15.0"
-    error_message = "The KEDA release must default to the public kedacore repository and pinned chart version."
+    condition     = helm_release.keda[0].repository == "https://kedacore.github.io/charts" && helm_release.keda[0].version == "2.21.0"
+    error_message = "The KEDA release must default to the public kedacore repository and pinned chart version 2.21.0 (the first release KEDA tests on Kubernetes 1.36), got ${helm_release.keda[0].version}."
   }
 
   assert {
@@ -67,6 +67,11 @@ run "custom_namespace_and_chart_settings_are_honored" {
   assert {
     condition     = helm_release.keda[0].repository == "https://mirror.example.com/keda-charts" && helm_release.keda[0].version == "2.16.1"
     error_message = "The KEDA release must use the caller-supplied chart repository and version."
+  }
+
+  assert {
+    condition     = output.keda_chart_version == "2.16.1"
+    error_message = "The keda_chart_version output must report the caller-supplied chart version."
   }
 
   assert {
@@ -131,7 +136,7 @@ run "outputs_are_null_on_the_externally_installed_path" {
   }
 
   assert {
-    condition     = output.keda_release_name == null && output.keda_release_status == null
+    condition     = output.keda_release_name == null && output.keda_release_status == null && output.keda_chart_version == null
     error_message = "Release outputs must be explicitly null when install_keda = false, since no release is managed here."
   }
 }

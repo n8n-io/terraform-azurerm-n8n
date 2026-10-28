@@ -74,7 +74,7 @@ resource "kubectl_manifest" "my_trigger_authentication" {
 | `install_keda` | When true (the default), this module creates the KEDA namespace and Helm release. Set to false when KEDA is already installed by another process or another call of this module. | `bool` | `true` |
 | `keda_namespace` | Name of the Kubernetes namespace KEDA's operator and CRDs live in. | `string` | `"keda"` |
 | `keda_chart_repository` | Helm chart repository URL for the KEDA chart. Ignored when `install_keda = false`. | `string` | `"https://kedacore.github.io/charts"` |
-| `keda_chart_version` | KEDA Helm chart version from `keda_chart_repository`. Ignored when `install_keda = false`. | `string` | `"2.15.0"` |
+| `keda_chart_version` | KEDA Helm chart version from `keda_chart_repository`. KEDA tests the default on Kubernetes 1.34 to 1.36; on any cluster outside that window pin a release whose tested window covers it (`"2.20.2"` on 1.33, `"2.19.0"` on 1.32, `"2.18.3"` on 1.31) as a temporary hold. None of those releases carries the fix for KEDA's critical CVE-2026-77524 ([GHSA-637c-6jxx-4rwm](https://github.com/advisories/GHSA-637c-6jxx-4rwm), privilege escalation from namespace admin to cluster admin through `TriggerAuthentication`), which affects every release before `2.21.0`; the `2.21.0` default is the first patched release. Ignored when `install_keda = false`. | `string` | `"2.21.0"` |
 | `keda_helm_timeout_seconds` | Timeout, in seconds, Helm waits for the KEDA release to become ready. Ignored when `install_keda = false`. | `number` | `300` |
 | `keda_helm_wait` | Whether Helm waits for KEDA's resources to reach a ready state. Ignored when `install_keda = false`. | `bool` | `true` |
 | `keda_helm_atomic` | Whether Helm rolls back the KEDA release automatically on failure. Ignored when `install_keda = false`. | `bool` | `true` |
@@ -88,6 +88,7 @@ resource "kubectl_manifest" "my_trigger_authentication" {
 | `keda_namespace` | Effective KEDA namespace name, whether module-created or caller-managed. |
 | `keda_release_name` | Name of the KEDA Helm release this module created, or `null` when `install_keda = false`. |
 | `keda_release_status` | Status of the KEDA Helm release this module created, or `null` when `install_keda = false`. |
+| `keda_chart_version` | Chart version of the KEDA Helm release this module created, or `null` when `install_keda = false`. |
 
 This submodule is not yet part of the repository's `terraform-docs` CI check
 (see `openspec/changes/add-customer-managed-modularity/tasks.md` section 9.1) —

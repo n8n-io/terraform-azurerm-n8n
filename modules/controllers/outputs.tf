@@ -20,3 +20,8 @@ output "keda_release_status" {
   description = "Status of the KEDA Helm release this module created, or null when install_keda = false and no release is managed here."
   value       = var.install_keda ? helm_release.keda[0].status : null
 }
+
+output "keda_chart_version" {
+  description = "Chart version of the KEDA Helm release this module created, or null when install_keda = false and no release is managed here."
+  value       = var.install_keda ? helm_release.keda[0].version : null
+}
