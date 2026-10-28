@@ -416,7 +416,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   2.x's sorted order to configuration order. The apply runs one Helm
   upgrade per release with unchanged values, which raises each revision
   by one and should not roll any pod. The following plan is clean. 3.x
-  state cannot be read by 2.x, so back up state first. Exception for
+  state cannot be read by 2.x, so back up state first. Callers who must
+  stay on helm provider 2.x should pin this module to `~> 0.1.0`. Exception for
   callers' own `helm_release` resources (the module and examples set
   neither): helm provider 3.3.0 bug
   [hashicorp/terraform-provider-helm#1695](https://github.com/hashicorp/terraform-provider-helm/issues/1695)

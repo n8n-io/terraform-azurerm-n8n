@@ -640,6 +640,8 @@ unchanged values, so each release's revision (and the
 render the same manifests from the same values, so no pods should roll. The
 next plan is clean. There is no supported
 way back to 2.x once 3.x has written the state, so back up the state first.
+Callers who must stay on helm provider 2.x should pin this module to
+`~> 0.1.0`, the last release that requires `~> 2.12`.
 
 One exception affects only your own `helm_release` resources; the module and
 the examples set neither argument. Helm provider 3.3.0 has an open bug
