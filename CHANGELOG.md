@@ -490,8 +490,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
     every n8n container would have carried it twice. The module now omits
     its own entry when the chart is the upstream repository at a numbered
     `1.15.0` or newer (`local.n8n_chart_renders_postgres_ssl_enabled`),
-    and keeps it for older charts, prereleases (including the worker-pools
-    preview), and a custom `n8n_chart_repository`. The rendered value
+    and, while TLS is on, keeps it for older charts, prereleases (including
+    the worker-pools preview), and a custom `n8n_chart_repository`. The rendered value
     stays `"true"` whenever TLS is on, and
     `tests/scripts/check-n8n-chart.sh` now fails if any n8n container
     carries the name other than exactly once, from the source that gate
