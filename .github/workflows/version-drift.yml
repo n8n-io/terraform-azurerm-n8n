@@ -68,7 +68,9 @@ jobs:
       # stale pin shows up where every other piece of repo work does. A
       # complete report replaces the body; an edit notifies nobody, so a
       # comment is posted only when the set of DRIFT:/ERROR: lines changed.
-      # A clean report closes the issue, and drift coming back reopens it.
+      # A clean report closes the issue, and findings that change while it
+      # is closed reopen it; a manual close with unchanged findings stays
+      # closed (only the body is refreshed).
       # An incomplete report writes nothing to GitHub (not even the label)
       # and fails this step. tests/scripts/drift-issue-sync.sh makes that
       # decision (offline self-test in terraform-tests.yml);
@@ -99,8 +101,8 @@ jobs:
           }
           # Open labelled tracker first. Then an open unlabelled one (opened
           # before the label existed), which gets the label. Then the most
-          # recent closed one, so drift coming back reopens it instead of
-          # opening a duplicate.
+          # recent closed one, labelled or not, so drift coming back reopens
+          # it instead of opening a duplicate.
           state=open
           needs_label=""
           number="$(gh issue list --label "$label" --state open --limit 100 --json number,title | tracker)"
@@ -111,6 +113,10 @@ jobs:
           if [[ -z "$number" ]]; then
             state=closed
             number="$(gh issue list --label "$label" --state closed --limit 100 --json number,title | tracker)"
+          fi
+          if [[ -z "$number" ]]; then
+            number="$(gh issue list --state closed --search "\"$title\" in:title" --limit 100 --json number,title | tracker)"
+            [[ -z "$number" ]] || needs_label=1
           fi
           if [[ -n "$number" ]]; then
             gh issue view "$number" --json body --jq '.body' >previous.md
@@ -124,7 +130,7 @@ jobs:
 
           case "$action" in
             abort)
-              echo "::error::the report is incomplete (no valid summary line, or counts that disagree with its lines); leaving the tracking issue unchanged"
+              echo "::error::the report is incomplete (its last line is not a valid summary, or the counts disagree with its lines); leaving the tracking issue unchanged"
               exit 1
               ;;
             noop) exit 0 ;;
@@ -153,7 +159,7 @@ jobs:
               header="Findings changed in [workflow run](${RUN_URL})."
               if [[ "$action" == "reopen" ]]; then
                 gh issue reopen "$number"
-                header="Reopening: findings are back in [workflow run](${RUN_URL})."
+                header="Reopening: findings changed in [workflow run](${RUN_URL})."
               fi
               {
                 echo "$header"

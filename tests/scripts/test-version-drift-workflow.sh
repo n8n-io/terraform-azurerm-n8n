@@ -269,6 +269,18 @@ sync_case clean-open 0 "$CLEAN_REPORT" "[
 check "clean report, open tracker: it is closed" 'wrote "issue close 57"'
 check "clean report, open tracker: issue writes" '[[ "$(issue_writes)" == "edit 57,close 57" ]]'
 
+sync_case closed-unlabelled 2 "$ERROR_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"CLOSED\",\"labels\":[],\"body\":\"old\"}]"
+check "closed unlabelled tracker: the step succeeds" '[[ "$rc" == 0 ]]'
+check "closed unlabelled tracker: it is labelled and reopened, not duplicated" '[[ "$(issue_writes)" == "edit 57,edit 57,reopen 57,comment 57" ]]'
+check "closed unlabelled tracker: the label is added" 'wrote "issue edit 57 --add-label version-drift"'
+
+# Closed by hand with the same findings: the body is refreshed, the issue stays closed.
+sync_case closed-by-hand 2 "$ERROR_REPORT" "$(jq -n --arg t "$TITLE" --arg b "$ERROR_REPORT" \
+  '[{number: 57, title: $t, state: "CLOSED", labels: ["version-drift"], body: $b}]')"
+check "closed by hand, same findings: the step succeeds" '[[ "$rc" == 0 ]]'
+check "closed by hand, same findings: only the body is edited" '[[ "$(issue_writes)" == "edit 57" ]]'
+
 # An action word the sync step does not know must not get as far as a write.
 w="$(new_workdir unexpected 0 "$CLEAN_REPORT")"
 printf '#!/usr/bin/env bash\necho frobnicate\n' >"$w/tests/scripts/drift-issue-sync.sh"

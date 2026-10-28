@@ -13,16 +13,20 @@
 # Usage:
 #   drift-issue-sync.sh action <report> <previous-body> <open|closed|none>
 #     Prints one word:
-#       abort    the report has no valid summary line, or its counts disagree
-#                with its DRIFT:/ERROR: lines (a crashed or reformatted run);
-#                leave the issue alone rather than closing it as clean
+#       abort    the report's last line (ignoring blank lines and code
+#                fences) is not a valid summary, or the summary's counts
+#                disagree with its DRIFT:/ERROR: lines (a crashed or
+#                reformatted run); leave the issue alone rather than
+#                closing it as clean
 #       create   findings and no tracking issue yet
-#       update   open issue, same findings: replace the body only
+#       update   replace the body only: open issue with the same findings,
+#                or closed issue whose findings did not come back changed
+#                (a manual close with unchanged findings stays closed)
 #       comment  open issue, findings changed: replace the body and comment
 #       close    open issue, no findings: replace the body and close
-#       reopen   closed issue, findings are back: replace the body, reopen,
-#                and comment
-#       noop     no findings and no open issue
+#       reopen   closed issue, findings changed and some remain: replace
+#                the body, reopen, and comment
+#       noop     no findings, and no issue or a closed one without findings
 #   drift-issue-sync.sh changes <previous-body> <report>
 #     Prints a Markdown comment body listing new and resolved findings.
 set -uo pipefail
@@ -35,11 +39,13 @@ findings() {
   tr -d '\r' <"$1" | { grep -E '^(DRIFT|ERROR):' || true; } | LC_ALL=C sort -u
 }
 
-# report_complete <file>: the summary line exists and matches the line counts.
+# report_complete <file>: the last line, ignoring blank lines and code fences,
+# is the summary, and its counts match the DRIFT:/ERROR: lines. Output after
+# the summary means the run did not end where the script ends.
 report_complete() {
   local line drift errors
   [[ -f "$1" ]] || return 1
-  line="$(tr -d '\r' <"$1" | grep -E "$SUMMARY_RE" | tail -n 1)"
+  line="$(tr -d '\r' <"$1" | sed -e '/^[[:space:]]*$/d' -e '/^```/d' | tail -n 1)"
   [[ "$line" =~ $SUMMARY_RE ]] || return 1
   drift="$(tr -d '\r' <"$1" | grep -cE '^DRIFT:')"
   errors="$(tr -d '\r' <"$1" | grep -cE '^ERROR:')"
@@ -53,7 +59,15 @@ decide_action() {
   old="$(findings "$previous")"
   case "$state" in
     none) [[ -z "$new" ]] && echo noop || echo create ;;
-    closed) [[ -z "$new" ]] && echo noop || echo reopen ;;
+    closed)
+      if [[ -z "$new" && -z "$old" ]]; then
+        echo noop
+      elif [[ -n "$new" && "$new" != "$old" ]]; then
+        echo reopen
+      else
+        echo update
+      fi
+      ;;
     open)
       if [[ -z "$new" ]]; then
         echo close
@@ -172,6 +186,12 @@ STALE: helm provider pinned at "~> 2.12", latest is 3.3.0
 check-version-drift.sh: 1 pin(s) behind upstream, 0 lookup(s) failed
 ```'
   fixture empty.md ''
+  # Output continued after the summary: the run did not end where the script does.
+  fixture trailing.md '```text
+DRIFT: terraform (TF_VERSION) pinned at 1.16.4, latest is 1.16.5
+check-version-drift.sh: 1 pin(s) behind upstream, 0 lookup(s) failed
+bash: line 9: unexpected EOF
+```'
 
   expect_action "first report with drift creates the issue" drift.md missing.md none create
   expect_action "clean with no issue does nothing" clean.md missing.md none noop
@@ -183,6 +203,10 @@ check-version-drift.sh: 1 pin(s) behind upstream, 0 lookup(s) failed
   expect_action "a clean report closes the open issue" clean.md drift.md open close
   expect_action "drift after a close reopens" drift.md clean.md closed reopen
   expect_action "clean while closed does nothing" clean.md clean.md closed noop
+  expect_action "a manual close with unchanged findings stays closed" same.md drift.md closed update
+  expect_action "changed findings while closed reopen" newer.md drift.md closed reopen
+  expect_action "findings resolved while closed refresh the body" clean.md drift.md closed update
+  expect_action "output after the summary aborts" trailing.md drift.md open abort
   expect_action "an empty previous body counts as no findings" drift.md empty.md open comment
   expect_action "a truncated report never closes the issue" truncated.md drift.md open abort
   expect_action "a truncated report never creates an issue" truncated.md missing.md none abort

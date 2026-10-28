@@ -516,6 +516,19 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   system and user AKS node pools (matching `aks_node_count_max`'s
   description), not just "the AKS default node pool"
   ([#21](https://github.com/n8n-io/terraform-azurerm-n8n/issues/21)).
+- `.github/workflows/version-drift.yml` (contributor tooling) keeps one
+  tracking issue, identified by the `version-drift` label plus its exact
+  title, so another issue carrying the label is never edited. It comments
+  only when the set of `DRIFT:` or `ERROR:` lines changes (it used to edit
+  the body silently every week), closes the issue when a report is clean,
+  and reopens it when the findings change while it is closed instead of
+  opening a duplicate. Closing the issue by hand while the findings stay the
+  same is respected: later reports only refresh the body. An incomplete
+  report writes nothing to GitHub (body, state, and labels stay as they
+  were) and fails the run. The decision lives in
+  `tests/scripts/drift-issue-sync.sh`, whose offline self-test runs in CI,
+  and `tests/scripts/test-version-drift-workflow.sh` covers the lookups
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
 
 ### Fixed
 
@@ -708,18 +721,6 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   short before its summary line is not synced; the new
   offline `tests/scripts/test-version-drift-workflow.sh` runs the workflow's
   own steps to check this
-  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
-
-- `.github/workflows/version-drift.yml` (contributor tooling) keeps one
-  tracking issue, identified by the `version-drift` label plus its exact
-  title, so another issue carrying the label is never edited. It comments
-  only when the set of `DRIFT:` or `ERROR:` lines changes (it used to edit
-  the body silently every week), closes the issue when a report is clean,
-  and reopens it when findings return instead of opening a duplicate. An
-  incomplete report writes nothing to GitHub (body, state, and labels stay
-  as they were) and fails the run. The decision lives in
-  `tests/scripts/drift-issue-sync.sh`, whose offline self-test runs in CI,
-  and `tests/scripts/test-version-drift-workflow.sh` covers the lookups
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
 
 ## [0.1.0] - 2026-09-29
