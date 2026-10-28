@@ -215,6 +215,16 @@ tiers as described in the table.
 **Alternative rejected:** Reusing `endoflife.date` for AKS. No AKS-specific
 product entry; would misreport AKS's own support windows.
 
+**Superseded (n8n-io/terraform-azurerm-n8n#74):** endoflife.date now has an
+AKS-specific product (`azure-kubernetes-service`) that tracks AKS's own
+standard-support calendar, and the drift script reads it instead of
+scraping the learn.microsoft.com HTML. The script is still report-only for
+drift (exit 0 whether or not a pin is behind), but now exits 2 when any
+lookup fails, and the weekly `version-drift.yml` workflow (added later by
+n8n-io/terraform-azurerm-n8n#34, instead of a job in `terraform-tests.yml`)
+syncs the report before failing the run. See `docs/versioning.md`,
+"Checking currency".
+
 ## Risks and trade-offs
 
 - Documentation-only deletion-safety outcomes may read as missing parity;
