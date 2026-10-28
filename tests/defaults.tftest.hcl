@@ -2663,8 +2663,21 @@ run "managed_postgres_defaults_to_require" {
   }
 
   assert {
-    condition     = length(local.n8n_postgres_ssl_enabled_env) == 1 && one([for env in local.n8n_postgres_ssl_enabled_env : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == "true"
-    error_message = "local.n8n_postgres_ssl_enabled_env must set DB_POSTGRESDB_SSL_ENABLED=true whenever ssl_mode is not disable, working around the chart's DB_POSTGRESDB_SSL name bug (n8n-io/n8n-hosting#175)."
+    condition     = local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 0
+    error_message = "On the default upstream chart (1.15.0) the chart renders DB_POSTGRESDB_SSL_ENABLED itself, so local.n8n_postgres_ssl_enabled_env must be empty."
+  }
+}
+
+run "managed_postgres_sets_ssl_enabled_env_on_chart_1_14_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.14.0"
+  }
+
+  assert {
+    condition     = !local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 1 && one([for env in local.n8n_postgres_ssl_enabled_env : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == "true"
+    error_message = "local.n8n_postgres_ssl_enabled_env must set DB_POSTGRESDB_SSL_ENABLED=true whenever ssl_mode is not disable on a chart that renders the misnamed DB_POSTGRESDB_SSL key (n8n-io/n8n-hosting#175)."
   }
 }
 
@@ -2702,11 +2715,217 @@ run "external_postgres_disable_omits_ssl_enabled_env" {
     postgres_external_username = "n8n_app"
     postgres_external_password = "super-secret-external-password"
     postgres_external_ssl_mode = "disable"
+    # A chart that does not render the name itself, so the empty list proves
+    # the ssl_mode branch rather than local.n8n_chart_renders_postgres_ssl_enabled.
+    n8n_chart_version = "1.14.0"
   }
 
   assert {
-    condition     = length(local.n8n_postgres_ssl_enabled_env) == 0
+    condition     = !local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 0
     error_message = "local.n8n_postgres_ssl_enabled_env must be empty when the effective ssl_mode is disable."
+  }
+}
+
+# ── PostgreSQL TLS: who renders DB_POSTGRESDB_SSL_ENABLED (chart 1.15.0) ────
+# Upstream chart 1.15.0 renders database.ssl.enabled as DB_POSTGRESDB_SSL_ENABLED
+# (n8n-io/n8n-hosting#175); earlier charts render DB_POSTGRESDB_SSL, which n8n
+# does not read. The module sets the name itself in config.extraEnv exactly
+# when the chart cannot be relied on to, so every container carries it once.
+# tests/scripts/check-n8n-chart.sh proves the rendered side against the real
+# charts.
+run "postgres_ssl_enabled_env_renders_once_on_chart_1_14_0" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_chart_version          = "1.14.0"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).database.ssl.enabled == true
+    error_message = "require (the external default) must render database.ssl.enabled = true."
+  }
+
+  assert {
+    condition     = [for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"] == ["true"]
+    error_message = "On chart 1.14.0 config.extraEnv must carry exactly one DB_POSTGRESDB_SSL_ENABLED=true, since the chart only renders the misnamed DB_POSTGRESDB_SSL."
+  }
+}
+
+run "postgres_ssl_enabled_env_left_to_the_chart_on_1_15_0" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).database.ssl.enabled == true
+    error_message = "require (the external default) must render database.ssl.enabled = true."
+  }
+
+  assert {
+    condition     = var.n8n_chart_version == "1.15.0" && length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == 0
+    error_message = "On the default upstream chart 1.15.0 config.extraEnv must not carry DB_POSTGRESDB_SSL_ENABLED: the chart renders it from database.ssl.enabled, and a second entry duplicates the name on every container."
+  }
+}
+
+# A mirror can serve a rebuilt chart under the same version number, so only
+# the upstream repository is trusted to render the name.
+run "postgres_ssl_enabled_env_kept_on_a_mirrored_chart" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_chart_repository       = "oci://mirror.example.com/n8n-helm-chart"
+    n8n_chart_version          = "1.15.0"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).database.ssl.enabled == true
+    error_message = "require (the external default) must render database.ssl.enabled = true."
+  }
+
+  assert {
+    condition     = [for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"] == ["true"]
+    error_message = "A custom n8n_chart_repository at 1.15.0 must keep the module's own DB_POSTGRESDB_SSL_ENABLED=true entry, exactly once."
+  }
+}
+
+# The worker-pools preview is built off the 1.11.0 line, which renders
+# DB_POSTGRESDB_SSL.
+run "postgres_ssl_enabled_env_kept_on_the_worker_pools_preview_chart" {
+  command = plan
+
+  variables {
+    create_database            = false
+    postgres_external_host     = "external-pg.example.com"
+    postgres_external_username = "n8n_app"
+    postgres_external_password = "super-secret-external-password"
+    create_redis               = false
+    redis_external_host        = "redis.external.example.com"
+    n8n_chart_version          = "1.11.0-preview.workerpools.1"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+      client_id    = "33333333-3333-3333-3333-333333333333"
+      principal_id = "44444444-4444-4444-4444-444444444444"
+    }
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).database.ssl.enabled == true
+    error_message = "require (the external default) must render database.ssl.enabled = true."
+  }
+
+  assert {
+    condition     = [for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"] == ["true"]
+    error_message = "The 1.11.0-based worker-pools preview chart must keep the module's own DB_POSTGRESDB_SSL_ENABLED=true entry, exactly once."
+  }
+}
+
+# A prerelease is not trusted even at 1.15.0 or later: its templates are not
+# the verified release's.
+run "chart_renders_postgres_ssl_enabled_skips_prereleases" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.15.1-rc.1"
+  }
+
+  assert {
+    condition     = !local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 1
+    error_message = "A 1.15.x prerelease must keep the module's own DB_POSTGRESDB_SSL_ENABLED entry."
+  }
+}
+
+run "chart_renders_postgres_ssl_enabled_on_a_later_major_chart" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "2.0.0"
+  }
+
+  assert {
+    condition     = local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 0
+    error_message = "Upstream chart 2.0.0 must count as rendering DB_POSTGRESDB_SSL_ENABLED."
+  }
+}
+
+# The minor is compared as a number: a text comparison would order "100"
+# before "15" and "9" after it.
+run "chart_renders_postgres_ssl_enabled_compares_the_minor_numerically" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.100.0"
+  }
+
+  assert {
+    condition     = local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 0
+    error_message = "Upstream chart 1.100.0 must count as 1.15.0 or newer (numeric minor compare)."
+  }
+}
+
+run "chart_renders_postgres_ssl_enabled_is_false_below_minor_15" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.9.0"
+  }
+
+  assert {
+    condition     = !local.n8n_chart_renders_postgres_ssl_enabled && length(local.n8n_postgres_ssl_enabled_env) == 1
+    error_message = "Upstream chart 1.9.0 must count as older than 1.15.0 (numeric minor compare) and keep the module's own entry."
   }
 }
 
@@ -2715,7 +2934,7 @@ run "external_postgres_disable_omits_ssl_enabled_env" {
 # the Helm release is what lets a failed upgrade's atomic rollback restore the
 # previous CA, so no module-managed Secret, volume, mount, _FILE entry, or
 # extra checksum annotation may render.
-run "postgres_ssl_ca_pem_reaches_the_chart_and_sets_ssl_enabled_env" {
+run "postgres_ssl_ca_pem_reaches_the_chart_with_ssl_enabled" {
   command = plan
 
   variables {
@@ -2750,8 +2969,8 @@ run "postgres_ssl_ca_pem_reaches_the_chart_and_sets_ssl_enabled_env" {
   }
 
   assert {
-    condition     = one([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env.value if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == "true"
-    error_message = "config.extraEnv must set DB_POSTGRESDB_SSL_ENABLED=true so n8n actually enables TLS, independent of the chart's own (misnamed) ConfigMap key."
+    condition     = length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "DB_POSTGRESDB_SSL_ENABLED"]) == 0
+    error_message = "On the default upstream chart (1.15.0) DB_POSTGRESDB_SSL_ENABLED comes from database.ssl.enabled through the chart's ConfigMap, so config.extraEnv must not carry a second one."
   }
 
   assert {
@@ -4073,8 +4292,8 @@ run "controllers_and_base_n8n_release_in_plan" {
   }
 
   assert {
-    condition     = helm_release.n8n.version == "1.14.0" && var.n8n_image_tag == "2.35.0"
-    error_message = "The base release must pin chart 1.14.0 and n8n 2.35.0."
+    condition     = helm_release.n8n.version == "1.15.0" && var.n8n_image_tag == "2.35.0"
+    error_message = "The base release must pin chart 1.15.0 and n8n 2.35.0."
   }
 
   assert {
@@ -7172,7 +7391,7 @@ run "allows_worker_pause_on_supported_charts" {
 
   assert {
     condition     = local.n8n_worker_keda_pause_supported
-    error_message = "The default chart 1.14.0 must count as pause-capable."
+    error_message = "The default chart 1.15.0 must count as pause-capable."
   }
 }
 
@@ -11830,8 +12049,21 @@ run "capacity_model_drops_main_runner_on_the_default_chart" {
   command = plan
 
   assert {
-    condition     = var.n8n_chart_version == "1.14.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
-    error_message = "Upstream chart 1.14.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
+    condition     = var.n8n_chart_version == "1.15.0" && local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
+    error_message = "Upstream chart 1.15.0 must count runners only on workers: 15400m at default ceilings, got ${local.n8n_peak_cpu_request_millis}m."
+  }
+}
+
+run "capacity_model_drops_main_runner_on_chart_1_14_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.14.0"
+  }
+
+  assert {
+    condition     = local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 15400
+    error_message = "Upstream chart 1.14.0 places runners on workers only and must stay modeled that way after the 1.15.0 bump."
   }
 }
 
@@ -11872,7 +12104,7 @@ run "capacity_model_keeps_main_runner_on_a_mirrored_chart" {
   }
 
   assert {
-    condition     = var.n8n_chart_version == "1.14.0" && !local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 16600
+    condition     = var.n8n_chart_version == "1.15.0" && !local.n8n_chart_has_worker_only_runners && local.n8n_peak_cpu_request_millis == 16600
     error_message = "A mirrored chart at a verified version must keep the main-sidecar allowance: 16600m expected, got ${local.n8n_peak_cpu_request_millis}m."
   }
 }

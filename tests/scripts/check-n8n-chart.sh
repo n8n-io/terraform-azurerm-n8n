@@ -390,19 +390,54 @@ echo "PASS: PostgreSQL connection/ping timing renders on all three application p
 
 echo "== Verify PostgreSQL TLS CA manifests (DB_POSTGRESDB_SSL_ENABLED / DB_POSTGRESDB_SSL_CA) =="
 
-# Regression check for the bug this fixture exists to catch: the pinned
-# chart renders database.ssl.enabled into a ConfigMap key named
-# DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175
-# upstream). The module works around this with its own
-# DB_POSTGRESDB_SSL_ENABLED entry in config.extraEnv; assert on the
-# container env directly so a future chart bump that fixes the upstream
-# name does not silently mask a regression in the module's own workaround.
-for template in deployment-main deployment-worker deployment-webhook-processor; do
+# Regression check for the bug this fixture exists to catch: charts before
+# 1.15.0 render database.ssl.enabled into a ConfigMap key named
+# DB_POSTGRESDB_SSL, which n8n does not read (n8n-io/n8n-hosting#175), and the
+# module supplies DB_POSTGRESDB_SSL_ENABLED itself in config.extraEnv. From
+# upstream 1.15.0 the chart renders the right name as a reference to its own
+# ConfigMap and the module drops its entry
+# (local.n8n_chart_renders_postgres_ssl_enabled). Every n8n container must
+# carry the name exactly once on every chart version, from the source that
+# gate selects: a second entry means the gate says "older chart" while the
+# chart renders the name too, and none means the gate says "1.15.0 or newer"
+# while the chart does not. Both fixtures checked here run with TLS on (the
+# default fixture with require, ssl-ca with verify-full). The task-runner
+# sidecar is excluded: it does not talk to PostgreSQL and gets neither entry.
+# tostring: console's jq -e would exit 1 on a bare false.
+chart_renders_ssl_enabled=$(console <<< 'tostring(local.n8n_chart_renders_postgres_ssl_enabled)')
+ssl_enabled_configmap=$(jq -er '.metadata.name' "$tmp/ssl-ca-configmap.json")
+if [[ "$chart_renders_ssl_enabled" == "true" ]]; then
+  ssl_enabled_expected="[{\"configMapKeyRef\":{\"name\":\"${ssl_enabled_configmap}\",\"key\":\"DB_POSTGRESDB_SSL_ENABLED\"}}]"
+  for fixture in multi-main ssl-ca; do
+    jq -e '.data.DB_POSTGRESDB_SSL_ENABLED == "true" and (.data | has("DB_POSTGRESDB_SSL") | not)' "$tmp/${fixture}-configmap.json" >/dev/null \
+      || { echo "FAIL: chart ${chart_version} (${fixture}) must render DB_POSTGRESDB_SSL_ENABLED=\"true\" into its ConfigMap, and not the old DB_POSTGRESDB_SSL key, since local.n8n_chart_renders_postgres_ssl_enabled is true" >&2; exit 1; }
+  done
+else
+  ssl_enabled_expected='[{"value":"true"}]'
+fi
+for fixture in multi-main ssl-ca; do
+  for template in deployment-main deployment-worker deployment-webhook-processor; do
+    jq -e --argjson want "$ssl_enabled_expected" '
+      [.spec.template.spec.containers[] | select(.name != "task-runner")
+        | [.env[] | select(.name == "DB_POSTGRESDB_SSL_ENABLED")
+          | if has("valueFrom") then {configMapKeyRef: (.valueFrom.configMapKeyRef | {name, key})} else {value} end]
+        | . == $want]
+      | (length > 0 and all)
+    ' "$tmp/${fixture}-${template}.json" >/dev/null \
+      || { echo "FAIL: ${fixture} ${template} must carry exactly one DB_POSTGRESDB_SSL_ENABLED entry per n8n container, ${ssl_enabled_expected} (chart ${chart_version}, local.n8n_chart_renders_postgres_ssl_enabled=${chart_renders_ssl_enabled})" >&2; exit 1; }
+  done
+done
+
+# The worker-pools preview chart is on the 1.11.0 line, so the module must
+# keep its own literal entry there whatever the pinned default is.
+for template in deployment-main deployment-worker-group; do
   jq -e '
-    [.spec.template.spec.containers[0].env[] | select(.name == "DB_POSTGRESDB_SSL_ENABLED")] | length == 1
-    and .[0].value == "true"
-  ' "$tmp/ssl-ca-${template}.json" >/dev/null \
-    || { echo "FAIL: ${template} must carry exactly one DB_POSTGRESDB_SSL_ENABLED=true entry when the effective ssl_mode is not disable" >&2; exit 1; }
+    [.spec.template.spec.containers[] | select(.name != "task-runner")
+      | [.env[] | select(.name == "DB_POSTGRESDB_SSL_ENABLED") | {value, valueFrom}]
+      | . == [{"value": "true", "valueFrom": null}]]
+    | (length > 0 and all)
+  ' "$tmp/worker-pools-${template}.json" >/dev/null \
+    || { echo "FAIL: preview chart ${preview_chart_version} ${template} must carry exactly one module-set DB_POSTGRESDB_SSL_ENABLED=true entry per n8n container" >&2; exit 1; }
 done
 
 # The CA is delivered through the chart-native database.ssl.ca value, so it
@@ -437,7 +472,7 @@ for template in deployment-main deployment-worker deployment-webhook-processor; 
     || { echo "FAIL: ${template} must carry the chart checksum/config pod annotation" >&2; exit 1; }
 done
 
-echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders on every application pod family and postgres_ssl_ca_pem reaches n8n as PEM content through the chart ConfigMap"
+echo "PASS: DB_POSTGRESDB_SSL_ENABLED renders exactly once on every application pod family (chart-rendered: ${chart_renders_ssl_enabled}), and postgres_ssl_ca_pem reaches n8n as PEM content through the chart ConfigMap"
 
 echo "== Verify Bull worker timing manifests (lock duration/renewal/stalled interval/graceful shutdown timeout) =="
 
@@ -675,17 +710,28 @@ echo "== Self-test: duplicate managed environment-entry detector =="
 # This does not scan module output; it proves the jq expression the checks
 # above rely on actually flags a duplicate name, rather than being a
 # vacuously true no-op.
-duplicate_fixture='[{"name":"N8N_WEBHOOK_URL","value":"a"},{"name":"N8N_WEBHOOK_URL","value":"b"}]'
-dup_count=$(echo "$duplicate_fixture" | jq '[.[].name] | group_by(.) | map(select(length > 1)) | length')
-if [[ "$dup_count" -eq 0 ]]; then
-  echo "FAIL: the duplicate-entry detector did not flag an intentionally duplicated fixture" >&2
-  exit 1
-fi
+# The second fixture is the shape a chart-rendered DB_POSTGRESDB_SSL_ENABLED
+# plus a module-set one would take: the same name from two different sources.
+duplicate_detector='[.spec.template.spec.containers[] | [.env[]?.name] | group_by(.) | map(select(length > 1)) | length] | add // 0'
+for duplicate_fixture in \
+  '{"spec":{"template":{"spec":{"containers":[{"env":[{"name":"N8N_WEBHOOK_URL","value":"a"},{"name":"N8N_WEBHOOK_URL","value":"b"}]}]}}}}' \
+  '{"spec":{"template":{"spec":{"containers":[{"name":"n8n","env":[{"name":"DB_POSTGRESDB_SSL_ENABLED","valueFrom":{"configMapKeyRef":{"name":"n8n","key":"DB_POSTGRESDB_SSL_ENABLED"}}},{"name":"DB_POSTGRESDB_SSL_ENABLED","value":"true"}]}]}}}}'; do
+  dup_count=$(echo "$duplicate_fixture" | jq "$duplicate_detector")
+  if [[ "$dup_count" -eq 0 ]]; then
+    echo "FAIL: the duplicate-entry detector did not flag an intentionally duplicated fixture" >&2
+    exit 1
+  fi
+done
 
-for template in deployment-main deployment-worker deployment-webhook-processor; do
-  dup_count=$(jq '[.spec.template.spec.containers[0].env[].name] | group_by(.) | map(select(length > 1)) | length' "$tmp/multi-main-${template}.json")
+# Every container (sidecars included) of the default and TLS CA fixtures on
+# the pinned chart, and of the preview chart's main and pool Deployments.
+for manifest in \
+  "$tmp"/multi-main-deployment-{main,worker,webhook-processor}.json \
+  "$tmp"/ssl-ca-deployment-{main,worker,webhook-processor}.json \
+  "$tmp"/worker-pools-deployment-{main,worker-group}.json; do
+  dup_count=$(jq "$duplicate_detector" "$manifest")
   if [[ "$dup_count" -ne 0 ]]; then
-    echo "FAIL: ${template} renders duplicate environment entry names" >&2
+    echo "FAIL: $(basename "$manifest") renders duplicate environment entry names" >&2
     exit 1
   fi
 done

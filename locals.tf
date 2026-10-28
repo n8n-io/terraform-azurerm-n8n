@@ -302,16 +302,21 @@ locals {
     },
   ]
 
-  # n8n reads DB_POSTGRESDB_SSL_ENABLED, not the chart-rendered
-  # DB_POSTGRESDB_SSL ConfigMap key (n8n-io/n8n-hosting#175 upstream). n8n
-  # still built a TLS options object for require/allow/prefer, because the
-  # chart renders DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false for them, but
-  # verify-ca/verify-full without a CA connected in plaintext. Setting this
-  # directly whenever the effective ssl_mode is not "disable" fixes that
-  # regardless of chart version. DB_POSTGRESDB_SSL_ENABLED is
+  # n8n reads DB_POSTGRESDB_SSL_ENABLED. Charts before 1.15.0 render
+  # database.ssl.enabled into a ConfigMap key named DB_POSTGRESDB_SSL instead,
+  # which n8n does not read (n8n-io/n8n-hosting#175). n8n still built a TLS
+  # options object for require/allow/prefer, because the chart renders
+  # DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false for them, but
+  # verify-ca/verify-full without a CA connected in plaintext. On those charts
+  # the module sets the name itself whenever the effective ssl_mode is not
+  # "disable", the same condition as the chart's database.ssl.enabled
+  # (n8n.tf). From 1.15.0 the chart renders DB_POSTGRESDB_SSL_ENABLED itself
+  # from that value, so the module's entry is dropped there
+  # (local.n8n_chart_renders_postgres_ssl_enabled below) rather than give
+  # every container the name twice. DB_POSTGRESDB_SSL_ENABLED is
   # deliberately absent from local.n8n_managed_env_names below: the "DB_"
   # prefix already reserves it in n8n_extra_env.
-  n8n_postgres_ssl_enabled_env = local.postgres_connection.ssl_mode == "disable" ? [] : [
+  n8n_postgres_ssl_enabled_env = local.postgres_connection.ssl_mode == "disable" || local.n8n_chart_renders_postgres_ssl_enabled ? [] : [
     {
       name  = "DB_POSTGRESDB_SSL_ENABLED"
       value = "true"
@@ -425,8 +430,8 @@ locals {
   )
 
   # The chart's values.yaml default for redis.worker.timeout, in seconds.
-  # Verified for charts 1.11.0 (the worker-pools preview base), 1.13.0, and
-  # 1.14.0.
+  # Verified for charts 1.11.0 (the worker-pools preview base), 1.13.0,
+  # 1.14.0, and 1.15.0.
   # Used only by check.graceful_shutdown_fits_grace_period (n8n.tf) when
   # n8n_graceful_shutdown_timeout is null. tests/scripts/check-n8n-chart.sh
   # renders the pinned chart and fails if its default drifts from this value,
@@ -447,6 +452,31 @@ locals {
   # literal. An exact string match: any other spelling of the upstream URL
   # (e.g. a trailing slash) is treated as a mirror, which is the safe side.
   n8n_chart_is_upstream = var.n8n_chart_repository == local.n8n_default_chart_repository
+
+  # True only when the pinned chart is known to render
+  # DB_POSTGRESDB_SSL_ENABLED from database.ssl.enabled: a numbered release
+  # (no prerelease suffix) at 1.15.0 or newer from the upstream repository
+  # (n8n-io/n8n-hosting#175). 1.14.0 and every earlier chart, including the
+  # 1.11.0-based worker-pools preview, render DB_POSTGRESDB_SSL instead. A
+  # mirror's chart and a prerelease cannot be verified, and the safe error
+  # there is a duplicate entry carrying the same "true", not a TLS connection
+  # silently left off, so local.n8n_postgres_ssl_enabled_env keeps the
+  # module's own entry whenever this is false. major.minor is compared as
+  # numbers on n8n_chart_version_core, the version core with any prerelease
+  # suffix stripped, which local.n8n_worker_keda_pause_supported (scaling.tf)
+  # compares too.
+  n8n_chart_version_core = split(".", split("-", var.n8n_chart_version)[0])
+  n8n_chart_renders_postgres_ssl_enabled = (
+    local.n8n_chart_is_upstream &&
+    !strcontains(var.n8n_chart_version, "-") &&
+    (
+      tonumber(local.n8n_chart_version_core[0]) > 1 ||
+      (
+        tonumber(local.n8n_chart_version_core[0]) == 1 &&
+        tonumber(local.n8n_chart_version_core[1]) >= 15
+      )
+    )
+  )
 
   # check.graceful_shutdown_fits_grace_period (n8n.tf) only has a verified
   # chart default to compare against on the upstream repository; a private
