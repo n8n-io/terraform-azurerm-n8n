@@ -26,11 +26,21 @@ larger-blast-radius change of the two.
 The default `keda_chart_version` (root module and `modules/controllers`)
 moved from `2.15.0` to `2.21.0`
 ([KEDA v2.21.0](https://github.com/kedacore/keda/releases/tag/v2.21.0)),
-matching `terraform-aws-n8n` #159 and `terraform-google-n8n` #37. KEDA
-2.15 is tested only on Kubernetes 1.28 to 1.30, so the module default
-`aks_kubernetes_version = "1.35"` ran it outside its tested window; 2.21 is
-tested on 1.34 to 1.36 ([compatibility matrix](https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility)),
+matching `terraform-aws-n8n` #159 (`terraform-google-n8n` #37 makes the
+same bump and is still open). KEDA 2.15 is tested only on Kubernetes 1.28
+to 1.30, so the module default `aks_kubernetes_version = "1.35"` ran it
+outside its tested window; 2.21 is tested on 1.34 to 1.36
+([compatibility matrix](https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility)),
 which covers 1.35 and the next AKS minor.
+
+- **Security fix.** `2.21.0` is the first patched release for KEDA's
+  critical CVE-2026-77524
+  ([GHSA-637c-6jxx-4rwm](https://github.com/advisories/GHSA-637c-6jxx-4rwm)):
+  a namespace admin can escalate to cluster admin through a
+  `TriggerAuthentication`. Every release before `2.21.0`, including the old
+  `2.15.0` default, is affected. KEDA's own repository advisory lists no
+  patched version; the GitHub Advisory Database records `2.21.0` as the
+  first patched version of `github.com/kedacore/keda/v2`.
 
 - **What the next apply does.** A caller that does not pin
   `keda_chart_version` plans one in-place change,
@@ -38,8 +48,10 @@ which covers 1.35 and the next AKS minor.
   upgrade rolls the operator, metrics API server, and admission webhook
   pods once; nothing in the n8n namespace is replaced. Expect a short
   external-metrics gap while the pods restart, during which the worker HPA
-  holds its current replica count. The release is `atomic` by default
-  (`keda_helm_atomic`), so a failed upgrade rolls back to `2.15.0`. KEDA
+  holds its current replica count. Through the root module the release is
+  always `atomic` (direct `modules/controllers` callers control this with
+  `keda_helm_atomic`, default `true`), so a failed upgrade rolls back to
+  `2.15.0`. KEDA
   is cluster-wide: with `create_aks = false` the upgrade also changes the
   controller for every other `ScaledObject` and `ScaledJob` in the
   cluster.
@@ -60,7 +72,9 @@ which covers 1.35 and the next AKS minor.
 - **CRDs upgrade with the release.** The chart renders its CRDs from
   `templates/`, so the Helm upgrade updates them in place. Every KEDA CRD
   still serves and stores only `v1alpha1`, so no stored object is
-  converted, and 2.21 adds one CRD (`clustercloudeventsources.eventing.keda.sh`).
+  converted. The upgrade from 2.15 adds one CRD,
+  `clustercloudeventsources.eventing.keda.sh`, which the chart has shipped
+  since 2.16.
   Since 2.20 the CRDs carry schema validation (`minimum`, `minLength`,
   `minItems`, `enum`, and a rule that `minReplicaCount` must not exceed
   `maxReplicaCount`). The module's own objects satisfy it (the worker and
@@ -74,13 +88,10 @@ which covers 1.35 and the next AKS minor.
   dashboard or alert of your own that does.
 - **Older clusters.** On any cluster below 1.34, whether module-managed
   (`aks_kubernetes_version`) or caller-managed (`create_aks = false`), pin
-  a release KEDA tests there (`"2.20.2"` on 1.33, `"2.19.0"` on 1.32) as a
-  temporary hold. Both are inside the affected range (`<= 2.20.2`) of
-  KEDA's critical security advisory
-  [GHSA-637c-6jxx-4rwm](https://github.com/kedacore/keda/security/advisories/GHSA-637c-6jxx-4rwm),
-  which lists no patched version; the `2.21.0` default is outside that
-  range. Weigh that before holding, and move to the default as soon as the
-  cluster reaches 1.34.
+  a release KEDA tests there (`"2.20.2"` on 1.33, `"2.19.0"` on 1.32,
+  `"2.18.3"` on 1.31) as a temporary hold. None of them carries the
+  CVE-2026-77524 fix above, so weigh that before holding, and move to the
+  default as soon as the cluster reaches 1.34.
 
 ## Moving from chart 1.13.0 to 1.14.0
 
