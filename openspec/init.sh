@@ -138,8 +138,15 @@ if [[ "${SKIP_VERSION_DRIFT:-0}" != "1" ]]; then
   echo
   echo "== tests/scripts/check-version-drift.sh (report only, needs network) =="
   # Exits 2 when a lookup fails (for example, no network); report only, so
-  # that does not fail this script.
-  tests/scripts/check-version-drift.sh || echo "  check-version-drift.sh exited $? (see ERROR lines above); not failing init.sh"
+  # that does not fail this script. Any other non-zero exit (1: curl or jq
+  # missing) is a broken setup, not a lookup failure, and still fails it.
+  drift_rc=0
+  tests/scripts/check-version-drift.sh || drift_rc=$?
+  if ((drift_rc == 2)); then
+    echo "  check-version-drift.sh exited 2 (see ERROR lines above); not failing init.sh"
+  elif ((drift_rc != 0)); then
+    exit "$drift_rc"
+  fi
 fi
 
 echo
