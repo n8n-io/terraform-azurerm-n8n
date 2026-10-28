@@ -23,7 +23,12 @@
 #                or closed issue whose findings did not come back changed
 #                (a manual close with unchanged findings stays closed)
 #       comment  open issue, findings changed: replace the body and comment
-#       close    open issue, no findings: replace the body and close
+#       close    open issue, findings resolved: replace the body, close,
+#                and comment
+#       close-quiet
+#                open issue that already had no findings (for example
+#                reopened by hand): replace the body and close without a
+#                comment, since no finding changed
 #       reopen   closed issue, findings changed and some remain: replace
 #                the body, reopen, and comment
 #       noop     no findings, and no issue or a closed one without findings
@@ -69,7 +74,9 @@ decide_action() {
       fi
       ;;
     open)
-      if [[ -z "$new" ]]; then
+      if [[ -z "$new" && -z "$old" ]]; then
+        echo close-quiet
+      elif [[ -z "$new" ]]; then
         echo close
       elif [[ "$new" == "$old" ]]; then
         echo update
@@ -201,6 +208,8 @@ bash: line 9: unexpected EOF
   expect_action "a new ERROR comments" error.md drift.md open comment
   expect_action "a resolved finding comments" drift.md error.md open comment
   expect_action "a clean report closes the open issue" clean.md drift.md open close
+  expect_action "an open issue that was already clean closes without a comment" clean.md clean.md open close-quiet
+  expect_action "an open issue with an empty body closes without a comment" clean.md empty.md open close-quiet
   expect_action "drift after a close reopens" drift.md clean.md closed reopen
   expect_action "clean while closed does nothing" clean.md clean.md closed noop
   expect_action "a manual close with unchanged findings stays closed" same.md drift.md closed update

@@ -96,27 +96,37 @@ jobs:
           # tracker (a person may label a follow-up bump issue
           # version-drift), and title search is fuzzy, so every lookup keeps
           # only an exact title match.
+          # tracker: the exact-title match that was closed last (closedAt),
+          # then the highest number; open issues have no closedAt.
           tracker() {
-            jq -r --arg t "$title" 'map(select(.title == $t)) | sort_by(-.number) | .[0].number // empty'
+            jq -r --arg t "$title" 'map(select(.title == $t)) | sort_by([.closedAt // "", .number]) | last | .number // empty'
           }
+          # labelled <json> <number>: that issue already carries the label.
+          labelled() {
+            jq -e --argjson n "$2" --arg l "$label" 'any(.[]; .number == $n and any(.labels[]; .name == $l))' <<<"$1" >/dev/null
+          }
+          fields=number,title,closedAt,labels
           # Open labelled tracker first. Then an open unlabelled one (opened
           # before the label existed), which gets the label. Then the most
-          # recent closed one, labelled or not, so drift coming back reopens
-          # it instead of opening a duplicate.
+          # recently closed one, labelled or not, so drift coming back
+          # reopens it instead of opening a duplicate.
           state=open
           needs_label=""
-          number="$(gh issue list --label "$label" --state open --limit 100 --json number,title | tracker)"
+          number="$(gh issue list --label "$label" --state open --limit 100 --json "$fields" | tracker)"
           if [[ -z "$number" ]]; then
-            number="$(gh issue list --state open --search "\"$title\" in:title" --limit 100 --json number,title | tracker)"
+            number="$(gh issue list --state open --search "\"$title\" in:title" --limit 100 --json "$fields" | tracker)"
             [[ -z "$number" ]] || needs_label=1
           fi
           if [[ -z "$number" ]]; then
             state=closed
-            number="$(gh issue list --label "$label" --state closed --limit 100 --json number,title | tracker)"
-          fi
-          if [[ -z "$number" ]]; then
-            number="$(gh issue list --state closed --search "\"$title\" in:title" --limit 100 --json number,title | tracker)"
-            [[ -z "$number" ]] || needs_label=1
+            closed="$({
+              gh issue list --label "$label" --state closed --limit 100 --json "$fields"
+              gh issue list --state closed --search "\"$title\" in:title" --limit 100 --json "$fields"
+            } | jq -s 'add')"
+            number="$(tracker <<<"$closed")"
+            if [[ -n "$number" ]] && ! labelled "$closed" "$number"; then
+              needs_label=1
+            fi
           fi
           if [[ -n "$number" ]]; then
             gh issue view "$number" --json body --jq '.body' >previous.md
@@ -134,7 +144,7 @@ jobs:
               exit 1
               ;;
             noop) exit 0 ;;
-            create | update | comment | reopen | close) ;;
+            create | update | comment | reopen | close | close-quiet) ;;
             *)
               echo "::error::unexpected action '${action}' from drift-issue-sync.sh"
               exit 1
@@ -171,6 +181,12 @@ jobs:
             close)
               gh issue edit "$number" --body-file report.md
               gh issue close "$number" --comment "No drift and no lookup errors in [workflow run](${RUN_URL}). Closing; the next report with findings reopens this issue."
+              ;;
+            close-quiet)
+              # Already clean (for example reopened by hand): no finding
+              # changed, so close without a comment.
+              gh issue edit "$number" --body-file report.md
+              gh issue close "$number"
               ;;
           esac
 

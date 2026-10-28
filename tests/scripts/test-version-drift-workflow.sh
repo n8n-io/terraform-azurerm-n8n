@@ -264,10 +264,12 @@ sync_case clean-closed 0 "$CLEAN_REPORT" "[
 check "clean report, closed tracker: the step succeeds" '[[ "$rc" == 0 ]]'
 check "clean report, closed tracker: nothing is written" '[[ ! -s "$w/.gh.log" ]]'
 
-sync_case clean-open 0 "$CLEAN_REPORT" "[
-  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"OPEN\",\"labels\":[\"version-drift\"],\"body\":\"old\"}]"
+# The open tracker listed findings that are now resolved.
+sync_case clean-open 0 "$CLEAN_REPORT" "$(jq -n --arg t "$TITLE" --arg b "$ERROR_REPORT" \
+  '[{number: 57, title: $t, state: "OPEN", labels: ["version-drift"], body: $b}]')"
 check "clean report, open tracker: it is closed" 'wrote "issue close 57"'
 check "clean report, open tracker: issue writes" '[[ "$(issue_writes)" == "edit 57,close 57" ]]'
+check "clean report, open tracker with findings: the close carries a comment" 'wrote "issue close 57 --comment"'
 
 sync_case closed-unlabelled 2 "$ERROR_REPORT" "[
   {\"number\":57,\"title\":\"$TITLE\",\"state\":\"CLOSED\",\"labels\":[],\"body\":\"old\"}]"
@@ -280,6 +282,19 @@ sync_case closed-by-hand 2 "$ERROR_REPORT" "$(jq -n --arg t "$TITLE" --arg b "$E
   '[{number: 57, title: $t, state: "CLOSED", labels: ["version-drift"], body: $b}]')"
 check "closed by hand, same findings: the step succeeds" '[[ "$rc" == 0 ]]'
 check "closed by hand, same findings: only the body is edited" '[[ "$(issue_writes)" == "edit 57" ]]'
+
+# Two closed trackers: the one closed last is reopened, not the higher number.
+sync_case closed-latest 2 "$ERROR_REPORT" "[
+  {\"number\":57,\"title\":\"$TITLE\",\"state\":\"CLOSED\",\"closedAt\":\"2026-10-20T09:00:00Z\",\"labels\":[\"version-drift\"],\"body\":\"old\"},
+  {\"number\":93,\"title\":\"$TITLE\",\"state\":\"CLOSED\",\"closedAt\":\"2026-10-01T09:00:00Z\",\"labels\":[],\"body\":\"duplicate\"}]"
+check "two closed trackers: the one closed last is reopened" '[[ "$(issue_writes)" == "edit 57,reopen 57,comment 57" ]]'
+check "two closed trackers: the older duplicate is left alone" '! touched 93'
+
+# An open tracker that already had no findings closes without a comment.
+sync_case clean-reopened 0 "$CLEAN_REPORT" "$(jq -n --arg t "$TITLE" --arg b "$CLEAN_REPORT" \
+  '[{number: 57, title: $t, state: "OPEN", labels: ["version-drift"], body: $b}]')"
+check "already clean open tracker: the step succeeds" '[[ "$rc" == 0 ]]'
+check "already clean open tracker: closed without a comment" '[[ "$(issue_writes)" == "edit 57,close 57" ]] && ! grep -q -- "--comment" "$w/.gh.log"'
 
 # An action word the sync step does not know must not get as far as a write.
 w="$(new_workdir unexpected 0 "$CLEAN_REPORT")"
