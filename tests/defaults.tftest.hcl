@@ -13261,9 +13261,10 @@ run "extra_ca_default_omits_bundle" {
     condition = (
       length(kubernetes_secret_v1.n8n_ca_bundle) == 0 &&
       length([for env in yamldecode(helm_release.n8n.values[0]).config.extraEnv : env if env.name == "NODE_EXTRA_CA_CERTS"]) == 0 &&
-      length([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "ca-bundle"]) == 0
+      length([for v in yamldecode(helm_release.n8n.values[0]).extraVolumes : v if v.name == "ca-bundle"]) == 0 &&
+      !contains(keys(yamldecode(helm_release.n8n.values[0])), "podAnnotations")
     )
-    error_message = "Without n8n_extra_ca_pem no Secret, env var, or volume may render."
+    error_message = "Without n8n_extra_ca_pem no Secret, env var, volume, or podAnnotations key may render."
   }
 }
 
@@ -13307,6 +13308,11 @@ run "extra_ca_renders_secret_volume_mount_and_env" {
       one([for m in yamldecode(helm_release.n8n.values[0]).extraVolumeMounts : m if m.name == "ca-bundle"]).subPath == "ca.crt"
     )
     error_message = "The bundle must mount read-only at /etc/n8n-certs/ca-bundle.crt and NODE_EXTRA_CA_CERTS must point at it."
+  }
+
+  assert {
+    condition     = yamldecode(helm_release.n8n.values[0]).podAnnotations["checksum/extra-ca"] == sha256("-----BEGIN CERTIFICATE-----\nMIIBsynthetic\n-----END CERTIFICATE-----")
+    error_message = "A set PEM must render a checksum/extra-ca pod annotation (the trimmed PEM's SHA-256) so a changed PEM rolls every pod."
   }
 }
 
@@ -13393,6 +13399,34 @@ run "extra_ca_rejects_reserved_volume_name" {
     n8n_extra_ca_pem        = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
     n8n_extra_volumes       = [{ name = "ca-bundle", config_map = { name = "x" } }]
     n8n_extra_volume_mounts = [{ name = "ca-bundle", mount_path = "/etc/other" }]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "extra_ca_rejects_node_extra_ca_certs_in_worker_pool_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem                = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+    n8n_image_tag                   = "2.39.0"
+    n8n_worker_pools_chart_verified = true
+    n8n_worker_pools = [{
+      name      = "gpu"
+      extra_env = [{ name = "NODE_EXTRA_CA_CERTS", value = "/x.crt" }]
+    }]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "extra_ca_rejects_reserved_mount_path" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem        = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+    n8n_extra_volumes       = [{ name = "own-ca", config_map = { name = "x" } }]
+    n8n_extra_volume_mounts = [{ name = "own-ca", mount_path = "/etc/n8n-certs/ca-bundle.crt" }]
   }
 
   expect_failures = [var.n8n_extra_ca_pem]
