@@ -87,6 +87,11 @@ run "example_declares_the_three_documented_pools" {
     condition     = length(distinct([for p in local.worker_pools : p.name])) == length(local.worker_pools)
     error_message = "The example declares two pools with the same name; each pool is one Deployment and one queue, so they would collide."
   }
+
+  assert {
+    condition     = var.partner_id == "f1198e81-0323-4ce9-9753-ed1a8c596b19"
+    error_message = "partner_id must default to n8n's Microsoft-issued Customer Usage Attribution GUID."
+  }
 }
 
 run "example_keeps_a_scale_to_zero_pool_and_a_resized_pool" {
@@ -279,4 +284,40 @@ run "rejects_malformed_partner_id" {
   }
 
   expect_failures = [var.partner_id]
+}
+
+# Explicit null on a nullable variable with a non-null default is not
+# replaced by the default, so the validation itself must accept null.
+run "accepts_partner_id_opt_out" {
+  command = plan
+
+  variables {
+    partner_id = null
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nwpool-tls-test.vault.azure.net/secrets/n8nwpool-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+}
+
+# Uppercase input with the pid- prefix and -partnercenter suffix covers the
+# case-insensitive regex and both optional forms in one plan.
+run "accepts_partner_id_pid_partnercenter_form" {
+  command = plan
+
+  variables {
+    partner_id = "PID-F1198E81-0323-4CE9-9753-ED1A8C596B19-partnercenter"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nwpool-tls-test.vault.azure.net/secrets/n8nwpool-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
 }

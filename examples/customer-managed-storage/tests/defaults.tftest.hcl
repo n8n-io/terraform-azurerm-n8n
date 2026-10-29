@@ -76,6 +76,11 @@ run "customer_managed_storage_plan" {
     condition     = output.pg_backup_retention_days == 7
     error_message = "The default pg_backup_retention_days (7) must pass through to the module unchanged."
   }
+
+  assert {
+    condition     = var.partner_id == "f1198e81-0323-4ce9-9753-ed1a8c596b19"
+    error_message = "partner_id must default to n8n's Microsoft-issued Customer Usage Attribution GUID."
+  }
 }
 
 run "customer_managed_storage_single_main_override" {
@@ -183,4 +188,90 @@ run "rejects_malformed_partner_id" {
   }
 
   expect_failures = [var.partner_id]
+}
+
+# Explicit null on a nullable variable with a non-null default is not
+# replaced by the default, so the validation itself must accept null.
+run "accepts_partner_id_opt_out" {
+  command = plan
+
+  variables {
+    partner_id = null
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncms-tls-test.vault.azure.net/secrets/n8ncms-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = random_string.storage_suffix
+    override_during = plan
+    values = {
+      result = "abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_container.existing
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncms-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmsstabcdef/blobServices/default/containers/n8n-data"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_account.existing
+    override_during = plan
+    values = {
+      id                    = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncms-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmsstabcdef"
+      primary_blob_endpoint = "https://n8ncmsstabcdef.blob.core.windows.net/"
+    }
+  }
+}
+
+# Uppercase input with the pid- prefix and -partnercenter suffix covers the
+# case-insensitive regex and both optional forms in one plan.
+run "accepts_partner_id_pid_partnercenter_form" {
+  command = plan
+
+  variables {
+    partner_id = "PID-F1198E81-0323-4CE9-9753-ED1A8C596B19-partnercenter"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncms-tls-test.vault.azure.net/secrets/n8ncms-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = random_string.storage_suffix
+    override_during = plan
+    values = {
+      result = "abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_container.existing
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncms-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmsstabcdef/blobServices/default/containers/n8n-data"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_account.existing
+    override_during = plan
+    values = {
+      id                    = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncms-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmsstabcdef"
+      primary_blob_endpoint = "https://n8ncmsstabcdef.blob.core.windows.net/"
+    }
+  }
 }

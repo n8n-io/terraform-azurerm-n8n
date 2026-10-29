@@ -341,6 +341,11 @@ run "split_ingress_plan" {
     ])
     error_message = "Each AGIC identity needs Managed Identity Operator on its gateway's TLS identity, or gateway updates fail with LinkedAuthorizationFailed."
   }
+
+  assert {
+    condition     = var.partner_id == "f1198e81-0323-4ce9-9753-ed1a8c596b19"
+    error_message = "partner_id must default to n8n's Microsoft-issued Customer Usage Attribution GUID."
+  }
 }
 
 run "waf_policy_omitted_uses_standard_v2" {
@@ -561,4 +566,88 @@ run "rejects_malformed_partner_id" {
   }
 
   expect_failures = [var.partner_id]
+}
+
+# Explicit null on a nullable variable with a non-null default is not
+# replaced by the default, so the validation itself must accept null.
+run "accepts_partner_id_opt_out" {
+  command = plan
+
+  variables {
+    partner_id = null
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_admin.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplita-tls-test.vault.azure.net/secrets/n8nsplita-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_webhook.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplitw-tls-test.vault.azure.net/secrets/n8nsplitw-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.webhook
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8nsplit-n8n-rg/providers/Microsoft.Network/applicationGateways/n8nsplit-webhook-appgw"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.admin
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8nsplit-n8n-rg/providers/Microsoft.Network/applicationGateways/n8nsplit-admin-appgw"
+    }
+  }
+}
+
+# Uppercase input with the pid- prefix and -partnercenter suffix covers the
+# case-insensitive regex and both optional forms in one plan.
+run "accepts_partner_id_pid_partnercenter_form" {
+  command = plan
+
+  variables {
+    partner_id = "PID-F1198E81-0323-4CE9-9753-ED1A8C596B19-partnercenter"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_admin.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplita-tls-test.vault.azure.net/secrets/n8nsplita-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = module.tls_self_signed_webhook.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsplitw-tls-test.vault.azure.net/secrets/n8nsplitw-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.webhook
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8nsplit-n8n-rg/providers/Microsoft.Network/applicationGateways/n8nsplit-webhook-appgw"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.admin
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8nsplit-n8n-rg/providers/Microsoft.Network/applicationGateways/n8nsplit-admin-appgw"
+    }
+  }
 }

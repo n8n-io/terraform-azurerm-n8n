@@ -15,8 +15,11 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `partner_id` variable for Azure Customer Usage Attribution, the Azure
   counterpart of `terraform-aws-n8n`'s partner tag. It defaults to n8n's
   Microsoft-issued tracking GUID; set `partner_id = null` to opt out (the
-  provider then falls back to `ARM_PARTNER_ID`). A non-null default overrides
-  `ARM_PARTNER_ID`. The module itself has no attribution input because it
+  provider then falls back to `ARM_PARTNER_ID`, and with neither set to
+  HashiCorp's own Terraform partner ID unless `disable_terraform_partner_id`
+  is true). A non-null default overrides `ARM_PARTNER_ID`. Microsoft does
+  not share attribution data with partners; see the README section for the
+  customer notice. The module itself has no attribution input because it
   configures no providers. Confirmed live: every Azure Resource Manager
   request of an `examples/small` apply carried `pid-<guid>` in the provider
   user agent. No node tagging is needed: AKS applies cluster `tags` to the

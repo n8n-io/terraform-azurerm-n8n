@@ -12,6 +12,12 @@ and SHALL reject any other value.
 - **WHEN** an example plans with `partner_id = "not-a-guid"`
 - **THEN** plan fails on `var.partner_id`
 
+#### Scenario: Accept every documented form
+
+- **WHEN** an example plans with `partner_id = null` or with an uppercase
+  `pid-<guid>-partnercenter` value
+- **THEN** plan succeeds
+
 #### Scenario: Default attributes usage to n8n
 
 - **WHEN** an example applies with no value for `partner_id`

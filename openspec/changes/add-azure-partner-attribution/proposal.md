@@ -9,15 +9,17 @@ a tracking GUID registered in Partner Center. It is not tag-based.
 Microsoft documents the Terraform route as the `azurerm` provider's
 `partner_id` argument (or `ARM_PARTNER_ID`), which adds `pid-<guid>` to the
 provider's user agent. The module configures no providers, so only the
-caller's provider block can set it. n8n's tracking GUID is issued by Microsoft.
+caller's provider block can set it. n8n's tracking GUID
+(`f1198e81-0323-4ce9-9753-ed1a8c596b19`) is issued by Microsoft.
 
 ## What Changes
 
 - Every example declares `partner_id` (default n8n's GUID; `null` opts out) and passes it to its
-  `provider "azurerm"` block, so an operator sets one variable (or
-  `ARM_PARTNER_ID`) and the example's resources, including the module's, are
-  attributed.
-- README section documenting the route for root-module callers.
+  `provider "azurerm"` block, so an example's resources, including the
+  module's, are attributed to n8n unless the operator sets `partner_id = null`.
+- README section documenting the route for root-module callers, the opt-out
+  (including `disable_terraform_partner_id`), and the customer notice
+  Microsoft asks partners to publish.
 - No root input, resource or output. An earlier draft added an empty
   `pid-<guid>` ARM deployment; review showed attribution follows the
   deployment that creates the resources, so it would not attribute AKS,
@@ -34,6 +36,8 @@ caller's provider block can set it. n8n's tracking GUID is issued by Microsoft.
 
 ## Impact
 
-- Nine example roots (variable, provider block, test, README reference).
-- Root module unchanged. No behaviour change unless a caller sets a value.
-- Open dependency: n8n's registered GUID, from Partnerships.
+- Nine example roots (variable, provider block, tests, README reference).
+- Root module unchanged.
+- Example users are attributed to n8n by default; `partner_id = null` opts
+  out. No resource or plan change either way: `partner_id` only changes the
+  provider's user agent.

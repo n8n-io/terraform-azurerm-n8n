@@ -1,11 +1,11 @@
 ## 1. Examples
 
 - [x] 1.1 Declare `partner_id` and wire it into each example's azurerm provider (nine examples)
-- [x] 1.2 Rejection test per example; regenerate `terraform-docs`
+- [x] 1.2 Rejection, null opt-out, alternate-form and default-value tests per example; regenerate `terraform-docs`
 
 ## 2. Docs
 
-- [x] 2.1 README section, CHANGELOG entry, AGENTS.md note
+- [x] 2.1 README section (opt-out, `disable_terraform_partner_id`, customer notice), CHANGELOG entry, AGENTS.md note
 
 ## 3. Live validation and default
 

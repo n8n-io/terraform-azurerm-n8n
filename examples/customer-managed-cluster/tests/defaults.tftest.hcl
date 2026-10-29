@@ -206,6 +206,11 @@ run "customer_managed_cluster_plan" {
     )
     error_message = "The rewrite must set X-Forwarded-For to {var_add_x_forwarded_for_proxy} so upstream proxy entries survive and the port is dropped."
   }
+
+  assert {
+    condition     = var.partner_id == "f1198e81-0323-4ce9-9753-ed1a8c596b19"
+    error_message = "partner_id must default to n8n's Microsoft-issued Customer Usage Attribution GUID."
+  }
 }
 
 run "customer_managed_cluster_single_main_override" {
@@ -335,4 +340,106 @@ run "rejects_malformed_partner_id" {
   }
 
   expect_failures = [var.partner_id]
+}
+
+# Explicit null on a nullable variable with a non-null default is not
+# replaced by the default, so the validation itself must accept null.
+run "accepts_partner_id_opt_out" {
+  command = plan
+
+  variables {
+    partner_id = null
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncmc-tls-test.vault.azure.net/secrets/n8ncmc-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.Network/applicationGateways/n8ncmc-appgw"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_tls_cert
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncmc-appgw-tls"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.existing
+    override_during = plan
+    values = {
+      id              = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ContainerService/managedClusters/n8ncmc-shared-aks"
+      oidc_issuer_url = "https://oidc.prod-aks.azure.com/00000000-0000-0000-0000-000000000000/"
+      kube_config = [{
+        host                   = "https://n8ncmc-shared-aks.hcp.eastus.azmk8s.io:443"
+        client_certificate     = "ZmFrZS1jZXJ0"
+        client_key             = "ZmFrZS1rZXk="
+        cluster_ca_certificate = "ZmFrZS1jYQ=="
+        password               = "fake-password"
+        username               = "fake-username"
+      }]
+    }
+  }
+}
+
+# Uppercase input with the pid- prefix and -partnercenter suffix covers the
+# case-insensitive regex and both optional forms in one plan.
+run "accepts_partner_id_pid_partnercenter_form" {
+  command = plan
+
+  variables {
+    partner_id = "PID-F1198E81-0323-4CE9-9753-ED1A8C596B19-partnercenter"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncmc-tls-test.vault.azure.net/secrets/n8ncmc-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.Network/applicationGateways/n8ncmc-appgw"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_tls_cert
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncmc-appgw-tls"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.existing
+    override_during = plan
+    values = {
+      id              = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmc-n8n-rg/providers/Microsoft.ContainerService/managedClusters/n8ncmc-shared-aks"
+      oidc_issuer_url = "https://oidc.prod-aks.azure.com/00000000-0000-0000-0000-000000000000/"
+      kube_config = [{
+        host                   = "https://n8ncmc-shared-aks.hcp.eastus.azmk8s.io:443"
+        client_certificate     = "ZmFrZS1jZXJ0"
+        client_key             = "ZmFrZS1rZXk="
+        cluster_ca_certificate = "ZmFrZS1jYQ=="
+        password               = "fake-password"
+        username               = "fake-username"
+      }]
+    }
+  }
 }
