@@ -19,8 +19,10 @@ sourced from `ARM_PARTNER_ID`.
    Redis, which other Terraform resources create. A resource that probably does
    not do its job is worse than documentation.
 3. **Example variable `partner_id`, default n8n's Microsoft-issued GUID.**
-   Examples attribute usage to n8n by default; a caller opts out with
-   `partner_id = null`, which sends nothing and lets `ARM_PARTNER_ID` apply.
+   Examples send n8n's partner ID by default; a caller opts out with
+   `partner_id = null`, which sends no CUA ID and lets `ARM_PARTNER_ID` apply.
+   With neither set, the provider still sends HashiCorp's Terraform partner
+   ID unless `disable_terraform_partner_id` is true.
    A non-null default overrides `ARM_PARTNER_ID`, because provider
    configuration wins over the environment. The bare GUID form is the default:
    the provider emits `pid-<guid>` itself. The validation mirrors the

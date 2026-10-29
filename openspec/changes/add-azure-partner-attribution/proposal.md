@@ -15,8 +15,10 @@ caller's provider block can set it. n8n's tracking GUID
 ## What Changes
 
 - Every example declares `partner_id` (default n8n's GUID; `null` opts out) and passes it to its
-  `provider "azurerm"` block, so an example's resources, including the
-  module's, are attributed to n8n unless the operator sets `partner_id = null`.
+  `provider "azurerm"` block, so an example's provider sends n8n's partner
+  ID for every resource it creates, including the module's, unless the
+  operator sets `partner_id = null`. Whether Microsoft then attributes the
+  usage to n8n is confirmed only on Microsoft's side (task 3.4).
 - README section documenting the route for root-module callers, the opt-out
   (including `disable_terraform_partner_id`), and the customer notice
   Microsoft asks partners to publish.
@@ -38,6 +40,7 @@ caller's provider block can set it. n8n's tracking GUID
 
 - Nine example roots (variable, provider block, tests, README reference).
 - Root module unchanged.
-- Example users are attributed to n8n by default; `partner_id = null` opts
-  out. No resource or plan change either way: `partner_id` only changes the
+- Example users send n8n's partner ID by default; `partner_id = null` opts
+  out. The live run confirmed the user agent; Microsoft-side attribution is
+  unverified (task 3.4). No resource or plan change either way: `partner_id` only changes the
   provider's user agent.
