@@ -413,6 +413,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   plan. A cluster whose pools already run the cluster's version plans no change
   when the version does not change (a pool created without
   `orchestrator_version` already stores the cluster's `kubernetes_version`).
+  A pool upgraded out of band to a specific patch (for example `1.36.4`)
+  plans a one-time in-place `orchestrator_version` change to the alias
+  (`1.36`), which AKS does not treat as an upgrade, so no node is drained.
   **A cluster whose control plane was upgraded earlier with the pools left
   behind, as every earlier version of this module left them, plans the two
   pool upgrades on the first apply with this change, even though

@@ -596,8 +596,11 @@ unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
   changed since `1.11.0`, and [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md)
   before upgrading an existing deployment).
 - **AKS:** `aks_kubernetes_version` default `1.36`. On an existing
-  cluster the change upgrades only the control plane; see
-  [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_kubernetes_version-upgrades-only-the-aks-control-plane).
+  module-managed cluster the change upgrades the control plane and then
+  both node pools, a surge upgrade that restarts n8n pods. Set
+  `aks_node_pools_follow_cluster_version = false` to upgrade only the
+  control plane; see
+  [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_kubernetes_version-upgrades-the-control-plane-and-both-node-pools).
 - **KEDA Helm chart:** default `2.21.0` (root and `modules/controllers`),
   which KEDA tests on Kubernetes 1.34 to 1.36. See
   [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md#moving-from-keda-chart-2150-to-2210)
