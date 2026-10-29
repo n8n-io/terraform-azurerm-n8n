@@ -50,7 +50,7 @@ environment variable named `DB_POSTGRESDB_SSL`, but n8n only reads
 (`locals.tf`'s `n8n_postgres_ssl_enabled_env`) whenever the effective
 `ssl_mode` is not `disable`.
 
-Chart `1.15.0`, the module's default, fixes the name upstream
+Chart `1.15.0` (the module's default is now `1.16.0`) fixes the name upstream
 ([n8n-io/n8n-hosting#175](https://github.com/n8n-io/n8n-hosting/pull/175))
 and renders `DB_POSTGRESDB_SSL_ENABLED` itself from `database.ssl.enabled`,
 which the module sets on exactly the same condition. To avoid giving every

@@ -435,7 +435,7 @@ locals {
 
   # The chart's values.yaml default for redis.worker.timeout, in seconds.
   # Verified for charts 1.11.0 (the worker-pools preview base), 1.13.0,
-  # 1.14.0, and 1.15.0.
+  # 1.14.0, 1.15.0, and 1.16.0.
   # Used only by check.graceful_shutdown_fits_grace_period (n8n.tf) when
   # n8n_graceful_shutdown_timeout is null. tests/scripts/check-n8n-chart.sh
   # renders the pinned chart and fails if its default drifts from this value,
@@ -485,13 +485,13 @@ locals {
   # True when the chart's own image default is a concrete n8n version at or
   # above every floor this module checks (2.19, 2.29, 2.30, 2.39): an upstream,
   # numbered chart from 1.12.0 (appVersion 1.12.0: 2.39.6, 1.13.0: 2.40.5,
-  # 1.14.0: 2.41.4, 1.15.0: 2.42.4). Charts before 1.12.0 and the 1.11.0-based
-  # worker-pools preview default to the floating stable tag; a prerelease or a
-  # custom n8n_chart_repository cannot be verified. Same predicate as
-  # terraform-aws-n8n's n8n_image_known_current, plus the prerelease
-  # exclusion. Tag-independent on purpose: n8n_image_tag's own validations read
-  # it, and a validation reading a local derived from its own variable is a
-  # graph cycle.
+  # 1.14.0: 2.41.4, 1.15.0: 2.42.4, 1.16.0: 2.43.5). Charts before 1.12.0 and
+  # the 1.11.0-based worker-pools preview default to the floating stable tag;
+  # a prerelease or a custom n8n_chart_repository cannot be verified. Same
+  # predicate as terraform-aws-n8n's n8n_image_known_current, plus the
+  # prerelease exclusion. Tag-independent on purpose: n8n_image_tag's own
+  # validations read it, and a validation reading a local derived from its own
+  # variable is a graph cycle.
   n8n_chart_default_image_current = (
     local.n8n_chart_is_upstream &&
     !strcontains(var.n8n_chart_version, "-") && (
