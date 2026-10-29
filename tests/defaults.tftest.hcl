@@ -8433,6 +8433,14 @@ run "private_azure_dns_routes_internal_frontend" {
   }
 
   override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+    }
+  }
+
+  override_resource {
     target          = azurerm_application_gateway.n8n[0]
     override_during = plan
     values = {
@@ -8478,10 +8486,11 @@ run "private_dns_record_zone_id_uses_lowercased_zone_name" {
     n8n_domain                = "n8n.internal.example.com"
   }
 
-  override_data {
-    target = data.azurerm_client_config.current[0]
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
     values = {
-      subscription_id = "11111111-1111-1111-1111-111111111111"
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
     }
   }
 
@@ -8508,7 +8517,7 @@ run "private_dns_record_zone_id_uses_lowercased_zone_name" {
 }
 
 # azurerm 4.x built every private DNS record ID from the provider's
-# subscription ID (client_config.subscription_id), never from the zone ID, and
+# subscription ID (Account.SubscriptionId), never from the zone ID, and
 # 5.x rebuilds private_dns_zone_id verbatim from that record ID on refresh. A
 # zone ID whose subscription differs from the provider's only in letter case
 # must therefore send the provider's string, or every record is replaced.
@@ -8523,10 +8532,11 @@ run "private_dns_record_zone_id_uses_the_provider_subscription_casing" {
     n8n_domain                = "n8n.internal.example.com"
   }
 
-  override_data {
-    target = data.azurerm_client_config.current[0]
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
     values = {
-      subscription_id = "aaaaaaaa-1111-1111-1111-111111111111"
+      id = "/subscriptions/aaaaaaaa-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
     }
   }
 
@@ -8561,10 +8571,11 @@ run "private_dns_record_zone_id_keeps_a_different_subscription" {
     n8n_domain                = "n8n.internal.example.com"
   }
 
-  override_data {
-    target = data.azurerm_client_config.current[0]
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
     values = {
-      subscription_id = "11111111-1111-1111-1111-111111111111"
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
     }
   }
 

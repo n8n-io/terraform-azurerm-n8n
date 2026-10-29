@@ -725,11 +725,16 @@ next major bump:
 - Where 5.x rebuilds an ID-valued argument from the resource's own ID on
   read, send the exact string it will rebuild, and check where 4.x took
   each segment from. 4.x built private DNS record IDs from the provider's
-  `Account.SubscriptionId`, not from the zone ID, so `dns.tf` reads
-  `data.azurerm_client_config.current` (the same field) and uses its
-  string when the zone ID's subscription matches it ignoring case, plus the
-  lowercased zone name the 4.x record used. The
-  `private_dns_record_zone_id_*` runs pin both.
+  `Account.SubscriptionId`, not from the zone ID, so `dns.tf` takes the
+  subscription segment of `azurerm_user_assigned_identity.n8n_workload.id`
+  (built from the same field and kept verbatim in state) and uses it when
+  the zone ID's subscription matches it ignoring case, plus the lowercased
+  zone name the 4.x record used. The `private_dns_record_zone_id_*` runs
+  pin both. Do not feed a ForceNew argument from a data source: a caller's
+  module-level `depends_on` with any pending change defers every data
+  source in the module to apply, so the value turns unknown and the
+  resource is replaced (the `iam.tf` AGIC Reader scope is the first case).
+  A managed resource's ID already in state stays known at plan time.
 - `terraform init -upgrade` upgrades every provider, not just the one being
   bumped. To move only azurerm, delete its block from each
   `.terraform.lock.hcl`, run `terraform init`, then
