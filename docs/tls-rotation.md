@@ -106,7 +106,16 @@ The Let's Encrypt cert is issued by `acme_certificate.n8n` inside the
 submodule via DNS-01 challenge against the Azure DNS zone authoritative
 for `var.domain_name`. The acme provider tracks `min_days_remaining = 30`
 by default — Terraform reissues the cert 30 days before expiry on the
-next apply.
+next apply. Expect the App Gateway listener to follow the new version only
+on the apply after that (see the forced-rotation steps below), so run
+`terraform apply` twice inside the renewal window.
+
+Upgrading a deployment whose certificate was issued with acme provider
+2.x? Follow the staged provider upgrade (one apply with acme `3.1.0`, then
+`~> 3.0`) in
+[`modules/tls-letsencrypt/README.md`](../modules/tls-letsencrypt/README.md#upgrading-from-acme-provider-2x)
+first. A direct jump to acme `3.1.1` or later revokes and re-issues the
+certificate.
 
 **Prerequisites for rotation** (same as initial issuance):
 
@@ -128,9 +137,12 @@ The acme provider runs the DNS-01 challenge again, Let's Encrypt issues
 a fresh PKCS#12, and the submodule's
 `azurerm_key_vault_certificate.letsencrypt` uploads it as a new version
 of its Key Vault certificate. The submodule's
-`app_gateway_tls_cert_secret_id` output gets a new versioned URI;
-`module.n8n` re-reads it and the same apply updates the App Gateway
-listener's `ssl_certificate` to that version.
+`app_gateway_tls_cert_secret_id` output gets the new versioned URI one
+apply later: a live run showed that after the apply that imported the new
+version the output still pointed at the previous one, because the provider
+plans the secret ID as unchanged for an in-place certificate update. Run
+`terraform apply` a second time, and `module.n8n` then updates the App
+Gateway listener's `ssl_certificate` to the new version.
 
 **To rotate the ACME account key** (separate from the cert — the account
 key authenticates to Let's Encrypt):
@@ -210,6 +222,8 @@ Vault alone does not change what the gateway serves.
 `var.app_gateway_tls_cert_secret_id` at the previous version's URI (Key
 Vault never deletes versions automatically — `az keyvault certificate
 list-versions` will list all of them) and run `terraform apply` again.
+Roll back only to a version whose certificate is unexpired and not
+revoked by your CA.
 
 **Verify after rotation:**
 
@@ -250,7 +264,7 @@ stage the new source, swap the var, apply, then clean up.
 
 | Symptom                                                                                | Likely cause                                                                                                                                  | Fix                                                                                                                                                                                                                                                          |
 | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Browser shows the OLD cert minutes after a successful apply                            | AGIC has not yet reconciled (~30 s window) OR the App Gateway's KV secret reference is pinned to a specific version (it should not be — verify) | Wait 2 min and re-test. If still stale, run `kubectl -n n8n rollout restart deployment/agic` to force AGIC to reconcile the listener.                                                                                                                        |
+| Browser shows the OLD cert minutes after a successful apply                            | The listener still references the previous versioned Key Vault URI. With `modules/tls-letsencrypt/` this is expected after the apply that issued the new certificate: the submodule output only moves to the new version on the next apply. AGIC never rewrites the Key Vault reference, so restarting it does not help | Compare the listener's `ssl_certificate.key_vault_secret_id` (`az network application-gateway ssl-cert list -g <rg> --gateway-name <gateway> --query '[].keyVaultSecretId'`) with the latest Key Vault version. If they differ, run `terraform plan`, confirm it updates the listener's `ssl_certificate`, and apply. If they match, wait one to three minutes for the gateway to load the certificate and re-test. |
 | `azurerm_key_vault_certificate.<name>` apply (inside submodule) fails with `Forbidden` | The operator running `terraform apply` lost cert-import rights on the caller-supplied vault                                                  | Re-grant **Key Vault Certificates Officer** (RBAC mode) or `Create`, `Get`, `Import`, `Update` on certs + `Get`, `Set` on secrets (access-policy mode) on the principal you authenticated as.                                                                          |
 | `acme_certificate.n8n` fails with `failed to find DNS zone for domain`                 | The Azure DNS zone authoritative for `var.domain_name` was renamed, deleted, or the DNS Zone Contributor role was revoked from the apply principal | Re-grant the role and re-run `terraform apply`. If the zone was renamed, point `var.domain_name` at the new authoritative zone or move the zone.                                                                                                              |
 | `acme_certificate.n8n` fails with `urn:ietf:params:acme:error:rateLimited`             | Hit Let's Encrypt's per-domain rate limit (50 certs / domain / week)                                                                          | Switch to `modules/tls-self-signed/` or a BYO cert until the limit window resets, OR set the LE submodule's `provider "acme"` block to `server_url = "https://acme-staging-v02.api.letsencrypt.org/directory"` for non-production rotations.                  |
@@ -259,4 +273,7 @@ stage the new source, swap the var, apply, then clean up.
 If a rotation takes the listener offline and you cannot remediate within
 the SLA window, roll back fast by repointing
 `var.app_gateway_tls_cert_secret_id` at the previous version's URI you
-captured in the `Before you rotate` section, then re-apply.
+captured in the `Before you rotate` section, then re-apply. This works only
+while that certificate is unexpired and not revoked. A forced re-issue
+through `modules/tls-letsencrypt/` revokes the previous certificate, so
+recover forward with the new certificate or another valid one instead.
