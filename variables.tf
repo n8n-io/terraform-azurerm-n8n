@@ -1973,13 +1973,6 @@ variable "n8n_webhook_hpa_min_replicas" {
   }
 }
 
-variable "n8n_webhook_pdb_enabled" {
-  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the webhook-processor Deployment, so a voluntary node drain (AKS node-image or Kubernetes upgrade, cluster-autoscaler scale-down, kubectl drain) evicts at most one webhook processor at a time. The n8n chart renders a budget for the main pods only (checked on 1.16.0), so without this every webhook processor can be stopped at once. maxUnavailable rather than minAvailable, so a drain is never blocked outright: with n8n_webhook_hpa_min_replicas = 1 the budget permits evicting the only replica and protects nothing. Set to false to manage your own budget. Voluntary-disruption guard only: AKS upgrades still force-drain a node once their drain timeout expires."
-  type        = bool
-  default     = true
-  nullable    = false
-}
-
 variable "n8n_webhook_hpa_max_replicas" {
   description = "Maximum webhook-processor replicas for the CPU HPA. The default of 8 participates in the AKS capacity diagnostic."
   type        = number
@@ -2065,13 +2058,6 @@ variable "n8n_worker_keda_paused_replica_count" {
     condition     = var.n8n_worker_keda_paused_replica_count == null ? true : (var.n8n_worker_keda_paused_replica_count >= 0 && var.n8n_worker_keda_paused_replica_count == floor(var.n8n_worker_keda_paused_replica_count))
     error_message = "n8n_worker_keda_paused_replica_count must be a whole number of 0 or more, or null to freeze workers at their current count."
   }
-}
-
-variable "n8n_worker_pdb_enabled" {
-  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the default worker Deployment, so a voluntary node drain evicts at most one worker at a time. The n8n chart renders a budget for the main pods only (checked on 1.16.0). maxUnavailable rather than minAvailable, because minAvailable = 1 on a one-replica Deployment blocks every voluntary eviction and stalls drains: at the default n8n_worker_keda_min_replicas = 1 the budget therefore protects nothing until KEDA scales to two or more workers; raising the floor to 2 makes it effective at the cost of one more pod. Evicted workers still depend on n8n_termination_grace_period for in-flight executions. n8n_worker_pools Deployments are not covered. Set to false to manage your own budget."
-  type        = bool
-  default     = true
-  nullable    = false
 }
 
 variable "n8n_worker_keda_jobs_per_replica" {
@@ -2313,6 +2299,24 @@ variable "n8n_prestop_sleep" {
     condition     = var.n8n_prestop_sleep >= 10 && var.n8n_prestop_sleep == floor(var.n8n_prestop_sleep)
     error_message = "n8n_prestop_sleep must be a whole number of at least 10 seconds."
   }
+}
+
+variable "n8n_webhook_pdb_enabled" {
+  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the webhook-processor Deployment, so a voluntary node drain (AKS node-image or Kubernetes upgrade, cluster-autoscaler scale-down, kubectl drain) evicts at most one webhook processor at a time. The n8n chart renders a budget for the main pods only (checked on 1.16.0), so without this every webhook processor can be stopped at once. maxUnavailable rather than minAvailable, so a single-replica Deployment can still be evicted: with n8n_webhook_hpa_min_replicas = 1 the budget permits evicting the only replica and protects nothing. With several replicas, a replica that is already unavailable (for example Pending) blocks further evictions until it recovers. Set to false to manage your own budget. Voluntary-disruption guard only: if a budget still blocks a node drain when the AKS drain timeout expires (30 minutes unless the node pool sets another), AKS fails a user-initiated upgrade with UpgradeFailed unless the upgrade is forced or the node pool's undrainable-node behavior is set to Cordon; a platform-initiated upgrade drains normally first and overrides the budget only when that drain times out or fails."
+  type        = bool
+  default     = true
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
+}
+
+variable "n8n_worker_pdb_enabled" {
+  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the default worker Deployment, so a voluntary node drain evicts at most one worker at a time. The n8n chart renders a budget for the main pods only (checked on 1.16.0). maxUnavailable rather than minAvailable, because minAvailable = 1 on a one-replica Deployment blocks every voluntary eviction and stalls drains: at the default n8n_worker_keda_min_replicas = 1 the budget therefore protects nothing until KEDA scales to two or more workers; raising the floor to 2 makes it effective at the cost of one more pod. Evicted workers still depend on n8n_termination_grace_period for in-flight executions. n8n_worker_pools Deployments are not covered. Set to false to manage your own budget."
+  type        = bool
+  default     = true
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
 }
 
 variable "n8n_task_runners_enabled" {

@@ -62,6 +62,16 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   both budgets on the next apply (two new resources, no Helm diff). Set either
   to `false` to manage your own.
 
+  **Upgrade note:** before upgrading, run `kubectl get pdb -n <namespace> -o yaml`
+  (namespace `n8n` unless you changed `n8n_namespace`). If a budget you already
+  own selects the webhook-processor or worker pods, Kubernetes rejects every
+  eviction of those pods once a second budget selects them, so node drains,
+  cluster-autoscaler scale-downs, and AKS upgrades stall or fail. If a budget
+  you own is named `n8n-webhook-processor` or `n8n-worker`, the apply fails
+  with "already exists". In either case set the matching
+  `n8n_webhook_pdb_enabled` or `n8n_worker_pdb_enabled` to `false`, or delete
+  your own budget before applying.
+
 - Seven opt-in AKS network and identity inputs, all defaulting to the
   module's current behavior so an existing caller sees no plan diff
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)):
