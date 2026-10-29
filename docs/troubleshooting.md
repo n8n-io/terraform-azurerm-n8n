@@ -278,7 +278,7 @@ The Standard and Premium tiers add an hourly charge per cluster. Premium is a pr
 
 ## Changing `aks_kubernetes_version` upgrades the control plane and both node pools
 
-**Validation scope.** Observed live on 2026-10-14 with `azurerm` 5.9.0 (`examples/small`, `swedencentral`, 1.35 to 1.36, issue [#85](https://github.com/n8n-io/terraform-azurerm-n8n/issues/85)), for both the default (`aks_node_pools_follow_cluster_version = true`) and the control-plane-only behavior that `false` keeps. The opt-out was checked live before this setting existed (`azurerm` 4.81.0; see [`qualification-runs/2026-10-14-aks-1.36-swedencentral.md`](./qualification-runs/2026-10-14-aks-1.36-swedencentral.md)) and by plan only afterwards.
+**Validation scope.** The default (`aks_node_pools_follow_cluster_version = true`) was observed live on 2026-10-14 with `azurerm` 5.9.0 (`examples/small`, `swedencentral`, 1.35 to 1.36, issue [#85](https://github.com/n8n-io/terraform-azurerm-n8n/issues/85)). The control-plane-only behavior that `false` keeps was observed live the same day, before this setting existed (`azurerm` 4.81.0; see [`qualification-runs/2026-10-14-aks-1.36-swedencentral.md`](./qualification-runs/2026-10-14-aks-1.36-swedencentral.md)). The `false` setting itself is checked by plan only.
 
 **Symptom**
 
