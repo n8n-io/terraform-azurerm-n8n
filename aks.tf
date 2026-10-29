@@ -48,6 +48,14 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
+  # Required since azurerm 5.0 (Optional+Computed in 4.x). Manual keeps the
+  # two node pools below as the only capacity (no node auto-provisioning).
+  # default_node_pools keeps the provider default, Auto, which AKS ignores
+  # unless mode is Auto.
+  node_provisioning_profile {
+    mode = "Manual"
+  }
+
   # SystemAssigned by default. A BYO private DNS zone (aks_private_dns_zone_id
   # set to a resource ID rather than "System") or KMS etcd encryption
   # switches to the aks_cluster UserAssigned identity below

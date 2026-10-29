@@ -18,16 +18,14 @@
 #     non-clustered Redis endpoint semantics n8n's Bull queue client and
 #     KEDA's Redis scaler expect (both assume a single logical keyspace,
 #     not OSS/Enterprise-cluster key-slot routing). Verified against the
-#     installed `hashicorp/azurerm` v4.81.0 provider that `NoCluster` is
-#     accepted (GA'd August 2025 — see
+#     installed `hashicorp/azurerm` v4.81.0 and v5.9.0 providers that
+#     `NoCluster` is accepted (GA'd August 2025, see
 #     https://learn.microsoft.com/en-us/azure/redis/whats-new#august-2025;
 #     older provider releases (<4.60ish) reject it with `expected
 #     default_database.0.clustering_policy to be one of ["EnterpriseCluster"
-#     "OSSCluster"]` — hashicorp/terraform-provider-azurerm#30940). The
-#     `>= 4.39.0, < 5.0.0` constraint in versions.tf allows 4.x releases
-#     older than that; a caller pinned to a 4.x release before NoCluster
-#     shipped will see that
-#     same plan-time rejection from the provider itself.
+#     "OSSCluster"]`, hashicorp/terraform-provider-azurerm#30940). Every
+#     release the `>= 5.5.0, < 6.0.0` constraint in versions.tf allows
+#     accepts it.
 #   - `client_protocol = "Encrypted"` — TLS-only, matching the legacy Redis
 #     Cache's hardcoded `non_ssl_port_enabled = false`.
 #   - `access_keys_authentication_enabled = true` — n8n and KEDA both
@@ -88,10 +86,9 @@ resource "azurerm_private_dns_zone" "redis" {
 resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
   count = var.create_redis && var.create_redis_private_dns_zone ? 1 : 0
 
-  name                  = "${var.friendly_name_prefix}-redis-dns-link"
-  resource_group_name   = var.resource_group_name
-  private_dns_zone_name = azurerm_private_dns_zone.redis[0].name
-  virtual_network_id    = var.vnet_id
+  name                = "${var.friendly_name_prefix}-redis-dns-link"
+  private_dns_zone_id = azurerm_private_dns_zone.redis[0].id
+  virtual_network_id  = var.vnet_id
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-redis-dns-link" })
 }
@@ -135,7 +132,7 @@ resource "azurerm_managed_redis" "n8n" {
     # future version of this module changes the hardcoded value itself.
     clustering_policy = "NoCluster"
     client_protocol   = "Encrypted"
-    # Not ForceNew: azurerm (verified against v4.81.0) updates
+    # Not ForceNew: azurerm (verified against v4.81.0 and v5.9.0) updates
     # eviction_policy in place with a PUT on the existing default database;
     # it does not delete or recreate the instance or database. Moving to
     # NoEviction changes behavior: a full Redis then rejects writes instead

@@ -71,9 +71,14 @@ resource "azurerm_web_application_firewall_policy" "webhook" {
   location            = azurerm_resource_group.n8n.location
 
   policy_settings {
-    enabled                     = true
-    mode                        = "Detection"
-    request_body_check          = true
+    enabled            = true
+    mode               = "Detection"
+    request_body_check = true
+    # Pinned to what every azurerm 4.x create sent when the argument was
+    # unset. The azurerm 5.0 upgrade guide documents a `true` default that
+    # 5.x does not implement yet; pinning keeps a later provider release from
+    # starting to enforce the upload limit below on existing gateways.
+    file_upload_enforcement     = false
     file_upload_limit_in_mb     = 100
     max_request_body_size_in_kb = 128
   }

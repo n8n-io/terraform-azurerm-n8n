@@ -290,6 +290,11 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_kubernetes_cluster.n8n[0].node_provisioning_profile[0].mode == "Manual"
+    error_message = "AKS cluster must send node_provisioning_profile mode Manual (required since azurerm 5.0) so the two declared node pools stay the only capacity."
+  }
+
+  assert {
     condition     = azurerm_kubernetes_cluster.n8n[0].workload_identity_enabled == true
     error_message = "AKS cluster must have workload identity enabled."
   }
@@ -1232,7 +1237,7 @@ run "rejects_versionless_aks_kms_key_vault_key_id" {
     aks_kms_key_vault_key_id         = "https://n8ntest-shared-kv.vault.azure.net/keys/n8n-aks-etcd"
   }
 
-  # azurerm 4.81.0 rejects a versionless key_vault_key_id at plan time
+  # azurerm (4.81.0 and 5.9.0) rejects a versionless key_vault_key_id at plan time
   # ("expected a versioned ID"), so the module rejects it first.
   expect_failures = [
     var.aks_kms_key_vault_key_id,
@@ -2193,6 +2198,11 @@ run "managed_postgres_resources_in_plan" {
   assert {
     condition     = azurerm_postgresql_flexible_server.n8n[0].private_dns_zone_id == azurerm_private_dns_zone.postgres[0].id
     error_message = "The Flexible Server must attach to the module-managed postgres private DNS zone when postgres_private_dns_zone_id is not set."
+  }
+
+  assert {
+    condition     = azurerm_private_dns_zone_virtual_network_link.postgres[0].private_dns_zone_id == azurerm_private_dns_zone.postgres[0].id
+    error_message = "The postgres VNet link must address the module-managed zone by its ID (azurerm 5.x)."
   }
 
   assert {
@@ -3545,6 +3555,11 @@ run "managed_redis_resources_in_plan" {
   }
 
   assert {
+    condition     = azurerm_private_dns_zone_virtual_network_link.redis[0].private_dns_zone_id == azurerm_private_dns_zone.redis[0].id
+    error_message = "The Redis VNet link must address the module-managed zone by its ID (azurerm 5.x)."
+  }
+
+  assert {
     condition     = local.redis_connection.tls_enabled == true
     error_message = "local.redis_connection.tls_enabled must be true when create_redis = true."
   }
@@ -3847,7 +3862,7 @@ run "private_blob_storage_resources_in_plan" {
   }
 
   assert {
-    condition     = azurerm_storage_account.n8n[0].public_network_access_enabled == false
+    condition     = azurerm_storage_account.n8n[0].public_network_access == "Disabled"
     error_message = "Storage account public network access must be disabled."
   }
 
@@ -3884,6 +3899,11 @@ run "private_blob_storage_resources_in_plan" {
   assert {
     condition     = azurerm_private_dns_zone_virtual_network_link.blob[0].virtual_network_id == var.vnet_id
     error_message = "Blob private DNS zone must link to var.vnet_id."
+  }
+
+  assert {
+    condition     = azurerm_private_dns_zone_virtual_network_link.blob[0].private_dns_zone_id == azurerm_private_dns_zone.blob[0].id
+    error_message = "The Blob VNet link must address the module-managed zone by its ID (azurerm 5.x)."
   }
 
   assert {
@@ -7988,6 +8008,11 @@ run "public_application_gateway_ingress_renders_by_default" {
   }
 
   assert {
+    condition     = azurerm_web_application_firewall_policy.appgw[0].policy_settings[0].file_upload_enforcement == false
+    error_message = "The WAF policy must pin file_upload_enforcement = false, the value azurerm 4.x always sent, so a provider default change cannot start enforcing the upload limit on existing gateways."
+  }
+
+  assert {
     condition = (
       azurerm_network_security_group.appgw[0].name == local.appgw_nsg_name &&
       azurerm_subnet_network_security_group_association.appgw[0].subnet_id == var.appgw_subnet_id &&
@@ -8408,6 +8433,14 @@ run "private_azure_dns_routes_internal_frontend" {
   }
 
   override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+    }
+  }
+
+  override_resource {
     target          = azurerm_application_gateway.n8n[0]
     override_during = plan
     values = {
@@ -8430,12 +8463,136 @@ run "private_azure_dns_routes_internal_frontend" {
   assert {
     condition = alltrue([
       for domain, record in azurerm_private_dns_a_record.n8n :
-      record.zone_name == "internal.example.com" &&
-      record.resource_group_name == "n8ntest-dns-rg" &&
+      record.private_dns_zone_id == var.private_dns_zone_id &&
       record.name == trimsuffix(domain, ".internal.example.com") &&
       record.records == toset(["10.0.4.10"])
     ])
     error_message = "Every private DNS record must use the caller-owned private zone and target the internal Application Gateway frontend."
+  }
+}
+
+# azurerm 5.x addresses private DNS records by zone ID and replaces them when
+# that string changes. Records created by azurerm 4.x carry a lowercased zone
+# name in their ID, so the module must send the same lowercased form even
+# when the caller's zone ID uses other casing.
+run "private_dns_record_zone_id_uses_lowercased_zone_name" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode       = "internal"
+    appgw_private_ip_address  = "10.0.4.10"
+    create_private_dns_record = true
+    private_dns_zone_id       = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/N8NTest-DNS-RG/providers/Microsoft.Network/privateDnsZones/Internal.Example.com"
+    n8n_domain                = "n8n.internal.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/applicationGateways/n8ntest-appgw"
+      frontend_ip_configuration = {
+        private_ip_address = "10.0.4.10"
+      }
+    }
+  }
+
+  assert {
+    condition     = azurerm_private_dns_a_record.n8n["n8n.internal.example.com"].private_dns_zone_id == "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/N8NTest-DNS-RG/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    error_message = "The private DNS record must keep the caller's resource group segment and lowercase only the zone name, matching the zone ID azurerm 5.x derives from records created by 4.x."
+  }
+
+  assert {
+    condition     = azurerm_private_dns_a_record.n8n["n8n.internal.example.com"].name == "n8n"
+    error_message = "The record name must be relative to the lowercased zone name."
+  }
+}
+
+# azurerm 4.x built every private DNS record ID from the provider's
+# subscription ID (Account.SubscriptionId), never from the zone ID, and
+# 5.x rebuilds private_dns_zone_id verbatim from that record ID on refresh. A
+# zone ID whose subscription differs from the provider's only in letter case
+# must therefore send the provider's string, or every record is replaced.
+run "private_dns_record_zone_id_uses_the_provider_subscription_casing" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode       = "internal"
+    appgw_private_ip_address  = "10.0.4.10"
+    create_private_dns_record = true
+    private_dns_zone_id       = "/subscriptions/AAAAAAAA-1111-1111-1111-111111111111/resourceGroups/n8ntest-dns-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    n8n_domain                = "n8n.internal.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id = "/subscriptions/aaaaaaaa-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/applicationGateways/n8ntest-appgw"
+      frontend_ip_configuration = {
+        private_ip_address = "10.0.4.10"
+      }
+    }
+  }
+
+  assert {
+    condition     = azurerm_private_dns_a_record.n8n["n8n.internal.example.com"].private_dns_zone_id == "/subscriptions/aaaaaaaa-1111-1111-1111-111111111111/resourceGroups/n8ntest-dns-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    error_message = "When the zone ID's subscription matches the provider's ignoring case, the record must use the provider's subscription string, which is what azurerm 4.x wrote into the record ID."
+  }
+}
+
+# A zone in another subscription is addressed through that subscription:
+# azurerm 5.x supports it, and no 4.x record can exist there (4.x always
+# wrote into the provider's subscription).
+run "private_dns_record_zone_id_keeps_a_different_subscription" {
+  command = plan
+
+  variables {
+    appgw_frontend_mode       = "internal"
+    appgw_private_ip_address  = "10.0.4.10"
+    create_private_dns_record = true
+    private_dns_zone_id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    n8n_domain                = "n8n.internal.example.com"
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ntest-n8n-workload"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/n8ntest-rg/providers/Microsoft.Network/applicationGateways/n8ntest-appgw"
+      frontend_ip_configuration = {
+        private_ip_address = "10.0.4.10"
+      }
+    }
+  }
+
+  assert {
+    condition     = azurerm_private_dns_a_record.n8n["n8n.internal.example.com"].private_dns_zone_id == "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+    error_message = "A private DNS zone in a different subscription must keep that subscription in the record's zone ID."
   }
 }
 

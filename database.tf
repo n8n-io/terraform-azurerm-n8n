@@ -84,10 +84,9 @@ resource "azurerm_private_dns_zone" "postgres" {
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
   count = var.create_database && var.create_postgres_private_dns_zone ? 1 : 0
 
-  name                  = "${var.friendly_name_prefix}-postgres-dns-link"
-  resource_group_name   = var.resource_group_name
-  private_dns_zone_name = azurerm_private_dns_zone.postgres[0].name
-  virtual_network_id    = var.vnet_id
+  name                = "${var.friendly_name_prefix}-postgres-dns-link"
+  private_dns_zone_id = azurerm_private_dns_zone.postgres[0].id
+  virtual_network_id  = var.vnet_id
 
   tags = merge(local.common_tags, { Name = "${var.friendly_name_prefix}-postgres-dns-link" })
 }
@@ -251,10 +250,20 @@ resource "azurerm_postgresql_flexible_server" "n8n" {
   # care about pinning a specific zone should manage it out-of-band; the
   # module's contract is "the caller (or Azure) picks the zone once,
   # Terraform doesn't fight it afterward".
+  #
+  # `storage_type` arrived in azurerm 5.4.0 as a ForceNew argument defaulting
+  # to Premium_LRS, with no state migration, and the provider stores it only
+  # when the API response carries one. A normal refresh fills it in from Azure
+  # (a live azurerm 4.81.0 server read back as Premium_LRS and planned no
+  # replacement), but a `-refresh=false` plan, or an API response without a
+  # storage type, leaves it empty and plans a replacement that destroys the
+  # database; ignoring it is the safeguard for those cases. The module never
+  # sets it and only supports Premium_LRS, so new servers still get the default.
   lifecycle {
     ignore_changes = [
       zone,
       high_availability[0].standby_availability_zone,
+      storage_type,
     ]
 
     # Azure rejects a zone named `<server name>.postgres.database.azure.com`

@@ -69,14 +69,13 @@ terraform {
   required_providers {
     azurerm = {
       source = "hashicorp/azurerm"
-      # azurerm_postgresql_flexible_server.administrator_password_wo /
-      # administrator_password_wo_version (postgres_password_write_only,
-      # issue #26) shipped in 4.21.0. The floor is 4.39.0 because before
-      # that release a pg_admin_username change sent only
-      # administrator_password, so with write-only enabled it sent an empty
-      # password (hashicorp/terraform-provider-azurerm#29475).
-      # Kept within the same 4.x major as before.
-      version = ">= 4.39.0, < 5.0.0"
+      # 5.x only: the private DNS VNet links and A record address their zone
+      # by `private_dns_zone_id`, and AKS needs `node_provisioning_profile`,
+      # neither of which 4.x accepts. The floor is 5.5.0, the first release
+      # with `azurerm_storage_account.public_network_access`; it also
+      # carries the 5.1.0 storage container state migration from 4.x.
+      # docs/upgrading-azurerm-5.md covers moving an existing deployment.
+      version = ">= 5.5.0, < 6.0.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
