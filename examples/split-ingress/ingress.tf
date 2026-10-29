@@ -227,8 +227,8 @@ resource "time_sleep" "admin_tls_cert_kv_rbac" {
 }
 
 resource "azurerm_application_gateway" "admin" {
-  name = "${var.friendly_name_prefix}-admin-appgw"
-  # checkov:skip=CKV_AZURE_120:This gateway's frontend never receives internet traffic: no public IP, and the frontend_ip_configuration below binds a private address in the appgw subnet (VirtualNetwork-only, or further restricted to admin_allowed_cidr_blocks by the appgw NSG). A WAF screens untrusted internet requests; this gateway is private by design, which is the isolation this example exists to demonstrate.
+  # checkov:skip=CKV_AZURE_120:This gateway's frontend never receives internet traffic: no public IP, and the frontend_ip_configuration below binds a private address in the appgw_admin subnet (VirtualNetwork-only, or further restricted to admin_allowed_cidr_blocks by the appgw_admin NSG). A WAF screens untrusted internet requests; this gateway is private by design, which is the isolation this example exists to demonstrate.
+  name                = "${var.friendly_name_prefix}-admin-appgw"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
   # Application Gateway HTTP/2 intermittently resets the editor's large

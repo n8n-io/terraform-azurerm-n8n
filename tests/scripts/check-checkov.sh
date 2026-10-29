@@ -70,11 +70,23 @@ cd "$REPO_ROOT"
 # check below then fails with a message that points at the wrong cause. Shells
 # that export deployment defaults (TF_VAR_location, ...) hit this. CI exports
 # none. Diagnosed in terraform-aws-n8n#199.
-while IFS= read -r var; do
-  unset "$var"
-done < <(compgen -e | grep '^TF_VAR_' || true)
+#
+# Removed with `env -u` rather than `unset`, matching the AWS sibling: names
+# that are not shell identifiers, such as TF_VAR_bad-name, still reach child
+# processes, and bash either omits them from `compgen -e` or fails to `unset`
+# them (which, under `set -e`, stopped the script before pass 1). `env -0`
+# keeps a value containing a newline from posing as another entry.
+ENV_UNSET=()
+while IFS= read -r -d '' entry; do
+  name="${entry%%=*}"
+  if [[ "$name" == TF_VAR_* ]]; then
+    ENV_UNSET+=(-u "$name")
+  fi
+done < <(env -0)
 
-SCAN=(checkov -d . --framework terraform --config-file .checkov.yaml --compact)
+# The ${arr[@]+...} form keeps an empty array from tripping `set -u` on
+# bash 3.2, the macOS /bin/bash.
+SCAN=(env ${ENV_UNSET[@]+"${ENV_UNSET[@]}"} checkov -d . --framework terraform --config-file .checkov.yaml --compact)
 
 # Pass 1: the module and every example exactly as written. --quiet prints
 # failures only, so a clean pass is silent apart from the summary line.

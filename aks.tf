@@ -43,9 +43,9 @@ resource "azurerm_kubernetes_cluster" "n8n" {
   # checkov:skip=CKV_AZURE_141:local_account_disabled is caller-tunable via var.aks_local_account_disabled (default false); Azure requires aks_entra_rbac to be set first (see the variable's validation), so disabling local accounts is a deliberate opt-in, not a default.
   # checkov:skip=CKV_AZURE_168:Known gap: neither default_node_pool nor the n8n_user pool exposes a caller-tunable max_pods input; both stay at the Azure CNI default of 30. Raising it to 50 would increase per-node IP consumption against var.aks_subnet_id's CIDR, which is not something to flip without sizing guidance.
   # checkov:skip=CKV_AZURE_170:sku_tier is caller-tunable via var.aks_sku_tier (default "Free", see variables.tf): the Free tier has no financially backed API server SLA, a deliberate cost default documented on the variable; callers set "Standard" for production.
-  # checkov:skip=CKV_AZURE_171:Known gap: automatic_channel_upgrade/automatic_upgrade_channel is never set, so the cluster has no auto-upgrade channel. No caller-tunable input exists yet, and enabling one is a behavior change (Azure-initiated upgrades), not a default to flip silently.
+  # checkov:skip=CKV_AZURE_171:Known gap: automatic_upgrade_channel is never set, so the cluster has no auto-upgrade channel. No caller-tunable input exists yet, and enabling one is a behavior change (Azure-initiated upgrades), not a default to flip silently.
   # checkov:skip=CKV_AZURE_226:Known gap: default_node_pool.os_disk_type is not set (Azure default "Managed", not "Ephemeral"). Ephemeral requires the chosen VM SKU to have enough temp-disk cache for the OS disk size and forces node pool recreation; neither is guaranteed for var.aks_node_vm_size / local.aks_system_node_vm_size_effective, so there is no caller-tunable input for it yet.
-  # checkov:skip=CKV_AZURE_227:Known gap: neither default_node_pool nor the n8n_user pool sets enable_host_encryption; Azure requires the EncryptionAtHost feature registered on the subscription, which this module cannot guarantee, so there is no caller-tunable input for it yet.
+  # checkov:skip=CKV_AZURE_227:Known gap: neither default_node_pool nor the n8n_user pool sets host_encryption_enabled; Azure requires the EncryptionAtHost feature registered on the subscription, which this module cannot guarantee, so there is no caller-tunable input for it yet.
   # checkov:skip=CKV_AZURE_232:only_critical_addons_enabled is caller-tunable via var.aks_system_pool_critical_addons_only (default false, see variables.tf): disabled by default so n8n/KEDA/the Redis exporter can schedule on the system pool, matching today's behavior; callers opt in to isolate system pods.
 
   count = var.create_aks ? 1 : 0
@@ -268,7 +268,7 @@ resource "azurerm_kubernetes_cluster" "n8n" {
 # automatically.
 resource "azurerm_kubernetes_cluster_node_pool" "n8n_user" {
   # checkov:skip=CKV_AZURE_168:Known gap: same as azurerm_kubernetes_cluster.n8n above — no caller-tunable max_pods input; stays at the Azure CNI default of 30.
-  # checkov:skip=CKV_AZURE_227:Known gap: same as azurerm_kubernetes_cluster.n8n above — enable_host_encryption is not set and has no caller-tunable input; Azure's EncryptionAtHost feature must be registered on the subscription first.
+  # checkov:skip=CKV_AZURE_227:Known gap: same as azurerm_kubernetes_cluster.n8n above — host_encryption_enabled is not set and has no caller-tunable input; Azure's EncryptionAtHost feature must be registered on the subscription first.
   count = var.create_aks ? 1 : 0
 
   name                        = "n8nuser"
