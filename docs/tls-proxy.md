@@ -30,8 +30,19 @@ n8n_extra_env = [
   and that mount path are reserved.
 - Node reads one file. Azure Managed Redis chains to a public root, so the
   module has no CA of its own to merge.
-- Changing the PEM rewrites the Secret but does not restart pods. Restart
-  `n8n-main`, `n8n-worker`, and `n8n-webhook-processor` afterward.
+- Changing the PEM rolls every n8n pod, worker pools included, through a
+  `checksum/extra-ca` pod annotation, because Node reads the file only at
+  start.
+- Setting the input back to `null` deletes the Secret before the Helm update
+  that drops the mount. Old pods keep serving but can log `FailedMount`
+  events until the rollout replaces them, and an old pod rescheduled in that
+  window stays in `ContainerCreating`. Plan the removal for a quiet period. The module does not use
+  `create_before_destroy` on this Secret: Terraform would propagate it to the
+  namespace, the AKS cluster, and the node pools, and a later forced
+  replacement of any of them would then fail on the fixed name.
+- A Helm rollback after a failed upgrade does not restore the previous PEM:
+  the Secret is managed by Terraform, not Helm. To go back, set the previous
+  PEM in Terraform and apply.
 - Private keys are rejected at plan time.
 - An authenticated proxy takes credentials in the URL
   (`http://user:password@proxy.corp.example:3128`). `n8n_extra_env` values are

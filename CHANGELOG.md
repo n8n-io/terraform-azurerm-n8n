@@ -34,8 +34,12 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   worker, and webhook-processor pods, and `NODE_EXTRA_CA_CERTS` points at it.
   Certificates only (a private key is rejected at plan time).
   `NODE_EXTRA_CA_CERTS` is rejected in the extra-env inputs only while this
-  is set. Changing the PEM needs a manual restart of the three deployments;
-  the task-runner sidecars are not covered. Ported from
+  is set. Changing the PEM rolls every n8n pod through a `checksum/extra-ca`
+  pod annotation. Unlike `terraform-aws-n8n`, the Secret has no
+  `create_before_destroy`, because Terraform would propagate it to the
+  namespace, AKS cluster, and node pools; setting the input back to `null`
+  can briefly log `FailedMount` on old pods (see `docs/tls-proxy.md`). The
+  task-runner sidecars are not covered. Ported from
   `terraform-google-n8n` #48; `n8n_proxy_hops` already existed here.
 - `docs/tls-proxy.md`: outbound, inbound, and combined proxy setups.
 - Examples pass `n8n_extra_ca_pem` and `n8n_extra_env` through (ported from

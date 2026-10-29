@@ -3082,10 +3082,10 @@ variable "n8n_extra_ca_pem" {
     /etc/n8n-certs/ca-bundle.crt on main, worker, and webhook-processor pods,
     and points NODE_EXTRA_CA_CERTS at it. Combine with n8n_extra_env
     HTTP_PROXY/HTTPS_PROXY/NO_PROXY to route traffic through the proxy; the
-    module does not manage those. A change rewrites the Secret but does not
-    restart running pods: restart the n8n-main, n8n-worker, and
-    n8n-webhook-processor deployments to pick it up. The task-runner sidecars
-    are not covered; see docs/tls-proxy.md. Null (default) leaves
+    module does not manage those. A change rewrites the Secret and rolls every
+    n8n pod (worker pools included) through a checksum/extra-ca pod
+    annotation, because Node reads the file only at start. The task-runner
+    sidecars are not covered; see docs/tls-proxy.md. Null (default) leaves
     NODE_EXTRA_CA_CERTS unset. While this is set, NODE_EXTRA_CA_CERTS is
     rejected in n8n_extra_env, n8n_worker_extra_env, and every
     n8n_worker_pools entry's extra_env, and the volume name "ca-bundle" and

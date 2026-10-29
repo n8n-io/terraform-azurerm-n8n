@@ -199,6 +199,16 @@ resource "kubernetes_secret_v1" "n8n_ca_bundle" {
     "ca.crt" = trimspace(var.n8n_extra_ca_pem)
   }
 
+  # Deliberately no create_before_destroy, unlike terraform-aws-n8n.
+  # Terraform propagates create_before_destroy to every dependency and stores
+  # it in state, and this Secret depends (through kubernetes_namespace.n8n and
+  # time_sleep.aks_api_warmup) on the AKS cluster and node pools. A forced
+  # replacement of any of those fixed-name resources would then try to create
+  # the new one first and fail on the name, for every caller, even with
+  # n8n_extra_ca_pem unset. The cost of leaving it off: setting the input back
+  # to null deletes this Secret before the Helm update removes the mount, so
+  # old pods can log FailedMount until they are replaced (docs/tls-proxy.md).
+
   depends_on = [kubernetes_namespace.n8n]
 }
 
@@ -701,7 +711,14 @@ resource "helm_release" "n8n" {
         ]
       }
     }
-  }))]
+    },
+    # Forced-rollout annotations (local.n8n_pod_annotations). The chart merges
+    # podAnnotations into every pod template but does not document the key in
+    # values.yaml; verified against the pinned chart and the worker-pools
+    # preview. Merged only when non-empty so a default deployment renders
+    # byte-identical values and sees no Helm diff.
+    length(local.n8n_pod_annotations) > 0 ? { podAnnotations = local.n8n_pod_annotations } : {},
+  ))]
 
   lifecycle {
     # A hard stop rather than a check: a chart that predates

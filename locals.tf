@@ -315,7 +315,7 @@ locals {
     var.n8n_extra_ca_pem == null ? [] : [
       {
         name      = "ca-bundle"
-        mountPath = "/etc/n8n-certs/ca-bundle.crt"
+        mountPath = local.n8n_extra_ca_mount_path
         subPath   = "ca.crt"
         readOnly  = true
       },
@@ -349,6 +349,18 @@ locals {
   n8n_extra_ca_env = local.n8n_extra_ca_enabled ? [
     { name = "NODE_EXTRA_CA_CERTS", value = local.n8n_extra_ca_mount_path },
   ] : []
+
+  # Forced-rollout pod annotations, merged into the chart's top-level
+  # podAnnotations (n8n.tf), which the chart applies to every pod template
+  # (main, worker, webhook processor, and worker pools). The bundle is mounted
+  # with subPath, which never receives Secret updates, and Node reads the file
+  # only at start, so a changed PEM reaches a pod only through a restart. The
+  # hash (never the PEM) rolls the pods. Matches terraform-aws-n8n's
+  # checksum/extra-ca annotation. Empty by default so an untouched deployment
+  # renders byte-identical Helm values.
+  n8n_pod_annotations = local.n8n_extra_ca_enabled ? {
+    "checksum/extra-ca" = sha256(trimspace(var.n8n_extra_ca_pem))
+  } : {}
 
   # n8n reads DB_POSTGRESDB_SSL_ENABLED. Charts before 1.15.0 render
   # database.ssl.enabled into a ConfigMap key named DB_POSTGRESDB_SSL instead,
