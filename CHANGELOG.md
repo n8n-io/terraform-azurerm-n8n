@@ -51,21 +51,31 @@ old value, the first apply after upgrading changes:
   n8n's forward-only database migrations.
 - The KEDA chart from `2.15.0` to `2.21.0`, which fixes the critical
   CVE-2026-77524 (see Security).
-- AKS from Kubernetes `1.35` to `1.36`. Both node pools now follow
-  `aks_kubernetes_version`, so the upgrade drains and replaces every node.
-  A cluster whose pools lag behind its control plane plans that node
-  upgrade even without a version change.
+- AKS from Kubernetes `1.35` to `1.36`, for a module-managed cluster
+  (`create_aks = true`) that does not pin `aks_kubernetes_version`.
+  Verification-required (see [`docs/versioning.md`](./docs/versioning.md)).
+  With the new `aks_node_pools_follow_cluster_version` default (`true`),
+  both node pools follow the control plane, so the upgrade drains and
+  replaces every node, and a cluster whose pools lag behind its control
+  plane plans that node upgrade even without a version change. With
+  `aks_node_pools_follow_cluster_version = false` only the control plane
+  moves. With `create_aks = false` the module does not upgrade your
+  cluster.
 - The managed Redis eviction policy from `VolatileLRU` to `NoEviction`.
 - New PodDisruptionBudgets for the webhook-processor and worker
   Deployments, which conflict with any budget you already own for them.
 - The Blob role assignment, which is removed when no Azure storage mode
-  is in use.
+  is in use and `azure_blob_retain_read_access` is `false`. Set it to
+  `true` to keep read access to objects already stored in Azure.
 
 Back up Terraform state before the first `terraform init -upgrade`: the
 azurerm 5.x and helm 3.x state upgrades are one-way. To keep the
-Kubernetes and node upgrades in their own change window, pin
-`aks_kubernetes_version = "1.35"` for the first apply, then remove the pin
-in a separate apply.
+Kubernetes and node upgrades in their own change window on a
+module-managed cluster, pin `aks_kubernetes_version` to the value it is
+configured with now (`"1.35"` if you used the 0.1.0 default) for the
+first apply, and set
+`aks_node_pools_follow_cluster_version = false` if your node pools lag
+behind the control plane. Remove both in a separate apply.
 
 The entries below were written as each change merged. Where a later entry
 supersedes an earlier one, the later entry and this summary apply.
@@ -590,7 +600,8 @@ supersedes an earlier one, the later entry and this summary apply.
   provider cannot read 3.x state, and only restoring a backup taken before
   the first 3.x apply goes back. Back up state first, and decide before
   that apply: callers who must stay on helm provider 2.x should pin this
-  module to `~> 0.1.0` before upgrading. Exception for
+  module to `0.1.x` before upgrading (`version = "~> 0.1.0"` with the
+  registry source, or `?ref=0.1.0` with the Git source). Exception for
   callers' own `helm_release` resources (the module and examples set
   neither): helm provider 3.3.0 bug
   [hashicorp/terraform-provider-helm#1695](https://github.com/hashicorp/terraform-provider-helm/issues/1695)
