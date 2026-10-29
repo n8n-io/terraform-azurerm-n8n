@@ -153,8 +153,8 @@ Secrets, so root Terraform takes over the n8n ServiceAccount only when
 moves the workload-identity federated subject with it. Inputs contain existing
 Secret names only, never registry credentials. Keep `local.n8n_managed_env_names` and
 `local.n8n_managed_env_prefixes` synchronized with every environment variable
-the module or chart owns before adding to `config.extraEnv`. The one deliberate
-exception is `CREDENTIALS_OVERWRITE_DATA_FILE`: `n8n_credentials_overwrite_secret_ref`
+the module or chart owns before adding to `config.extraEnv`. There are two
+deliberate exceptions. The first is `CREDENTIALS_OVERWRITE_DATA_FILE`: `n8n_credentials_overwrite_secret_ref`
 (ported from `terraform-aws-n8n` PR #119) appends a `credentials-overwrite`
 Secret volume, a read-only mount at `/etc/n8n/credentials-overwrite`, and that
 env var after the caller's `n8n_extra_volumes` / `n8n_extra_volume_mounts`
@@ -163,6 +163,17 @@ entries, but its conflict checks (`CREDENTIALS_OVERWRITE_DATA[_FILE]` in
 the new variable and fire only while it is non-null, so callers already
 delivering the file through the escape hatches keep working. The module never
 reads the Secret's payload, so Secret rotation needs a manual rollout restart.
+The second is `NODE_EXTRA_CA_CERTS`: `n8n_extra_ca_pem` (ported from
+`terraform-aws-n8n`) stores the PEM in the module-managed
+`n8n-ca-bundle-secret`, appends a `ca-bundle` volume and a read-only subPath
+mount at `/etc/n8n-certs/ca-bundle.crt`, and sets that env var. Its conflict
+checks (the env var in every extra-env input, the reserved volume name and
+mount path) are validations on the variable that fire only while it is
+non-null. Because the module holds this payload, a changed PEM rolls the pods
+through a `checksum/extra-ca` entry in `local.n8n_pod_annotations`, the one
+seam for forced-rollout pod annotations; merge any future annotation source
+into that local rather than setting `podAnnotations` a second time in the Helm
+values `merge()`.
 
 **Data and observability configuration.** Root `n8n.tf` renders binary mode,
 historical binary modes, execution-data mode, Azure connection, metrics,
@@ -1186,6 +1197,7 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
 - `docs/troubleshooting.md`, `docs/post-deployment.md`, `docs/destroy-cleanup.md`,
   `docs/tls-rotation.md`, `docs/redis.md`, `docs/data-storage.md`,
   `docs/observability.md`, `docs/azure-key-vault-external-secrets.md`,
+  `docs/tls-proxy.md`,
   `docs/versioning.md`, and `docs/deletion-safety.md` cover operator-facing
   concerns that don't belong inline in `README.md`.
 - Inline comments in `.tf` files use the `# ── Section ──` banner style.

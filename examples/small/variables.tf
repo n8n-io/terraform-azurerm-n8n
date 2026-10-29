@@ -197,3 +197,10 @@ variable "common_tags" {
   type        = map(string)
   default     = {}
 }
+
+# no validation: the root module validates n8n_extra_ca_pem (certificates only, reserved names).
+variable "n8n_extra_ca_pem" {
+  description = "PEM-encoded CA certificate(s) n8n should trust for outbound TLS (TLS-inspecting proxy or private CA). Certificates only. Passed to the module; see https://github.com/n8n-io/terraform-azurerm-n8n/blob/main/docs/tls-proxy.md. Changing it rolls the n8n pods."
+  type        = string
+  default     = null
+}

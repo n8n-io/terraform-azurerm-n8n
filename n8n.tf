@@ -186,6 +186,32 @@ resource "kubernetes_secret" "n8n_task_runners" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
+# Caller-supplied extra CA (n8n_extra_ca_pem). Public certificates only.
+resource "kubernetes_secret_v1" "n8n_ca_bundle" {
+  count = local.n8n_extra_ca_enabled ? 1 : 0
+
+  metadata {
+    name      = local.n8n_extra_ca_secret_name
+    namespace = local.n8n_namespace
+  }
+
+  data = {
+    "ca.crt" = trimspace(var.n8n_extra_ca_pem)
+  }
+
+  # Deliberately no create_before_destroy, unlike terraform-aws-n8n.
+  # Terraform propagates create_before_destroy to every dependency and stores
+  # it in state, and this Secret depends (through kubernetes_namespace.n8n and
+  # time_sleep.aks_api_warmup) on the AKS cluster and node pools. A forced
+  # replacement of any of those fixed-name resources would then try to create
+  # the new one first and fail on the name, for every caller, even with
+  # n8n_extra_ca_pem unset. The cost of leaving it off: setting the input back
+  # to null deletes this Secret before the Helm update removes the mount, so
+  # old pods can log FailedMount until they are replaced (docs/tls-proxy.md).
+
+  depends_on = [kubernetes_namespace.n8n]
+}
+
 # ── Helm release ──────────────────────────────────────────────────────────────
 # The chart is pinned to 1.16.0 (see var.n8n_chart_version for the delta
 # since 1.11.0). The application and task-runner images share one n8n
@@ -542,6 +568,10 @@ resource "helm_release" "n8n" {
         # rejects both names in n8n_extra_env while this entry is active for
         # exactly that reason.
         local.n8n_credentials_overwrite_env,
+        # Trust bundle for a TLS-intercepting proxy or private CA. The volume
+        # and mount come from locals.tf; the name is rejected in every
+        # extra_env input while n8n_extra_ca_pem is set.
+        local.n8n_extra_ca_env,
         # Worker pools (n8n alpha). The feature is inert unless this is set on
         # the mains, which resolve a project's pool and enqueue to it, as well
         # as the workers, which read N8N_WORKER_POOL_NAME. Webhook pods ignore
@@ -681,7 +711,14 @@ resource "helm_release" "n8n" {
         ]
       }
     }
-  }))]
+    },
+    # Forced-rollout annotations (local.n8n_pod_annotations). The chart merges
+    # podAnnotations into every pod template but does not document the key in
+    # values.yaml; verified against the pinned chart and the worker-pools
+    # preview. Merged only when non-empty so a default deployment renders
+    # byte-identical values and sees no Helm diff.
+    length(local.n8n_pod_annotations) > 0 ? { podAnnotations = local.n8n_pod_annotations } : {},
+  ))]
 
   lifecycle {
     # A hard stop rather than a check: a chart that predates
@@ -706,6 +743,7 @@ resource "helm_release" "n8n" {
     azurerm_federated_identity_credential.n8n_workload,
     kubernetes_service_account_v1.n8n,
     kubernetes_secret.n8n_task_runners,
+    kubernetes_secret_v1.n8n_ca_bundle,
     # n8n only exits on an Azure connection failure while Azure is a write
     # mode; for azure_blob_retain_read_access it logs nothing and starts
     # without the Azure reader. Create the grant before the release rolls
