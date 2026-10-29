@@ -2301,6 +2301,24 @@ variable "n8n_prestop_sleep" {
   }
 }
 
+variable "n8n_webhook_pdb_enabled" {
+  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the webhook-processor Deployment, so a voluntary node drain (AKS node-image or Kubernetes upgrade, cluster-autoscaler scale-down, kubectl drain) evicts at most one webhook processor at a time. The n8n chart renders a budget for the main pods only (checked on 1.16.0), so without this every webhook processor can be stopped at once. maxUnavailable rather than minAvailable, so a single-replica Deployment can still be evicted: with n8n_webhook_hpa_min_replicas = 1 the budget permits evicting the only replica and protects nothing. With several replicas, a replica that is already unavailable (for example Pending) blocks further evictions until it recovers. Set to false to manage your own budget. Voluntary-disruption guard only: if a budget still blocks a node drain when the AKS drain timeout expires (30 minutes unless the node pool sets another), AKS fails a user-initiated upgrade with UpgradeFailed unless the upgrade is forced or the node pool's undrainable-node behavior is set to Cordon; a platform-initiated upgrade drains normally first and overrides the budget only when that drain times out or fails."
+  type        = bool
+  default     = true
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
+}
+
+variable "n8n_worker_pdb_enabled" {
+  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the default worker Deployment, so a voluntary node drain evicts at most one worker at a time. The n8n chart renders a budget for the main pods only (checked on 1.16.0). maxUnavailable rather than minAvailable, because minAvailable = 1 on a one-replica Deployment blocks every voluntary eviction and stalls drains: at the default n8n_worker_keda_min_replicas = 1 the budget therefore protects nothing until KEDA scales to two or more workers; raising the floor to 2 makes it effective at the cost of one more pod. Evicted workers still depend on n8n_termination_grace_period for in-flight executions. n8n_worker_pools Deployments are not covered. Set to false to manage your own budget."
+  type        = bool
+  default     = true
+  nullable    = false
+
+  # no validation: a plain bool needs no extra check.
+}
+
 variable "n8n_task_runners_enabled" {
   description = "Enable task-runner sidecars for isolated JavaScript and Python code execution. The advisory capacity model adds the runner CPU request to every main and worker replica when enabled."
   type        = bool

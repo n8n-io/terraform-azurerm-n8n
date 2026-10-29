@@ -207,7 +207,10 @@ resources and the same placement, so `1.16.0` joins
    prints `docker.n8n.io/n8nio/n8n:2.43.5` with `n8n_image_tag = null`, or
    your pinned tag.
 4. `kubectl get pdb -n n8n`: multi-main lists `n8n-main` with
-   `MIN AVAILABLE` 1; single-main lists no `n8n-main`.
+   `MIN AVAILABLE` 1; single-main lists no `n8n-main`. It also lists
+   `n8n-webhook-processor` when `n8n_webhook_pdb_enabled` is `true` and
+   `n8n-worker` when `n8n_worker_pdb_enabled` is `true`, each with
+   `MAX UNAVAILABLE` 1. These two are module-owned, not rendered by the chart.
 5. `kubectl get deploy n8n-worker -n n8n -o json | jq '.spec.template.spec.containers[] | select(.name == "task-runner") | .livenessProbe.httpGet'`
    prints path `/healthz` and port `5680`. Over the next few minutes the
    worker pods' restart counts stay flat and
