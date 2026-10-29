@@ -11,6 +11,23 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ### Added
 
+- Every example sets the azurerm provider's `partner_id` from a new
+  `partner_id` variable for Azure Customer Usage Attribution, the Azure
+  counterpart of `terraform-aws-n8n`'s partner tag. It defaults to n8n's
+  Microsoft-issued tracking GUID; set `partner_id = null` to opt out (the
+  provider then falls back to `ARM_PARTNER_ID`, and with neither set to
+  HashiCorp's own Terraform partner ID unless `disable_terraform_partner_id`
+  is true). A non-null default overrides `ARM_PARTNER_ID`. Microsoft does
+  not share attribution data with partners; see the README section for the
+  customer notice. The module itself has no attribution input because it
+  configures no providers. Confirmed live: every Azure Resource Manager
+  request of an `examples/small` apply carried `pid-<guid>` in the provider
+  user agent. No node launch-template tagging is needed: AKS applies cluster
+  `tags` to the node resource group's resources and a node pool's own `tags`
+  to its VM scale set. The live run confirmed this for the node resource
+  group and the `n8nuser` pool only; it found the system pool untagged,
+  which the fix below addresses (system pool not yet confirmed live). See `openspec/changes/add-azure-partner-attribution/`.
+
 - Seven opt-in AKS network and identity inputs, all defaulting to the
   module's current behavior so an existing caller sees no plan diff
   ([#28](https://github.com/n8n-io/terraform-azurerm-n8n/issues/28)):
@@ -870,6 +887,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   directly, is annotated as well. No module behavior or default changed.
 
 ### Fixed
+
+- The AKS system (default) node pool now carries `common_tags` and a
+  `Name = "<cluster>-system"` tag. AKS does not copy the cluster's `tags`
+  onto the default pool's VM scale set, so it had no tags at all, unlike
+  the `n8nuser` pool. Existing clusters see an in-place update of
+  `default_node_pool.tags`; tags are not a node pool rotation property in
+  the azurerm provider, so the pool should not be recreated. Not yet
+  confirmed live.
 
 - The two AGIC `Reader` role assignments no longer take their scope from
   `data.azurerm_resource_group.n8n`. A caller's module-level `depends_on`

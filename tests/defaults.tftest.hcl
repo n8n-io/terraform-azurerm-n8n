@@ -355,6 +355,25 @@ run "aks_cluster_resources_in_plan" {
   }
 
   assert {
+    condition = (
+      azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].tags["ManagedBy"] == "terraform" &&
+      azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].tags["Project"] == "n8n" &&
+      azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].tags["Environment"] == "test" &&
+      endswith(azurerm_kubernetes_cluster.n8n[0].default_node_pool[0].tags["Name"], "-aks-system")
+    )
+    error_message = "The system (default) node pool must carry local.common_tags and a Name tag, because AKS does not copy the cluster's tags onto its VM scale set."
+  }
+
+  assert {
+    condition = (
+      azurerm_kubernetes_cluster_node_pool.n8n_user[0].tags["ManagedBy"] == "terraform" &&
+      azurerm_kubernetes_cluster_node_pool.n8n_user[0].tags["Environment"] == "test" &&
+      endswith(azurerm_kubernetes_cluster_node_pool.n8n_user[0].tags["Name"], "-aks-user")
+    )
+    error_message = "The n8nuser node pool must carry local.common_tags and a Name tag."
+  }
+
+  assert {
     condition     = azurerm_kubernetes_cluster_node_pool.n8n_user[0].name == "n8nuser"
     error_message = "n8n_user node pool name must be 'n8nuser'."
   }

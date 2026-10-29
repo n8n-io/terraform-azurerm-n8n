@@ -268,6 +268,11 @@ run "customer_managed_everything_plan" {
     )
     error_message = "The rewrite must set X-Forwarded-For to {var_add_x_forwarded_for_proxy} so upstream proxy entries survive and the port is dropped."
   }
+
+  assert {
+    condition     = var.partner_id == "f1198e81-0323-4ce9-9753-ed1a8c596b19"
+    error_message = "partner_id must default to n8n's Microsoft-issued Customer Usage Attribution GUID."
+  }
 }
 
 run "customer_managed_everything_single_main_override" {
@@ -386,5 +391,237 @@ run "customer_managed_everything_single_main_override" {
   assert {
     condition     = module.n8n.aks_cluster_name == azurerm_kubernetes_cluster.existing.name
     error_message = "Selecting single-main must not change any caller-owned resource targeting."
+  }
+}
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}
+
+# Explicit null on a nullable variable with a non-null default is not
+# replaced by the default, so the validation itself must accept null.
+run "accepts_partner_id_opt_out" {
+  command = plan
+
+  variables {
+    partner_id = null
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncme-tls-test.vault.azure.net/secrets/n8ncme-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.Network/applicationGateways/n8ncme-appgw"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_tls_cert
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncme-appgw-tls"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.existing
+    override_during = plan
+    values = {
+      oidc_issuer_url = "https://oidc.prod-aks.azure.com/00000000-0000-0000-0000-000000000000/"
+      kube_config = [{
+        host                   = "https://n8ncme-shared-aks.hcp.eastus.azmk8s.io:443"
+        client_certificate     = "ZmFrZS1jZXJ0"
+        client_key             = "ZmFrZS1rZXk="
+        cluster_ca_certificate = "ZmFrZS1jYQ=="
+        password               = "fake-password"
+        username               = "fake-username"
+      }]
+    }
+  }
+
+  override_resource {
+    target          = azurerm_postgresql_flexible_server.existing
+    override_during = plan
+    values = {
+      id   = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/n8ncme-shared-pg"
+      fqdn = "n8ncme-shared-pg.postgres.database.azure.com"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_managed_redis.existing
+    override_during = plan
+    values = {
+      id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.Cache/redisEnterprise/n8ncme-shared-redis"
+      hostname = "n8ncme-shared-redis.eastus.redis.azure.net"
+      default_database = {
+        clustering_policy                  = "NoCluster"
+        client_protocol                    = "Encrypted"
+        access_keys_authentication_enabled = true
+        port                               = 10000
+        primary_access_key                 = "fake-primary-access-key"
+        secondary_access_key               = "fake-secondary-access-key"
+      }
+    }
+  }
+
+  override_resource {
+    target          = random_string.storage_suffix
+    override_during = plan
+    values = {
+      result = "abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_account.existing
+    override_during = plan
+    values = {
+      id                    = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmestabcdef"
+      primary_blob_endpoint = "https://n8ncmestabcdef.blob.core.windows.net/"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_container.existing
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmestabcdef/blobServices/default/containers/n8n-data"
+    }
+  }
+
+  override_resource {
+    target          = module.n8n.azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncme-workload"
+      client_id    = "44444444-4444-4444-4444-444444444444"
+      principal_id = "55555555-5555-5555-5555-555555555555"
+    }
+  }
+}
+
+# Uppercase input with the pid- prefix and -partnercenter suffix covers the
+# case-insensitive regex and both optional forms in one plan.
+run "accepts_partner_id_pid_partnercenter_form" {
+  command = plan
+
+  variables {
+    partner_id = "PID-F1198E81-0323-4CE9-9753-ED1A8C596B19-partnercenter"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncme-tls-test.vault.azure.net/secrets/n8ncme-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_application_gateway.n8n
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.Network/applicationGateways/n8ncme-appgw"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_user_assigned_identity.n8n_tls_cert
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncme-appgw-tls"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_kubernetes_cluster.existing
+    override_during = plan
+    values = {
+      oidc_issuer_url = "https://oidc.prod-aks.azure.com/00000000-0000-0000-0000-000000000000/"
+      kube_config = [{
+        host                   = "https://n8ncme-shared-aks.hcp.eastus.azmk8s.io:443"
+        client_certificate     = "ZmFrZS1jZXJ0"
+        client_key             = "ZmFrZS1rZXk="
+        cluster_ca_certificate = "ZmFrZS1jYQ=="
+        password               = "fake-password"
+        username               = "fake-username"
+      }]
+    }
+  }
+
+  override_resource {
+    target          = azurerm_postgresql_flexible_server.existing
+    override_during = plan
+    values = {
+      id   = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.DBforPostgreSQL/flexibleServers/n8ncme-shared-pg"
+      fqdn = "n8ncme-shared-pg.postgres.database.azure.com"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_managed_redis.existing
+    override_during = plan
+    values = {
+      id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.Cache/redisEnterprise/n8ncme-shared-redis"
+      hostname = "n8ncme-shared-redis.eastus.redis.azure.net"
+      default_database = {
+        clustering_policy                  = "NoCluster"
+        client_protocol                    = "Encrypted"
+        access_keys_authentication_enabled = true
+        port                               = 10000
+        primary_access_key                 = "fake-primary-access-key"
+        secondary_access_key               = "fake-secondary-access-key"
+      }
+    }
+  }
+
+  override_resource {
+    target          = random_string.storage_suffix
+    override_during = plan
+    values = {
+      result = "abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_account.existing
+    override_during = plan
+    values = {
+      id                    = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmestabcdef"
+      primary_blob_endpoint = "https://n8ncmestabcdef.blob.core.windows.net/"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_storage_container.existing
+    override_during = plan
+    values = {
+      id = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.Storage/storageAccounts/n8ncmestabcdef/blobServices/default/containers/n8n-data"
+    }
+  }
+
+  override_resource {
+    target          = module.n8n.azurerm_user_assigned_identity.n8n_workload
+    override_during = plan
+    values = {
+      id           = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncme-n8n-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/n8ncme-workload"
+      client_id    = "44444444-4444-4444-4444-444444444444"
+      principal_id = "55555555-5555-5555-5555-555555555555"
+    }
   }
 }

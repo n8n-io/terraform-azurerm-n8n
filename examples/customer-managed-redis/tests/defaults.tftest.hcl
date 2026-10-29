@@ -83,6 +83,11 @@ run "customer_managed_redis_plan" {
     condition     = output.blob_delete_retention_days == null
     error_message = "The default blob_delete_retention_days (null) must reach the module n8n call unchanged."
   }
+
+  assert {
+    condition     = var.partner_id == "f1198e81-0323-4ce9-9753-ed1a8c596b19"
+    error_message = "partner_id must default to n8n's Microsoft-issued Customer Usage Attribution GUID."
+  }
 }
 
 run "customer_managed_redis_single_main_override" {
@@ -169,5 +174,85 @@ run "customer_managed_redis_retention_overrides" {
   assert {
     condition     = output.blob_delete_retention_days == 14
     error_message = "Overriding blob_delete_retention_days must pass the new value through to the module n8n call."
+  }
+}
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}
+
+# Explicit null on a nullable variable with a non-null default is not
+# replaced by the default, so the validation itself must accept null.
+run "accepts_partner_id_opt_out" {
+  command = plan
+
+  variables {
+    partner_id = null
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncmr-tls-test.vault.azure.net/secrets/n8ncmr-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_managed_redis.existing
+    override_during = plan
+    values = {
+      id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmr-n8n-rg/providers/Microsoft.Cache/redisEnterprise/n8ncmr-shared-redis"
+      hostname = "n8ncmr-shared-redis.eastus.redis.azure.net"
+      default_database = {
+        clustering_policy                  = "NoCluster"
+        client_protocol                    = "Encrypted"
+        access_keys_authentication_enabled = true
+        port                               = 10000
+        primary_access_key                 = "fake-primary-access-key"
+        secondary_access_key               = "fake-secondary-access-key"
+      }
+    }
+  }
+}
+
+# Uppercase input with the pid- prefix and -partnercenter suffix covers the
+# case-insensitive regex and both optional forms in one plan.
+run "accepts_partner_id_pid_partnercenter_form" {
+  command = plan
+
+  variables {
+    partner_id = "PID-F1198E81-0323-4CE9-9753-ED1A8C596B19-partnercenter"
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8ncmr-tls-test.vault.azure.net/secrets/n8ncmr-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_managed_redis.existing
+    override_during = plan
+    values = {
+      id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/n8ncmr-n8n-rg/providers/Microsoft.Cache/redisEnterprise/n8ncmr-shared-redis"
+      hostname = "n8ncmr-shared-redis.eastus.redis.azure.net"
+      default_database = {
+        clustering_policy                  = "NoCluster"
+        client_protocol                    = "Encrypted"
+        access_keys_authentication_enabled = true
+        port                               = 10000
+        primary_access_key                 = "fake-primary-access-key"
+        secondary_access_key               = "fake-secondary-access-key"
+      }
+    }
   }
 }
