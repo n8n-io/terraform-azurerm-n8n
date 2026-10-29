@@ -227,3 +227,31 @@ run "small_tier_rejects_a_malformed_n8n_image_tag" {
 
   expect_failures = [var.n8n_image_tag]
 }
+
+# The input has no root output, so this only proves the example accepts and
+# keeps false; the root suite asserts what false does to both node pools.
+run "small_tier_node_pools_follow_cluster_version_opt_out" {
+  command = plan
+
+  variables {
+    aks_node_pools_follow_cluster_version = false
+  }
+
+  override_resource {
+    target          = module.tls_self_signed.azurerm_key_vault_certificate.self_signed
+    override_during = plan
+    values = {
+      secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
+    }
+  }
+
+  assert {
+    condition     = var.aks_node_pools_follow_cluster_version == false
+    error_message = "Setting aks_node_pools_follow_cluster_version = false must be accepted by the example."
+  }
+
+  assert {
+    condition     = module.n8n.n8n_url == "https://n8n.test.example.com"
+    error_message = "Opting out of node pool upgrades must not change unrelated example outputs."
+  }
+}

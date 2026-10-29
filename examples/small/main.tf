@@ -191,6 +191,8 @@ module "n8n" {
   aks_availability_zones       = local.tier.aks_availability_zones
   aks_api_authorized_ip_ranges = var.aks_api_authorized_ip_ranges
 
+  aks_node_pools_follow_cluster_version = var.aks_node_pools_follow_cluster_version
+
   pg_sku_name              = local.tier.pg_sku_name
   pg_storage_mb            = local.tier.pg_storage_mb
   pg_backup_retention_days = local.tier.pg_backup_retention_days

@@ -38,6 +38,7 @@ See [the tier comparison](../README.md) before choosing this size.
 |---|---|---|
 | `pg_backup_retention_days` | `7` | Days PostgreSQL Flexible Server retains automated backups. Raise it for longer point-in-time recovery coverage. |
 | `blob_delete_retention_days` | `null` (disabled) | Soft-delete retention window, in days, for the Blob storage account and container. Set it to recover an accidentally deleted blob or container within the window. |
+| `aks_node_pools_follow_cluster_version` | `true` | A Kubernetes version change also upgrades both node pools, which drains every node. Set it to `false` to upgrade only the control plane and upgrade the pools out of band. |
 
 See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for root-module settings to decide before the first `terraform apply`, and for changes that disrupt or replace resources on an existing deployment.
 
@@ -98,6 +99,7 @@ See [`docs/build-time-decisions.md`](../../docs/build-time-decisions.md) for roo
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_aks_api_authorized_ip_ranges"></a> [aks\_api\_authorized\_ip\_ranges](#input\_aks\_api\_authorized\_ip\_ranges) | Operator and CI IPv4 CIDRs allowed to reach the public AKS API. Empty leaves it unrestricted and is not recommended for production. | `list(string)` | `[]` | no |
 | <a name="input_aks_availability_zones"></a> [aks\_availability\_zones](#input\_aks\_availability\_zones) | Availability zones used by both AKS node pools. Restrict this list when the selected VM SKU is unavailable in one or more regional zones. | `list(string)` | <pre>[<br/>  "1",<br/>  "2",<br/>  "3"<br/>]</pre> | no |
+| <a name="input_aks_node_pools_follow_cluster_version"></a> [aks\_node\_pools\_follow\_cluster\_version](#input\_aks\_node\_pools\_follow\_cluster\_version) | Passed through to the root module's aks\_node\_pools\_follow\_cluster\_version. True (the default) makes a Kubernetes version change upgrade the control plane and then both node pools in the same apply, a surge upgrade that drains every node. Set false to upgrade only the control plane from Terraform and upgrade the pools out of band with `az aks nodepool upgrade`; switching to false plans no change. See docs/troubleshooting.md in the repository root. | `bool` | `true` | no |
 | <a name="input_aks_node_vm_size"></a> [aks\_node\_vm\_size](#input\_aks\_node\_vm\_size) | Azure VM SKU for both AKS node pools. Confirm regional and zonal availability for the selected subscription before applying. | `string` | `"Standard_D2s_v5"` | no |
 | <a name="input_blob_delete_retention_days"></a> [blob\_delete\_retention\_days](#input\_blob\_delete\_retention\_days) | Optional soft-delete retention window, in days, passed through to the root module's blob\_delete\_retention\_days. Null (the default) leaves Blob soft delete disabled, this example's current behavior. | `number` | `null` | no |
 | <a name="input_common_tags"></a> [common\_tags](#input\_common\_tags) | Additional Azure tags applied to example and module resources. | `map(string)` | `{}` | no |

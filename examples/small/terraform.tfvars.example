@@ -17,6 +17,10 @@ n8n_license_key      = "REPLACE_ME_WITH_YOUR_N8N_LICENSE_KEY"
 # Restrict the AKS API to operator and CI egress addresses in production.
 # aks_api_authorized_ip_ranges = ["203.0.113.10/32"]
 
+# Upgrade only the AKS control plane on a version change, and upgrade the node
+# pools out of band with `az aks nodepool upgrade`.
+# aks_node_pools_follow_cluster_version = false
+
 # Change this if another deployment already uses the same Azure names.
 # friendly_name_prefix = "n8nsmall"
 

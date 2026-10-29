@@ -61,6 +61,10 @@ ALLOW=$(cat <<'EOF_ALLOW'
 # n8n_extra_env escape hatch (used to pin N8N_INSTANCE_ID) through.
 -n8n_license_cert_secret_ref|medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
 -n8n_extra_env|medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
+# examples/small is the live-test root for aks_node_pools_follow_cluster_version
+# (PR #87): only it passes the input through, so its false path can be
+# tested live.
+-aks_node_pools_follow_cluster_version|medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
 # split-ingress's own two-gateway topology inputs.
 +admin_allowed_cidr_blocks|split-ingress
 +create_webhook_waf_policy|split-ingress

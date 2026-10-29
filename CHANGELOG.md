@@ -432,7 +432,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   control-plane-only behavior and upgrade the pools out of band; switching
   to `false` plans no change. With `create_aks = false` the input has no
   effect, and `false` triggers the non-failing
-  `check.aks_tuning_requires_module_managed_aks` warning. See
+  `check.aks_tuning_requires_module_managed_aks` warning. `examples/small`
+  passes the input through, so its `false` path can be tested live. See
   [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_kubernetes_version-upgrades-the-control-plane-and-both-node-pools).
 - **Breaking: the `hashicorp/helm` provider requirement is now `~> 3.0`**
   (was `~> 2.12`; 3.3.0 is locked) in the root module,
