@@ -9,6 +9,67 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-29
+
+This release adds opt-in AKS network, identity, and Key Vault controls,
+caller-supplied private DNS zones, a write-only PostgreSQL password path,
+PostgreSQL certificate verification, offline license activation, a
+private-mirror path for the n8n chart and images, a custom CA bundle for
+outbound TLS, and PodDisruptionBudgets for webhook processors and workers.
+It also moves every provider and chart pin to its current major or minor
+version. 0.2.0 is a minor release because several changes break existing
+callers.
+
+**Breaking changes.** Read each linked entry before upgrading from 0.1.0:
+
+- Terraform `>= 1.13` (was `>= 1.9`).
+- `hashicorp/azurerm` `>= 5.5.0, < 6.0.0` in the root and every example
+  (was `~> 4.0`). The TLS helper modules accept `>= 4.0, < 6.0.0`. Follow
+  [`docs/upgrading-azurerm-5.md`](./docs/upgrading-azurerm-5.md). The
+  intermediate `>= 4.39.0` and `>= 4.75.0` floors in the entries below were
+  never released.
+- `hashicorp/helm` `~> 3.0` (was `~> 2.12`), with new provider and
+  `helm_release` syntax in your own configuration.
+- `vancluever/acme` `~> 3.0` for `modules/tls-letsencrypt` (was `~> 2.16`).
+  Apply once with acme `3.1.0` before moving to a later 3.x release, or the
+  certificate is replaced.
+- `n8n_image_tag` defaults to `null` (was `"2.35.0"`), so the chart's
+  `appVersion` runs. Pin `n8n_image_tag = "2.35.0"` before upgrading to
+  keep your current n8n version.
+- `n8n_available_binary_data_modes` is removed in favor of
+  `azure_blob_retain_read_access`. It is kept for this release only, so
+  that a configuration that still sets it fails with a migration message.
+- `modules/tls-self-signed` replaces `validity_period_hours` with
+  `validity_in_months`.
+- `appgw_frontend_mode = "internal"` requires `appgw_private_ip_address`.
+
+**Default changes that touch running infrastructure.** Unless you pin the
+old value, the first apply after upgrading changes:
+
+- The n8n chart from `1.13.0` to `1.16.0`, and with the new `n8n_image_tag`
+  default, n8n itself to the chart's `appVersion` (`2.43.5`). This crosses
+  n8n's forward-only database migrations.
+- The KEDA chart from `2.15.0` to `2.21.0`, which fixes the critical
+  CVE-2026-77524 (see Security).
+- AKS from Kubernetes `1.35` to `1.36`. Both node pools now follow
+  `aks_kubernetes_version`, so the upgrade drains and replaces every node.
+  A cluster whose pools lag behind its control plane plans that node
+  upgrade even without a version change.
+- The managed Redis eviction policy from `VolatileLRU` to `NoEviction`.
+- New PodDisruptionBudgets for the webhook-processor and worker
+  Deployments, which conflict with any budget you already own for them.
+- The Blob role assignment, which is removed when no Azure storage mode
+  is in use.
+
+Back up Terraform state before the first `terraform init -upgrade`: the
+azurerm 5.x and helm 3.x state upgrades are one-way. To keep the
+Kubernetes and node upgrades in their own change window, pin
+`aks_kubernetes_version = "1.35"` for the first apply, then remove the pin
+in a separate apply.
+
+The entries below were written as each change merged. Where a later entry
+supersedes an earlier one, the later entry and this summary apply.
+
 ### Added
 
 - Every example sets the azurerm provider's `partner_id` from a new
@@ -673,8 +734,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   removed `N8N_AVAILABLE_BINARY_DATA_MODES` env entry. See
   `docs/upgrading-n8n.md`.
   - Chart `appVersion` moves from n8n `2.40.5` to `2.41.4` (n8n-hosting
-    #213). Inert here: this module always pins `n8n_image_tag` (default
-    stays `2.35.0`).
+    #213). This moves n8n only for callers with `n8n_image_tag = null`,
+    the default since the `n8n_image_tag` entry above.
   - No changes to the replica, KEDA, or task-runner templates;
     `deployment-main.yaml` is unchanged, so `1.14.0` joins
     `local.n8n_chart_has_worker_only_runners`.
@@ -825,8 +886,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   - No `deployment-*.yaml` template changed, so `1.15.0` joins
     `local.n8n_chart_has_worker_only_runners`.
   - #219 `extraObjects` and #222 `database.ssl.existingSecret` are new and
-    not exposed. Chart `appVersion` moves to `2.42.4`; inert here, since
-    `n8n_image_tag` stays pinned (`2.35.0`).
+    not exposed. Chart `appVersion` moves to `2.42.4`, which callers with
+    `n8n_image_tag = null` run.
 - **Breaking:** `modules/tls-self-signed` replaces `validity_period_hours`
   with `validity_in_months` (whole number, 1 to 120, default 12), matching
   the Key Vault certificate policy's own unit. The old input was converted
@@ -1067,8 +1128,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   rendered, so they advertised `http://<n8n_domain>:5678/` instead of the
   public HTTPS URL. The module now also renders the legacy `WEBHOOK_URL`,
   with the same value, when `n8n_image_tag` is older than `2.30.0`.
-  `2.30.0` and later images get only `N8N_WEBHOOK_URL`, so the default
-  `2.35.0` deployment renders no new variable. Same cut-over as
+  `2.30.0` and later images get only `N8N_WEBHOOK_URL`, and so does the
+  default `n8n_image_tag = null` on a current upstream chart. Same cut-over as
   `terraform-aws-n8n` #160.
 - `modules/tls-self-signed` now tags its Key Vault certificate with
   `ManagedBy = terraform`, `Project = n8n`, the caller's `common_tags`,
@@ -1668,5 +1729,6 @@ in your own subscription before relying on the one-apply lifecycle.
   `redis_exporter_enabled = true` roll the exporter pod once on the next
   apply; nothing changes for the default `false`.
 
-[Unreleased]: https://github.com/n8n-io/terraform-azurerm-n8n/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/n8n-io/terraform-azurerm-n8n/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/n8n-io/terraform-azurerm-n8n/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/n8n-io/terraform-azurerm-n8n/releases/tag/0.1.0

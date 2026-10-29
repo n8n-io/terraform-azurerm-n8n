@@ -84,7 +84,7 @@ The caller is responsible for providing:
 
 ```hcl
 module "n8n" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=0.1.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=0.2.0"
 
   location             = "eastus"
   resource_group_name  = azurerm_resource_group.n8n.name
@@ -580,10 +580,10 @@ bug-fix changes.
 | `0.MINOR.PATCH` -> `0.MINOR.PATCH+1` | Bug fixes, new optional inputs, new outputs, new resources whose absence would not affect existing callers. No removed or renamed inputs/outputs, no changed defaults that move infra, no changed resource addresses. |
 | `0.MINOR` -> `0.MINOR+1` | Anything else, including removed or renamed inputs, default changes that force resource replacement, refactored resource addresses, and bumped provider version floors. Each such change is called out in [`CHANGELOG.md`](./CHANGELOG.md) with an upgrade note. |
 
-Pin `version = "~> 0.1.0"` to auto-receive 0.1.x patches without accidentally
-crossing the 0.1 -> 0.2 boundary. Note that the three-component constraint
-`~> 0.1.0` resolves to `>= 0.1.0, < 0.2.0`, whereas the two-component `~> 0.1`
-would resolve to `>= 0.1, < 1.0` and let you cross minor boundaries
+Pin `version = "~> 0.2.0"` to auto-receive 0.2.x patches without accidentally
+crossing the 0.2 -> 0.3 boundary. Note that the three-component constraint
+`~> 0.2.0` resolves to `>= 0.2.0, < 0.3.0`, whereas the two-component `~> 0.2`
+would resolve to `>= 0.2, < 1.0` and let you cross minor boundaries
 unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
 
 ## Compatibility
