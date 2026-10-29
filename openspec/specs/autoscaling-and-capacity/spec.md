@@ -86,7 +86,7 @@ The module SHALL emit a non-failing plan diagnostic when configured pod CPU dema
 
 The module SHALL select single-main queue mode when `n8n_main_hpa_min_replicas = 1` and multi-main when it is greater than 1. The default minimum SHALL remain 2. Single-main SHALL not activate the multi-main feature and SHALL not require `feat:multipleMainInstances`; selected storage and other licensed features SHALL retain their independent entitlement requirements.
 
-Single-main SHALL render one main replica, a main HPA with minimum and maximum 1, a main `Recreate` strategy that clears previous rolling-update settings, and an enabled main PodDisruptionBudget with `minAvailable = 0`. Multi-main SHALL retain chart rollout defaults, the configured replica floor/ceiling, and a main PodDisruptionBudget protecting one available replica. Worker and webhook rollout strategies SHALL remain unchanged. The floating-license-detach default SHALL remain false on both paths.
+Single-main SHALL render one main replica, a main HPA with minimum and maximum 1, a main `Recreate` strategy that clears previous rolling-update settings, and SHALL send chart values for an enabled main PodDisruptionBudget with `minAvailable = 0`. Charts before `1.16.0` render that budget; charts from `1.16.0` render no main PodDisruptionBudget for one replica (n8n-hosting #228). Both permit voluntary eviction of the only main. Multi-main SHALL retain chart rollout defaults, the configured replica floor/ceiling, and a main PodDisruptionBudget protecting one available replica. Worker and webhook rollout strategies SHALL remain unchanged. The floating-license-detach default SHALL remain false on both paths.
 
 Documentation SHALL state that single-main upgrades and voluntary eviction cause editor, API, and scheduled-trigger downtime. It SHALL NOT describe `Recreate` as a general at-most-one guarantee for manual deletion, node failure, or forced operations.
 
@@ -95,7 +95,7 @@ Documentation SHALL state that single-main upgrades and voluntary eviction cause
 - **THEN** multi-main SHALL be disabled and the main Deployment SHALL request one replica
 - **AND** the main HPA SHALL have minimum and maximum 1
 - **AND** the rendered main strategy SHALL be `Recreate` without a `rollingUpdate` configuration
-- **AND** the main PDB SHALL allow voluntary eviction with `minAvailable = 0`
+- **AND** voluntary eviction of the only main SHALL be allowed: no main PDB on chart `1.16.0` and later, or a main PDB with `minAvailable = 0` on older charts
 
 #### Scenario: Preserve the default multi-main deployment
 - **WHEN** the caller leaves main topology inputs unchanged

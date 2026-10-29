@@ -49,7 +49,7 @@ The repository SHALL present itself as an unreleased module whose first publishe
 
 ### Requirement: Live deployment smoke test
 
-The smoke test SHALL verify AKS access, namespace and controller readiness, minimum ready replicas, PostgreSQL and Redis connectivity, Azure Blob access when configured, Application Gateway reachability on the managed-ingress path, HTTPS health, complete webhook route ownership, and n8n license validity. It SHALL determine main topology from the deployed configuration rather than the observed pod count. Single-main SHALL be checked against one ready main, HPA 1/1, `Recreate`, and PDB `minAvailable = 0` without requiring multi-main leader election. Multi-main SHALL retain configured replica-floor and leader-election checks. The script SHALL remain an explicitly invoked post-apply check outside CI.
+The smoke test SHALL verify AKS access, namespace and controller readiness, minimum ready replicas, PostgreSQL and Redis connectivity, Azure Blob access when configured, Application Gateway reachability on the managed-ingress path, HTTPS health, complete webhook route ownership, and n8n license validity. It SHALL determine main topology from the deployed configuration rather than the observed pod count. Single-main SHALL be checked against one ready main, HPA 1/1, `Recreate`, and either no main PDB (chart `1.16.0` and later) or a main PDB with `minAvailable = 0` (older charts), treating a failed PDB lookup as a failure, without requiring multi-main leader election. Multi-main SHALL retain configured replica-floor and leader-election checks. The script SHALL remain an explicitly invoked post-apply check outside CI.
 
 #### Scenario: Verify an applied small deployment
 - **WHEN** the smoke test runs after applying `examples/small`
@@ -58,7 +58,7 @@ The smoke test SHALL verify AKS access, namespace and controller readiness, mini
 #### Scenario: Verify an intentional single-main deployment
 - **GIVEN** the deployed configuration disables multi-main and the selected license covers the enabled features
 - **WHEN** the smoke test runs against a healthy single-main deployment
-- **THEN** it SHALL accept one ready main and validate the single-main HPA, strategy, and PDB
+- **THEN** it SHALL accept one ready main and validate the single-main HPA, strategy, and PDB state (absent or `minAvailable = 0`)
 - **AND** it SHALL NOT fail or warn merely because there is no second main or multi-main leader-election configuration
 
 #### Scenario: Reject an accidentally degraded multi-main deployment
@@ -104,7 +104,7 @@ Offline verification SHALL render the module's selected pinned n8n chart with mo
 
 #### Scenario: Verify topology manifests
 - **WHEN** the rendering checks inspect both topology branches
-- **THEN** they SHALL assert the main replica floor, HPA bounds, strategy and PDB selector/minimum
+- **THEN** they SHALL assert the main replica floor, HPA bounds, strategy, and whether the main PDB renders (no single-main PDB from chart `1.16.0`), plus its selector/minimum whenever it renders
 - **AND** they SHALL assert unchanged worker/webhook strategies and scaling ownership
 - **AND** single-main SHALL pass the pinned chart schema without a rolling-update field on its `Recreate` Deployment
 

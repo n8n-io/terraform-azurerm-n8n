@@ -271,7 +271,7 @@ the Deployment spec's `.value` field.
 |---|---|
 | `kubectl` cluster connectivity | `az aks get-credentials` populates a kubeconfig and `kubectl get nodes` succeeds against the AKS API server |
 | Namespace exists | The configured namespace is present |
-| Topology detection | Reads the rendered `n8n-main` HPA/Deployment/PDB to determine single-main (HPA 1/1, `Recreate`, PDB minAvailable 0) vs. multi-main (HPA floor > 1, rolling update, PDB minAvailable 1) — never inferred from the current main pod count |
+| Topology detection | Reads the rendered `n8n-main` HPA/Deployment/PDB to determine single-main (HPA 1/1, `Recreate`, no main PDB on chart `1.16.0` and later or PDB minAvailable 0 on older charts) vs. multi-main (HPA floor > 1, rolling update, PDB minAvailable 1) — never inferred from the current main pod count |
 | Main / worker / webhook-processor pod health | Each deployment is at its detected-topology floor (`MAIN_MIN` = 1 for single-main or the rendered HPA floor for multi-main, `WORKER_MIN=1`, `WEBHOOK_MIN=2` — match the `kubernetes_horizontal_pod_autoscaler_v2.webhook_processor` `min_replicas = 2`) |
 | Application version | `n8n --version` (and the pod's image tag) agree across main, worker, and webhook-processor pods — catches a half-finished rollout before any functional check runs |
 | Leader election | Multi-main expects `N8N_MULTI_MAIN_SETUP_ENABLED=true` on main pods plus leadership activity in main logs; single-main expects the flag unset/false and skips the log check (single-main runs no Redis leader election) |
