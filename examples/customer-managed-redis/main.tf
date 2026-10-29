@@ -67,7 +67,7 @@ resource "azurerm_subnet" "appgw" {
 }
 
 resource "azurerm_subnet" "postgres" {
-  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. This subnet is delegated to Microsoft.DBforPostgreSQL/flexibleServers for VNet integration; this example's module call sets public_network_access_enabled = false (via the root module's postgres_subnet_id wiring) and uses this delegated subnet plus a private DNS zone for connectivity, but no NSG restricts traffic inside the subnet.
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. This subnet is delegated to Microsoft.DBforPostgreSQL/flexibleServers for VNet integration; the module's azurerm_postgresql_flexible_server sets public_network_access_enabled = false and uses this delegated subnet plus a private DNS zone for connectivity (see database.tf), but no NSG restricts traffic inside the subnet.
   name                 = "postgres"
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
@@ -193,9 +193,9 @@ resource "random_string" "key_vault_suffix" {
 resource "azurerm_key_vault" "tls" {
   # checkov:skip=CKV_AZURE_42:Teardown-friendly example setting: purge_protection_enabled = false is deliberate so the soft-deleted lab TLS vault that `terraform destroy` leaves behind can be purged manually and its name reused.
   # checkov:skip=CKV_AZURE_110:Same requirement as CKV_AZURE_42 above: purge protection is intentionally disabled for teardown-friendly lab usage.
-  # checkov:skip=CKV_AZURE_109:This vault has no network_acls block, so it allows public access from all networks; it only stores a self-signed TLS cert created by modules/tls-self-signed and consumed via app_gateway_tls_cert_secret_id, so a firewall restriction is unnecessary lab convenience, not production data.
-  # checkov:skip=CKV_AZURE_189:Same requirement as CKV_AZURE_109: public_network_access_enabled defaults to true and no network_acls restrict it, consistent with the lab-only self-signed TLS cert this vault holds.
-  # checkov:skip=CKV2_AZURE_32:A private endpoint only helps with restricted network access, which this vault does not implement (see CKV_AZURE_189 above).
+  # checkov:skip=CKV_AZURE_109:Known gap: this vault has no network_acls block, so it allows public access from all networks; it only stores a self-signed TLS cert created by modules/tls-self-signed and consumed via app_gateway_tls_cert_secret_id, so a firewall restriction is unnecessary lab convenience, not production data.
+  # checkov:skip=CKV_AZURE_189:Known gap: same as CKV_AZURE_109, public_network_access_enabled defaults to true and no network_acls restrict it, consistent with the lab-only self-signed TLS cert this vault holds.
+  # checkov:skip=CKV2_AZURE_32:Known gap: a private endpoint only helps with restricted network access, which this vault does not implement (see CKV_AZURE_189 above).
   name                       = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
   resource_group_name        = azurerm_resource_group.network.name
   location                   = azurerm_resource_group.network.location
