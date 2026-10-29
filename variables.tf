@@ -92,7 +92,7 @@ variable "aks_subnet_id" {
 # AKS controls" requirement).
 
 variable "aks_kubernetes_version" {
-  description = "Kubernetes version for the AKS cluster (e.g. 1.36, 1.36.5). Must be a version Azure currently supports on the standard plan in the target region; check with `az aks get-versions --location <region>` and the AKS support-plan matrix at https://learn.microsoft.com/azure/aks/supported-kubernetes-versions. Defaults to 1.36; bump deliberately. On a module-managed cluster (create_aks = true), changing it on an existing cluster upgrades only the control plane, leaving both node pools on their Kubernetes version (see docs/troubleshooting.md). With create_aks = false the module does not manage the cluster, so this input has no effect (an explicit value only triggers a non-failing check). Versions outside the standard support window are LTS-only and require a Premium-tier cluster to provision."
+  description = "Kubernetes version for the AKS cluster (e.g. 1.36, 1.36.5). Must be a version Azure currently supports on the standard plan in the target region; check with `az aks get-versions --location <region>` and the AKS support-plan matrix at https://learn.microsoft.com/azure/aks/supported-kubernetes-versions. Defaults to 1.36; bump deliberately. On a module-managed cluster (create_aks = true), changing it on an existing cluster upgrades the control plane and then, while aks_node_pools_follow_cluster_version is true (the default), the system and n8nuser node pools in place, one after the other: a surge upgrade that drains every node and restarts n8n pods. Minor versions cannot be skipped, and AKS cannot downgrade. With create_aks = false the module does not manage the cluster, so this input has no effect (an explicit value only triggers a non-failing check). Versions outside the standard support window are LTS-only and require a Premium-tier cluster to provision."
   type        = string
   default     = "1.36"
 
@@ -100,6 +100,15 @@ variable "aks_kubernetes_version" {
     condition     = can(regex("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$", var.aks_kubernetes_version))
     error_message = "aks_kubernetes_version must be a Kubernetes version like 1.36 or 1.36.5."
   }
+}
+
+variable "aks_node_pools_follow_cluster_version" {
+  description = "When true (the default), both AKS node pools (system and n8nuser) set `orchestrator_version` to aks_kubernetes_version, so a version change upgrades the control plane first and then each pool in place, in the same apply. AKS surge-upgrades a pool: it adds aks_node_upgrade_max_surge extra nodes per pool at a time (an integer is used as is; a percentage is rounded up against the pool's node count, so the default 10% is one node for pools of 1 to 10 nodes), then cordons, drains, and replaces each node, so n8n pods restart; with n8n_main_hpa_min_replicas = 1 the editor is briefly unavailable, and a single worker replica pauses queue processing while it moves. A minor alias (1.36) resolves to the latest GA patch at upgrade time; a later patch release does not upgrade the nodes or change the plan. A cluster whose pools already run the cluster's version plans no change when the version does not change; a cluster whose control plane was upgraded earlier with the pools left behind (as every earlier version of this module did) plans the pool upgrades on the first apply with this setting on, even though aks_kubernetes_version did not change, and that upgrade drains every node. Set false to manage only the control plane from Terraform and upgrade the pools out of band with `az aks nodepool upgrade` (see docs/troubleshooting.md); switching from true to false plans no change. Has no effect when create_aks = false."
+  type        = bool
+  default     = true
+  nullable    = false
+
+  # no validation: a plain bool needs no additional constraint.
 }
 
 variable "aks_sku_tier" {

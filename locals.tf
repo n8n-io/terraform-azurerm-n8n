@@ -78,6 +78,18 @@ locals {
   aks_system_node_count_min_effective = coalesce(var.aks_system_node_count_min, var.aks_node_count_min)
   aks_system_node_count_max_effective = coalesce(var.aks_system_node_count_max, var.aks_node_count_max)
 
+  # ── AKS node pool Kubernetes version ──────────────────────────────────────
+  # orchestrator_version for both node pools (aks.tf). The cluster version is
+  # passed through verbatim, so a minor alias ("1.36") stays a minor alias:
+  # AKS resolves it to the latest GA patch at upgrade time and keeps the
+  # alias as the pool's orchestratorVersion, which is also what a pool
+  # created with no orchestrator_version stores (the cluster's
+  # kubernetes_version), so unchanged clusters plan no diff. null leaves the
+  # attribute unset; the provider marks it Optional+Computed, so the pools
+  # keep whatever version Azure reports and only the control plane follows
+  # aks_kubernetes_version.
+  aks_node_pool_orchestrator_version = var.aks_node_pools_follow_cluster_version ? var.aks_kubernetes_version : null
+
   # The aks_cluster UserAssigned identity (aks.tf) replaces SystemAssigned
   # for either of two reasons: a BYO private DNS zone (above), or KMS etcd
   # encryption, which AKS rejects on a SystemAssigned identity ("Azure Key
