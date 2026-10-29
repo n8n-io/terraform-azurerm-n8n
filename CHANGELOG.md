@@ -457,7 +457,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   [`modules/tls-letsencrypt/README.md`](./modules/tls-letsencrypt/README.md#upgrading-from-acme-provider-2x).
   New deployments are not affected.
 - **Breaking (minor-required): the `azurerm` provider requirement is now
-  `>= 5.5.0, < 6.0.0`** (was `>= 4.39.0, < 5.0.0`; locks resolve `5.9.0`;
+  `>= 5.5.0, < 6.0.0`** (was `>= 4.39.0, < 5.0.0` in the root and
+  `>= 4.75.0, < 5.0.0` in the examples; locks resolve `5.9.0`;
   [#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)). No
   configuration works on both majors, so move the module and the provider
   together. 5.5.0 is the first release with
@@ -465,7 +466,10 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   its private DNS VNet links and the private DNS A record by
   `private_dns_zone_id` (the A record's zone ID is rebuilt the way 4.x
   stored it: the provider's subscription ID when the zone ID's subscription
-  matches it ignoring case, and the zone name lowercased), sets AKS
+  matches it ignoring case, and the zone name lowercased; a zone ID that
+  names a different subscription now targets that subscription, where 4.x
+  always wrote into the provider's subscription, so records 4.x created for
+  such a zone ID are replaced), sets AKS
   `node_provisioning_profile { mode = "Manual" }` (required in 5.0), uses
   `public_network_access = "Disabled"` on the storage account, ignores PostgreSQL `storage_type`
   (new in 5.4.0, ForceNew with no state migration: a refreshed plan fills it

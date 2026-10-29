@@ -104,18 +104,28 @@ module "n8n" {
 }
 ```
 
-This module declares `required_providers` (`azurerm`, `kubernetes`, `helm`, `random`, `time`, `kubectl`) but never configures a provider — that is always the caller's job. Configure AzureRM to use Microsoft Entra ID for Storage data-plane operations because the module disables storage-account shared keys by default:
+This module declares `required_providers` (`azurerm`, `kubernetes`, `helm`, `random`, `time`, `kubectl`) but never configures a provider — that is always the caller's job. Configure AzureRM to use Microsoft Entra ID for Storage data-plane operations because the module disables storage-account shared keys by default. azurerm 5.x registers no Azure resource providers by default, so on a subscription that has not run these services before, list the ones the module uses (or set `resource_provider_registrations = "legacy"`); otherwise the first apply fails with `MissingSubscriptionRegistration`. Registering a provider needs the `Microsoft.Resources/subscriptions/providers/register/action` permission:
 
 ```hcl
 provider "azurerm" {
   storage_use_azuread = true
 
+  resource_providers_to_register = [
+    "Microsoft.Authorization",
+    "Microsoft.Cache",
+    "Microsoft.Compute",
+    "Microsoft.ContainerService",
+    "Microsoft.DBforPostgreSQL",
+    "Microsoft.KeyVault",
+    "Microsoft.ManagedIdentity",
+    "Microsoft.Network",
+    "Microsoft.Storage",
+  ]
+
   features {
-    # Recommended, needs azurerm 4.75.0 or later (remove this line on older
-    # providers, which reject it as an unsupported argument): a resource whose
-    # create fails on Azure's side stays in state as tainted instead of being
-    # orphaned, so the next apply replaces it and destroy removes it. See
-    # docs/troubleshooting.md.
+    # Recommended: a resource whose create fails on Azure's side stays in
+    # state as tainted instead of being orphaned, so the next apply replaces
+    # it and destroy removes it. See docs/troubleshooting.md.
     persist_id_on_create_before_polling_for_completion = true
   }
 }

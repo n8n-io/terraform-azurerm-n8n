@@ -49,11 +49,16 @@ check_latest() {
 check_constraint "~> 3.0" "3.3.0" 0               # kubernetes, random
 check_constraint "~> 2.12" "3.3.0" 1              # helm: a major bump is outside
 check_constraint "~> 2.12" "2.17.0" 0
-check_constraint ">= 4.39.0, < 5.0.0" "5.9.0" 1   # azurerm root
+check_constraint ">= 5.5.0, < 6.0.0" "5.9.0" 0    # azurerm root and examples
+check_constraint ">= 5.5.0, < 6.0.0" "5.4.0" 1
+check_constraint ">= 5.5.0, < 6.0.0" "6.0.0" 1    # upper bound is exclusive
+check_constraint ">= 4.0, < 6.0.0" "4.81.0" 0     # azurerm in modules/tls-*
+check_constraint ">= 4.0, < 6.0.0" "5.9.0" 0
+check_constraint ">= 4.39.0, < 5.0.0" "5.9.0" 1   # previous azurerm root pin
 check_constraint ">= 4.39.0, < 5.0.0" "4.81.0" 0
 check_constraint ">= 4.39.0, < 5.0.0" "4.38.9" 1
 check_constraint ">= 4.39.0, < 5.0.0" "5.0.0" 1   # upper bound is exclusive
-check_constraint "~> 4.0" "5.9.0" 1               # azurerm in modules/tls-*
+check_constraint "~> 4.0" "5.9.0" 1               # previous azurerm pin in modules/tls-*
 check_constraint ">= 1.14" "1.19.0" 0             # kubectl
 check_constraint ">= 1.14" "1.13.9" 1
 check_constraint "~> 0.14" "0.14.0" 0             # time
