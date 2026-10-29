@@ -604,8 +604,11 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   that restarts n8n pods, and the next plan is expected to stay clean
   because `orchestrator_version` is computed. The module sets no
   `automatic_upgrade_channel` (none) and no maintenance windows, and leaves
-  `node_os_upgrade_channel` at its `NodeImage` default, so AKS never changes
-  the Kubernetes version by itself. A cluster that pins
+  `node_os_upgrade_channel` at its `NodeImage` default, so the cluster is
+  not opted into routine Kubernetes auto-upgrades. The exception is a
+  version that is out of support: from June 1, 2027, AKS upgrades a cluster
+  still on an unsupported version after its 60-day platform support grace
+  period, regardless of channel and outside maintenance windows. A cluster that pins
   `aks_kubernetes_version` sees no change. With `create_aks = false` the
   input has no effect, but an explicit `"1.35"` now triggers the non-failing
   `check.aks_tuning_requires_module_managed_aks` warning; remove it. See
