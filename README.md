@@ -84,7 +84,7 @@ The caller is responsible for providing:
 
 ```hcl
 module "n8n" {
-  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=0.1.0"
+  source = "github.com/n8n-io/terraform-azurerm-n8n?ref=0.2.0"
 
   location             = "eastus"
   resource_group_name  = azurerm_resource_group.n8n.name
@@ -580,10 +580,13 @@ bug-fix changes.
 | `0.MINOR.PATCH` -> `0.MINOR.PATCH+1` | Bug fixes, new optional inputs, new outputs, new resources whose absence would not affect existing callers. No removed or renamed inputs/outputs, no changed defaults that move infra, no changed resource addresses. |
 | `0.MINOR` -> `0.MINOR+1` | Anything else, including removed or renamed inputs, default changes that force resource replacement, refactored resource addresses, and bumped provider version floors. Each such change is called out in [`CHANGELOG.md`](./CHANGELOG.md) with an upgrade note. |
 
-Pin `version = "~> 0.1.0"` to auto-receive 0.1.x patches without accidentally
-crossing the 0.1 -> 0.2 boundary. Note that the three-component constraint
-`~> 0.1.0` resolves to `>= 0.1.0, < 0.2.0`, whereas the two-component `~> 0.1`
-would resolve to `>= 0.1, < 1.0` and let you cross minor boundaries
+With the Terraform Registry source (`source = "n8n-io/n8n/azurerm"`), pin
+`version = "~> 0.2.0"` to auto-receive 0.2.x patches without accidentally
+crossing the 0.2 -> 0.3 boundary. Terraform accepts `version` only for
+registry sources: with the Git source shown in [Usage](#usage), pin
+`?ref=0.2.0` instead and move the ref to each patch tag yourself. Note that the three-component constraint
+`~> 0.2.0` resolves to `>= 0.2.0, < 0.3.0`, whereas the two-component `~> 0.2`
+would resolve to `>= 0.2, < 1.0` and let you cross minor boundaries
 unintentionally. This contract goes away at 1.0.0 in favor of standard SemVer.
 
 ## Compatibility
@@ -677,8 +680,9 @@ The state upgrade is one-way, so decide before the first apply. Once the 3.x
 provider has written the state, the 2.x provider fails to plan with `Resource
 instance managed by newer provider version`, and the only way back is to
 restore a state backup taken before that apply. Back up the state first. If
-you must stay on helm provider 2.x, pin this module to `~> 0.1.0`, the last
-release that requires `~> 2.12`, before you upgrade.
+you must stay on helm provider 2.x, pin this module to `0.1.x`, the last
+release that requires `~> 2.12`, before you upgrade: `version = "~> 0.1.0"`
+with the registry source, or `?ref=0.1.0` with the Git source.
 
 One exception affects only your own `helm_release` resources; the module and
 the examples set neither argument. Helm provider 3.3.0 has an open bug
