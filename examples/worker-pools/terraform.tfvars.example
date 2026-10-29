@@ -39,5 +39,6 @@ n8n_chart_version = "1.11.0-preview.workerpools.1"
 # PEM
 # n8n_extra_env = [
 #   { name = "HTTPS_PROXY", value = "http://proxy.corp.example:3128" },
+#   { name = "HTTP_PROXY", value = "http://proxy.corp.example:3128" },
 #   { name = "NO_PROXY", value = "localhost,127.0.0.1,.svc,.cluster.local,.privatelink.postgres.database.azure.com,.blob.core.windows.net" },
 # ]

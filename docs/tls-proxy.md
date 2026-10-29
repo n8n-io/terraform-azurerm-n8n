@@ -6,7 +6,7 @@ independent inputs.
 | Proxy position | What breaks without configuration | Module inputs | You still own |
 | --- | --- | --- | --- |
 | **Outbound** (n8n to the internet, TLS-inspecting) | Node rejects the proxy's re-signed certificates (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`) | `n8n_extra_ca_pem` for the proxy CA, plus `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` in `n8n_extra_env` | The proxy, its allow-list, and which hosts bypass it |
-| **Inbound** (client to the ingress, TLS-terminating, WAF or CDN) | n8n attributes the client to the wrong proxy when the hop count is too low | `n8n_proxy_hops`; `app_gateway_tls_cert_secret_id` for a private-CA origin certificate; `n8n_webhook_url` if the public host differs | The proxy's certificate, its trust of the origin certificate, forwarding `X-Forwarded-For` / `X-Forwarded-Proto` |
+| **Inbound** (client to the ingress, TLS-terminating, WAF or CDN) | n8n attributes the client to the wrong proxy when the hop count is too low | `n8n_proxy_hops`; with the module-managed gateway, `app_gateway_tls_cert_secret_id` for a private-CA origin certificate; `n8n_webhook_url` if the public host differs | The proxy's certificate, its trust of the origin certificate, forwarding `X-Forwarded-For` / `X-Forwarded-Proto` |
 | **Both** | Both rows | Set both groups | Both |
 
 ## Outbound: trust the proxy's CA
@@ -71,7 +71,10 @@ n8n_proxy_hops = 2 # customer proxy + Application Gateway
 - For a proxy that verifies the origin certificate against a private CA,
   supply a certificate from that CA through `app_gateway_tls_cert_secret_id`
   (the `modules/tls-self-signed` and `modules/tls-letsencrypt` helpers produce
-  this value).
+  this value). This applies to the module-managed Application Gateway only:
+  with `create_ingress = false` the input is not used, so configure the origin
+  certificate on your own ingress and the proxy's trust of it there (see
+  [`ingress-options.md`](./ingress-options.md)).
 - The module cannot configure the proxy. It must send `X-Forwarded-For` and
   `X-Forwarded-Proto`, and its `Host` header must match the hostname the
   gateway serves.
