@@ -469,15 +469,27 @@ kubectl -n n8n get pods -l app.kubernetes.io/component=main
 # 2. Tail logs for the migration-race signature.
 kubectl -n n8n logs -l app.kubernetes.io/component=main --tail=200 | grep -E 'already exists|CREATE INDEX'
 
-# 3. Bounce all three n8n Deployments so every pod comes up against the migrated schema.
+# 3. Bounce the three n8n Deployments so their pods come up against the migrated schema.
 kubectl -n n8n rollout restart \
   deployment/n8n-main deployment/n8n-worker deployment/n8n-webhook-processor
 for d in n8n-main n8n-worker n8n-webhook-processor; do
-  kubectl -n n8n rollout status deployment/$d --timeout=5m
+  kubectl -n n8n rollout status "deployment/$d" --timeout=5m || break
 done
 ```
 
-If the UI still hangs after a manual restart, the migration is probably wedged in `pg_stat_activity`. Connect from a bootstrap pod (see the uuid-ossp section above), run `SELECT pid, state, query FROM pg_stat_activity WHERE state != 'idle';`, and `pg_cancel_backend(pid)` any session stuck on `CREATE INDEX`. Then restart the three Deployments again as in step 3 above. If the race recurs on subsequent applies, raise `var.n8n_helm_post_install_settle_seconds` (e.g. to 120) so the Ingress wait window comfortably outlasts the chart's leader-election bootstrap.
+If `var.n8n_worker_pools` is non-empty, also bounce the pool Deployments:
+
+```bash
+# 3a. Bounce the worker-pool Deployments.
+kubectl -n n8n rollout restart deployment -l app.kubernetes.io/component=worker-group
+for d in $(kubectl -n n8n get deployment -l app.kubernetes.io/component=worker-group -o name); do
+  kubectl -n n8n rollout status "$d" --timeout=5m || break
+done
+```
+
+Each loop stops checking further Deployments after its first rollout failure. If that happens, investigate the failed Deployment before you run the next step.
+
+If the UI still hangs after a manual restart, the migration is probably wedged in `pg_stat_activity`. Connect from a bootstrap pod (see the uuid-ossp section above), run `SELECT pid, state, query FROM pg_stat_activity WHERE state != 'idle';`, and `pg_cancel_backend(pid)` any session stuck on `CREATE INDEX`. Then restart the Deployments again as in steps 3 and 3a above. If the race recurs on subsequent applies, raise `var.n8n_helm_post_install_settle_seconds` (e.g. to 120) so the Ingress wait window comfortably outlasts the chart's leader-election bootstrap.
 
 ## Main topology changes report competing leaders or missing execution data
 
