@@ -278,11 +278,11 @@ The Standard and Premium tiers add an hourly charge per cluster. Premium is a pr
 
 ## Changing `aks_kubernetes_version` upgrades only the AKS control plane
 
-**Validation scope.** Not yet observed live. This entry is derived from the `azurerm` provider source (4.81.0) and the Azure CLI's `az aks upgrade` implementation.
+**Validation scope.** One live run (swedencentral, `examples/small`, `azurerm` 4.81.0) moved an existing cluster from `1.35` to `1.36` and confirmed the control-plane-only behavior below; see [`qualification-runs/2026-10-14-aks-1.36-swedencentral.md`](./qualification-runs/2026-10-14-aks-1.36-swedencentral.md). The out-of-band node pool upgrade in step 3 of the resolution was not run; that part is derived from the `azurerm` provider source and the Azure CLI's `az aks nodepool upgrade` implementation.
 
 **Symptom**
 
-Expected outcome (not yet observed live): after an apply that changed `aks_kubernetes_version` on an existing cluster (for example, moving to a module release whose default is `1.36` without pinning the input), `az aks show --query currentKubernetesVersion` reports the new version, but `kubectl get nodes` still shows the previous minor (for example, `v1.35.x`) on both the system and `n8nuser` pools. The plan showed one in-place change, `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`, and no change to either pool.
+After an apply that changed `aks_kubernetes_version` on an existing cluster (for example, moving to a module release whose default is `1.36` without pinning the input), `az aks show --query currentKubernetesVersion` reports the new version, but `kubectl get nodes` still shows the previous minor (for example, `v1.35.x`) on both the system and `n8nuser` pools. The plan showed one in-place change, `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`, and no change to either pool.
 
 **Root cause**
 
@@ -294,7 +294,7 @@ A caller that sets `aks_kubernetes_version` explicitly sees no change from a new
 
 **Resolution**
 
-1. Change the version in its own apply, without other module changes, and confirm the plan contains only `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`. Minor versions cannot be skipped: move one minor per apply.
+1. Change the version in its own apply, without other module changes, and confirm the plan contains only `kubernetes_version` on `azurerm_kubernetes_cluster.n8n`. When a module release moves this default together with other defaults, pin the old version first (for example `aks_kubernetes_version = "1.35"`), apply the rest of the release, then remove the pin in a separate apply. Minor versions cannot be skipped: move one minor per apply.
 2. If an apply that combined the upgrade with Kubernetes or Helm changes fails with `ServiceUnavailable`, `InternalError`, or a connection timeout, wait until `kubectl get --raw=/readyz` returns `ok`, then run `terraform plan` and `terraform apply` again.
 3. Upgrade the node pools outside Terraform, one at a time, with `az aks nodepool upgrade --resource-group <rg> --cluster-name <cluster> --name system --kubernetes-version <version>`, then `--name n8nuser`. This is a surge upgrade: AKS adds `aks_node_upgrade_max_surge` nodes (one per pool at the default sizing, which needs vCPU quota headroom), then cordons, drains, and replaces each node, so n8n pods restart. The next `terraform plan` is expected to show no change, because `orchestrator_version` is computed.
 

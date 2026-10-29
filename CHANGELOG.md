@@ -592,12 +592,14 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   note:** a module-managed cluster (`create_aks = true`) that does not pin
   `aks_kubernetes_version` plans one in-place change on the next apply,
   `kubernetes_version` `1.35` to `1.36` on `azurerm_kubernetes_cluster.n8n`.
-  Expected behavior, derived from the `azurerm` 4.81.0 source and the
-  Azure CLI's `az aks upgrade` implementation and not yet observed live:
-  the provider upgrades only the control plane; neither node pool sets
+  One live run (swedencentral, `examples/small`, `azurerm` 4.81.0; see
+  `docs/qualification-runs/2026-10-14-aks-1.36-swedencentral.md`) confirmed
+  that the provider upgrades only the control plane: neither node pool sets
   `orchestrator_version`, so both keep `1.35` (AKS allows three minors of
   skew), no node is drained, and no pod restarts. The API server can be
-  briefly unavailable during the upgrade, so apply it on its own. The pools
+  briefly unavailable during the upgrade, so apply it on its own: to take
+  the rest of this release first, pin `aks_kubernetes_version = "1.35"`,
+  then remove the pin in a separate apply. The pools
   can be upgraded afterwards with `az aks nodepool upgrade`, a surge upgrade
   that restarts n8n pods, and the next plan is expected to stay clean
   because `orchestrator_version` is computed. The module sets no
