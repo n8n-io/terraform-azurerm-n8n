@@ -121,12 +121,14 @@ variable "blob_delete_retention_days" {
   }
 }
 
+# no validation: the root module validates n8n_extra_ca_pem (certificates only, reserved names).
 variable "n8n_extra_ca_pem" {
-  description = "PEM-encoded CA certificate(s) n8n should trust for outbound TLS (TLS-inspecting proxy or private CA). Certificates only. Passed to the module; see https://github.com/n8n-io/terraform-azurerm-n8n/blob/main/docs/tls-proxy.md. Restart the n8n deployments after changing it."
+  description = "PEM-encoded CA certificate(s) n8n should trust for outbound TLS (TLS-inspecting proxy or private CA). Certificates only. Passed to the module; see https://github.com/n8n-io/terraform-azurerm-n8n/blob/main/docs/tls-proxy.md. Changing it rolls the n8n pods."
   type        = string
   default     = null
 }
 
+# no validation: the root module rejects reserved and duplicate names.
 variable "n8n_extra_env" {
   description = "Additional non-secret environment variables for the main, worker, and webhook-processor application containers (not the task-runner sidecars), for example HTTP_PROXY, HTTPS_PROXY, and NO_PROXY for an egress proxy. Passed to the module; see https://github.com/n8n-io/terraform-azurerm-n8n/blob/main/docs/tls-proxy.md."
   type = list(object({

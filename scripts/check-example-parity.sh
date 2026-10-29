@@ -57,10 +57,9 @@ ALLOW=$(cat <<'EOF_ALLOW'
 # does not apply.
 -blob_delete_retention_days|customer-managed-storage customer-managed-everything
 # examples/small is the live-test root for offline license activation
-# (PR #51), so only it passes the certificate Secret reference and the
-# n8n_extra_env escape hatch (used to pin N8N_INSTANCE_ID) through.
+# (PR #51), so only it passes the certificate Secret reference through.
+# (Every example passes n8n_extra_env through for egress proxy settings.)
 -n8n_license_cert_secret_ref|medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
--n8n_extra_env|medium large split-ingress worker-pools customer-managed-cluster customer-managed-redis customer-managed-storage customer-managed-everything
 # examples/small is the live-test root for aks_node_pools_follow_cluster_version
 # (PR #87): only it passes the input through, so its false path can be
 # tested live.
