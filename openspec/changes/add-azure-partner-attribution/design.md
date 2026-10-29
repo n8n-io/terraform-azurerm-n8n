@@ -31,7 +31,9 @@ sourced from `ARM_PARTNER_ID`.
    examples to match.
 4. **No node tagging work.** AWS #200 exists because EKS does not propagate
    node-group tags to EC2. AKS applies cluster tags to the node resource
-   group's resources and node-pool tags to the VMSS; verify on the live run.
+   group's resources and node-pool tags to each pool's VMSS. The live run
+   confirmed this and found the system pool's VMSS untagged, because the
+   cluster's tags do not reach it; `default_node_pool` now sets its own.
 
 ## Risks
 

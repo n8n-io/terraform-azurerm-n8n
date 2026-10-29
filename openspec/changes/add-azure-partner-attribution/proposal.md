@@ -28,6 +28,9 @@ caller's provider block can set it. n8n's tracking GUID
   PostgreSQL or Redis. It was removed (see design.md).
 - Non-goal: AWS #200's node launch-template tagging has no Azure equivalent
   to port; AKS propagates cluster and node-pool `tags`, which `aks.tf` sets.
+  The live run found the system pool untagged, so `default_node_pool` now
+  sets `tags` too (a small root fix, in scope because it is the Azure
+  equivalent of #200's goal).
 
 ## Capabilities
 

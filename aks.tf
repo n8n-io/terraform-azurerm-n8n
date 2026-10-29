@@ -116,6 +116,11 @@ resource "azurerm_kubernetes_cluster" "n8n" {
     upgrade_settings {
       max_surge = var.aks_node_upgrade_max_surge
     }
+
+    # AKS does not copy the cluster's tags onto the default pool's VM scale
+    # set, so the pool needs its own, like n8n_user. Changing them updates
+    # the agent pool in place: tags are not a rotation property.
+    tags = merge(local.common_tags, { Name = "${local.cluster_name}-system" })
   }
 
   auto_scaler_profile {

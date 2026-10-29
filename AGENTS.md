@@ -854,8 +854,10 @@ Every example declares `partner_id` (default n8n's Microsoft-issued GUID, `null`
 `provider "azurerm"` block; the example variable-parity check requires all
 nine to match. Do not port AWS #200's node launch-template tagging: AKS
 applies cluster `tags` to the node resource group's resources and node-pool
-`tags` to the VMSS, two separate scopes, and `aks.tf` sets both. Live
-confirmation is still outstanding (tasks in the change).
+`tags` to each pool's VMSS, separate scopes, and `aks.tf` sets all three
+(cluster, `default_node_pool`, `n8n_user`). The cluster's `tags` do not reach
+the default pool's VMSS: the PR #88 live run found it untagged until
+`default_node_pool` got its own `tags`.
 
 ## What this repo is
 
