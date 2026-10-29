@@ -286,7 +286,7 @@ run "split_ingress_plan" {
   assert {
     condition = alltrue([
       for s in [azurerm_subnet.appgw_webhook, azurerm_subnet.appgw_admin] :
-      contains(s.service_endpoints, "Microsoft.KeyVault")
+      contains(s.service_endpoint[*].service, "Microsoft.KeyVault")
     ])
     error_message = "Both gateway subnets must carry the Microsoft.KeyVault service endpoint."
   }

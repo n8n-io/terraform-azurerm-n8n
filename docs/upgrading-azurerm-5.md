@@ -38,7 +38,8 @@ The examples apply the same changes to the resources they own, and also:
 
 - Their subnets use a `service_endpoint { service = "Microsoft.Storage" }`
   block instead of `service_endpoints = ["Microsoft.Storage"]`, which 5.0
-  removed.
+  removed. The two `examples/split-ingress` gateway subnets do the same for
+  `Microsoft.KeyVault`.
 - Their `azurerm` provider block lists `resource_providers_to_register`,
   because 5.0 registers no resource providers by default (see below).
 - `examples/large` and `examples/customer-managed-everything` also ignore

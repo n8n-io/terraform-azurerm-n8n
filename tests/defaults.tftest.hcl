@@ -8472,6 +8472,7 @@ run "private_dns_record_zone_id_uses_lowercased_zone_name" {
 
   variables {
     appgw_frontend_mode       = "internal"
+    appgw_private_ip_address  = "10.0.4.10"
     create_private_dns_record = true
     private_dns_zone_id       = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/N8NTest-DNS-RG/providers/Microsoft.Network/privateDnsZones/Internal.Example.com"
     n8n_domain                = "n8n.internal.example.com"
@@ -8516,6 +8517,7 @@ run "private_dns_record_zone_id_uses_the_provider_subscription_casing" {
 
   variables {
     appgw_frontend_mode       = "internal"
+    appgw_private_ip_address  = "10.0.4.10"
     create_private_dns_record = true
     private_dns_zone_id       = "/subscriptions/AAAAAAAA-1111-1111-1111-111111111111/resourceGroups/n8ntest-dns-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
     n8n_domain                = "n8n.internal.example.com"
@@ -8553,6 +8555,7 @@ run "private_dns_record_zone_id_keeps_a_different_subscription" {
 
   variables {
     appgw_frontend_mode       = "internal"
+    appgw_private_ip_address  = "10.0.4.10"
     create_private_dns_record = true
     private_dns_zone_id       = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/connectivity-rg/providers/Microsoft.Network/privateDnsZones/internal.example.com"
     n8n_domain                = "n8n.internal.example.com"
