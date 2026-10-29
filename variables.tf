@@ -92,13 +92,13 @@ variable "aks_subnet_id" {
 # AKS controls" requirement).
 
 variable "aks_kubernetes_version" {
-  description = "Kubernetes version for the AKS cluster (e.g. 1.35, 1.35.6). Must be a version Azure currently supports on the standard plan in the target region — check with `az aks get-versions --location <region>` and the AKS support-plan matrix at https://learn.microsoft.com/azure/aks/supported-kubernetes-versions. Defaults to 1.35; bump deliberately. Versions outside the standard support window are LTS-only and require a Premium-tier cluster to provision."
+  description = "Kubernetes version for the AKS cluster (e.g. 1.36, 1.36.5). Must be a version Azure currently supports on the standard plan in the target region; check with `az aks get-versions --location <region>` and the AKS support-plan matrix at https://learn.microsoft.com/azure/aks/supported-kubernetes-versions. Defaults to 1.36; bump deliberately. On a module-managed cluster (create_aks = true), changing it on an existing cluster upgrades only the control plane, leaving both node pools on their Kubernetes version (see docs/troubleshooting.md). With create_aks = false the module does not manage the cluster, so this input has no effect (an explicit value only triggers a non-failing check). Versions outside the standard support window are LTS-only and require a Premium-tier cluster to provision."
   type        = string
-  default     = "1.35"
+  default     = "1.36"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$", var.aks_kubernetes_version))
-    error_message = "aks_kubernetes_version must be a Kubernetes version like 1.35 or 1.35.6."
+    error_message = "aks_kubernetes_version must be a Kubernetes version like 1.36 or 1.36.5."
   }
 }
 
@@ -1311,7 +1311,7 @@ variable "private_endpoint_subnet_id" {
 # ── Controllers and base n8n release ─────────────────────────────────────
 
 variable "keda_chart_version" {
-  description = "KEDA Helm chart version from the official kedacore repository, passed through to modules/controllers. Pinning the controller keeps the CRD shape used by the root kubectl_manifest deterministic. KEDA tests the 2.21.0 default on Kubernetes 1.34 through 1.36 (https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility), which covers the aks_kubernetes_version default of 1.35 and the next minor. On any cluster outside that window, pin a release whose tested window covers it (2.20.2 on 1.33, 2.19.0 on 1.32, 2.18.3 on 1.31) as a temporary hold. None of those releases carries the fix for KEDA's critical CVE-2026-77524 (GHSA-637c-6jxx-4rwm, privilege escalation from namespace admin to cluster admin through TriggerAuthentication, https://github.com/advisories/GHSA-637c-6jxx-4rwm), which affects every release before 2.21.0; the 2.21.0 default is the first patched release. Compare it with the Kubernetes version of the cluster KEDA runs on: aks_kubernetes_version when create_aks = true, or the caller-managed cluster's own version when create_aks = false. KEDA is cluster-wide, so changing this upgrades the controller for every ScaledObject and ScaledJob in the cluster. Ignored when install_keda = false: the module installs no KEDA then, and the owner of that installation chooses its version."
+  description = "KEDA Helm chart version from the official kedacore repository, passed through to modules/controllers. Pinning the controller keeps the CRD shape used by the root kubectl_manifest deterministic. KEDA tests the 2.21.0 default on Kubernetes 1.34 through 1.36 (https://keda.sh/docs/2.21/operate/cluster/#kubernetes-compatibility), which covers the aks_kubernetes_version default of 1.36 but not the next minor, 1.37. On any cluster outside that window, pin a release whose tested window covers it (2.20.2 on 1.33, 2.19.0 on 1.32, 2.18.3 on 1.31) as a temporary hold. None of those releases carries the fix for KEDA's critical CVE-2026-77524 (GHSA-637c-6jxx-4rwm, privilege escalation from namespace admin to cluster admin through TriggerAuthentication, https://github.com/advisories/GHSA-637c-6jxx-4rwm), which affects every release before 2.21.0; the 2.21.0 default is the first patched release. Compare it with the Kubernetes version of the cluster KEDA runs on: aks_kubernetes_version when create_aks = true, or the caller-managed cluster's own version when create_aks = false. KEDA is cluster-wide, so changing this upgrades the controller for every ScaledObject and ScaledJob in the cluster. Ignored when install_keda = false: the module installs no KEDA then, and the owner of that installation chooses its version."
   type        = string
   default     = "2.21.0"
 

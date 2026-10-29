@@ -550,8 +550,8 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `2.21.0` is the first patched release for KEDA's critical CVE-2026-77524
   (see Security below). KEDA 2.15 is tested only on
   Kubernetes 1.28 to 1.30, outside the module's `aks_kubernetes_version`
-  default of `1.35`; 2.21 is tested on 1.34 to 1.36, which also covers the
-  next AKS minor. **Upgrade note:**
+  default at the time (`1.35`); 2.21 is tested on 1.34 to 1.36, which also
+  covers the new `1.36` default, but not `1.37`. **Upgrade note:**
   with `install_keda = true` (the default), a caller that does not pin
   `keda_chart_version` gets one in-place change on the next apply,
   `module.controllers.helm_release.keda[0]`, which
@@ -582,6 +582,37 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   chart version, or `null` when `install_keda = false`). See
   `docs/upgrading-n8n.md`, "Moving from KEDA chart 2.15.0 to 2.21.0"
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
+- **Default `aks_kubernetes_version` bumped to `1.36`** (was `1.35`)
+  ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
+  Verification-required (see [`docs/versioning.md`](./docs/versioning.md)).
+  AKS made `1.36` GA in June 2026 and supports it until
+  June 2027 (long-term support to June 2028). The `2.21.0` KEDA default is
+  tested on Kubernetes 1.34 to 1.36, the pinned n8n and KEDA charts accept
+  it, and Kubernetes 1.36 removes no API version they render. **Upgrade
+  note:** a module-managed cluster (`create_aks = true`) that does not pin
+  `aks_kubernetes_version` plans one in-place change on the next apply,
+  `kubernetes_version` `1.35` to `1.36` on `azurerm_kubernetes_cluster.n8n`.
+  One live run (swedencentral, `examples/small`, `azurerm` 4.81.0; see
+  `docs/qualification-runs/2026-10-14-aks-1.36-swedencentral.md`) confirmed
+  that the provider upgrades only the control plane: neither node pool sets
+  `orchestrator_version`, so both keep `1.35` (AKS allows three minors of
+  skew), no node is drained, and no pod restarts. The API server can be
+  briefly unavailable during the upgrade, so apply it on its own: to take
+  the rest of this release first, pin `aks_kubernetes_version = "1.35"`,
+  then remove the pin in a separate apply. The pools
+  can be upgraded afterwards with `az aks nodepool upgrade`, a surge upgrade
+  that restarts n8n pods, and the next plan is expected to stay clean
+  because `orchestrator_version` is computed. The module sets no
+  `automatic_upgrade_channel` (none) and no maintenance windows, and leaves
+  `node_os_upgrade_channel` at its `NodeImage` default, so the cluster is
+  not opted into routine Kubernetes auto-upgrades. The exception is a
+  version that is out of support: from June 1, 2027, AKS upgrades a cluster
+  still on an unsupported version after its 60-day platform support grace
+  period, regardless of channel and outside maintenance windows. A cluster that pins
+  `aks_kubernetes_version` sees no change. With `create_aks = false` the
+  input has no effect, but an explicit `"1.35"` now triggers the non-failing
+  `check.aks_tuning_requires_module_managed_aks` warning; remove it. See
+  [`docs/troubleshooting.md`](./docs/troubleshooting.md#changing-aks_kubernetes_version-upgrades-only-the-aks-control-plane).
 - **Default `n8n_chart_version` bumped to `1.15.0`** (was `1.14.0`), the
   same pin as `terraform-aws-n8n` #190 and `terraform-google-n8n` #39
   ([#57](https://github.com/n8n-io/terraform-azurerm-n8n/issues/57)).
