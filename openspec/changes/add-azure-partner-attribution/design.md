@@ -34,9 +34,15 @@ sourced from `ARM_PARTNER_ID`.
 ## Risks
 
 - Provider `partner_id` is not assertable in `terraform test`; examples only
-  test input validation. The live run must confirm the user agent carries
-  `pid-<guid>` (confirmed live) and that usage appears in Partner Center
-  (pending, owned by the partnerships team).
+  test input validation. The live run confirmed the user agent carries
+  `pid-<guid>`. Microsoft-side attribution itself cannot be checked from a
+  partner report: Microsoft states that CUA consumption data is not shared
+  externally with partners. Only Microsoft, through the partnerships team's
+  channel, can confirm it.
+- Microsoft documents known issues that cause AKS and VM scale set usage to
+  be under-reported through CUA. Most of this module's compute runs on AKS
+  node pools (VM scale sets), so attributed usage can understate the real
+  footprint.
 - Callers of the root module must set `partner_id` themselves; nothing in the
   module enforces it.
 
