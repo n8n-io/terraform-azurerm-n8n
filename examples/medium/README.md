@@ -31,6 +31,8 @@ This example also enables the AKS Key Vault Secrets Provider add-on, without gra
 - A new Key Vault (`azurerm_key_vault.kms`) with purge protection is created. Azure cannot turn purge protection off again, so after a `terraform destroy` this vault cannot be purged and its name stays reserved until the 7-day soft-delete retention ends.
 - The Key Vault Secrets Provider add-on is installed on the cluster.
 
+The same apply also moves `helm_release.n8n` to chart `1.16.0`, the module's new default. The plan shows only that `version` change, but with `n8n_image_tag = null` (this example's default) it also upgrades n8n from `2.42.4` to `2.43.5` across its database migrations, and every n8n pod rolls once. Back up PostgreSQL first, or set `n8n_image_tag = "2.42.4"` to upgrade the chart alone. See [Moving from chart 1.15.0 to 1.16.0](../../docs/upgrading-n8n.md#moving-from-chart-1150-to-1160).
+
 The root default writes binary data to private Azure Blob and requires the separate `feat:binaryDataAz` n8n Enterprise entitlement. Select `database` instead if that entitlement is unavailable; PostgreSQL is the durable queue-mode fallback. 0.1.0 does not support n8n's inline-memory `default` mode or a shared-filesystem mode.
 
 ## Cost and operational caveats
