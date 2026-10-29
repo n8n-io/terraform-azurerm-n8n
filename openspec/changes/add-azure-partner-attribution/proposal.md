@@ -22,15 +22,18 @@ caller's provider block can set it. n8n's tracking GUID
 - README section documenting the route for root-module callers, the opt-out
   (including `disable_terraform_partner_id`), and the customer notice
   Microsoft asks partners to publish.
-- No root input, resource or output. An earlier draft added an empty
+- No root input, resource or output for attribution. An earlier draft added an empty
   `pid-<guid>` ARM deployment; review showed attribution follows the
   deployment that creates the resources, so it would not attribute AKS,
   PostgreSQL or Redis. It was removed (see design.md).
-- Non-goal: AWS #200's node launch-template tagging has no Azure equivalent
-  to port; AKS propagates cluster and node-pool `tags`, which `aks.tf` sets.
-  The live run found the system pool untagged, so `default_node_pool` now
-  sets `tags` too (a small root fix, in scope because it is the Azure
-  equivalent of #200's goal).
+- Root fix in `aks.tf`: `default_node_pool` now sets `tags`
+  (`common_tags` plus `Name = "<cluster>-system"`). The live run found the
+  system pool's VM scale set untagged, because the cluster's `tags` do not
+  reach it. This is the Azure equivalent of AWS #200's goal (tagged nodes).
+  The fix is not yet confirmed live (task 3.6).
+- Non-goal: AWS #200's node launch-template tagging itself has no Azure
+  equivalent to port; AKS applies node-pool `tags` to each pool's VM scale
+  set.
 
 ## Capabilities
 
@@ -38,12 +41,18 @@ caller's provider block can set it. n8n's tracking GUID
 
 - `deployment-examples`: every example exposes `partner_id` and wires it into
   its azurerm provider.
+- AKS node pools: the system (default) pool carries the module's tags, like
+  the `n8nuser` pool.
 
 ## Impact
 
 - Nine example roots (variable, provider block, tests, README reference).
-- Root module unchanged.
+- Root module: one change in `aks.tf`, `tags` on `default_node_pool`, plus
+  a test assertion. Existing clusters see an in-place update of the system
+  pool's tags; `tags` is not a node pool rotation property in the azurerm
+  provider, so the pool should not be recreated (not yet confirmed live,
+  task 3.6).
 - Example users send n8n's partner ID by default; `partner_id = null` opts
   out. The live run confirmed the user agent; Microsoft-side attribution is
-  unverified (task 3.4). No resource or plan change either way: `partner_id` only changes the
-  provider's user agent.
+  unverified (task 3.4). `partner_id` causes no resource or plan change
+  either way: it only changes the provider's user agent.

@@ -23,9 +23,10 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   configures no providers. Confirmed live: every Azure Resource Manager
   request of an `examples/small` apply carried `pid-<guid>` in the provider
   user agent. No node launch-template tagging is needed: AKS applies cluster
-  `tags` to the node resource group's resources and node-pool `tags` to each
-  pool's VM scale set (confirmed live, which surfaced the untagged system
-  pool fixed below). See `openspec/changes/add-azure-partner-attribution/`.
+  `tags` to the node resource group's resources and a node pool's own `tags`
+  to its VM scale set. The live run confirmed this for the node resource
+  group and the `n8nuser` pool only; it found the system pool untagged,
+  which the fix below addresses (system pool not yet confirmed live). See `openspec/changes/add-azure-partner-attribution/`.
 
 - Seven opt-in AKS network and identity inputs, all defaulting to the
   module's current behavior so an existing caller sees no plan diff
@@ -891,8 +892,9 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
   `Name = "<cluster>-system"` tag. AKS does not copy the cluster's `tags`
   onto the default pool's VM scale set, so it had no tags at all, unlike
   the `n8nuser` pool. Existing clusters see an in-place update of
-  `default_node_pool.tags`; tags are not a node pool rotation property, so
-  the pool is not recreated.
+  `default_node_pool.tags`; tags are not a node pool rotation property in
+  the azurerm provider, so the pool should not be recreated. Not yet
+  confirmed live.
 
 - The two AGIC `Reader` role assignments no longer take their scope from
   `data.azurerm_resource_group.n8n`. A caller's module-level `depends_on`

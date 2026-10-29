@@ -29,11 +29,12 @@ sourced from `ARM_PARTNER_ID`.
    provider's accepted forms, case-insensitively, with `-partnercenter` valid
    only after `pid-<guid>`. The variable-parity script requires all nine
    examples to match.
-4. **No node tagging work.** AWS #200 exists because EKS does not propagate
-   node-group tags to EC2. AKS applies cluster tags to the node resource
-   group's resources and node-pool tags to each pool's VMSS. The live run
-   confirmed this and found the system pool's VMSS untagged, because the
-   cluster's tags do not reach it; `default_node_pool` now sets its own.
+4. **Node tagging through node-pool `tags`.** AWS #200 exists because EKS
+   does not propagate node-group tags to EC2. The f462a1f live run found the
+   module tags on the node resource group's resources and on the `n8nuser`
+   VMSS, which sets its own `tags`, but none on the system pool's VMSS: the
+   cluster's `tags` do not reach it. `default_node_pool` now sets its own
+   `tags`; live verification of the system pool is pending (task 3.6).
 
 ## Risks
 
