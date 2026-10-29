@@ -9011,6 +9011,23 @@ run "warns_when_aks_sku_tier_is_inert_on_existing_cluster" {
   expect_failures = [check.aks_tuning_requires_module_managed_aks]
 }
 
+# The CHANGELOG upgrade note for the 1.36 default: a create_aks = false caller
+# still passing the previous default explicitly gets the non-failing warning.
+run "warns_when_aks_kubernetes_version_is_inert_on_existing_cluster" {
+  command = plan
+
+  variables {
+    create_aks                                   = false
+    create_ingress                               = false
+    existing_aks_cluster_name                    = "shared-aks"
+    existing_aks_resource_group_name             = "shared-aks-rg"
+    existing_aks_cluster_prerequisites_confirmed = true
+    aks_kubernetes_version                       = "1.35"
+  }
+
+  expect_failures = [check.aks_tuning_requires_module_managed_aks]
+}
+
 run "aks_tuning_check_stays_silent_on_default_external_path" {
   command = plan
 
