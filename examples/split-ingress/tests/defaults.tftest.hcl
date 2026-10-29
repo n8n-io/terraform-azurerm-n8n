@@ -552,3 +552,13 @@ run "retention_days_override_flows_through" {
     error_message = "An explicit blob_delete_retention_days override must flow through to the root module."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}

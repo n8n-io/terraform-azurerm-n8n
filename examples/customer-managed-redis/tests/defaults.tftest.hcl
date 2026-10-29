@@ -171,3 +171,13 @@ run "customer_managed_redis_retention_overrides" {
     error_message = "Overriding blob_delete_retention_days must pass the new value through to the module n8n call."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}

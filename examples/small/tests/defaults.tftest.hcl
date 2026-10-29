@@ -252,3 +252,13 @@ run "small_tier_node_pools_follow_cluster_version_opt_out" {
     error_message = "Opting out of node pool upgrades must not change unrelated example outputs."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}

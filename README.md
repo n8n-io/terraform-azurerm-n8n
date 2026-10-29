@@ -19,6 +19,7 @@ An **n8n Enterprise license key is required** (`var.n8n_license_key`), or an off
 - [Worker pools (early alpha)](#worker-pools-early-alpha)
 - [Managed-service topologies](#managed-service-topologies)
 - [Customer-managed infrastructure](#customer-managed-infrastructure)
+- [Azure Customer Usage Attribution](#azure-customer-usage-attribution)
 - [Ingress, DNS, and TLS](#ingress-dns-and-tls)
 - [Sizing and capacity](#sizing-and-capacity)
 - [Examples](#examples)
@@ -503,6 +504,12 @@ Every switch defaults to module ownership, so a caller who sets none of these ge
 For landing zones that keep `privatelink` private DNS zones in a central subscription, `create_postgres_private_dns_zone`, `create_redis_private_dns_zone`, and `create_blob_private_dns_zone` (each `true` by default) can be set to `false` to attach the managed PostgreSQL server or Redis/Blob private endpoint to an existing zone passed as `postgres_private_dns_zone_id`, `redis_private_dns_zone_id`, or `blob_private_dns_zone_id`. See [Caller-supplied private DNS zones](./docs/customer-managed-infrastructure.md#caller-supplied-private-dns-zones), including the steps for switching an existing deployment.
 
 See [`docs/customer-managed-infrastructure.md`](./docs/customer-managed-infrastructure.md) for the full ownership convention, every layer's exact reference/attestation contract, direct `modules/controllers` composition, provider wiring for an existing AKS cluster, the AWS-only capabilities this module intentionally excludes, and the pre-release upgrade boundary for existing test deployments.
+
+## Azure Customer Usage Attribution
+
+Microsoft associates Azure usage with a partner through [Customer Usage Attribution](https://learn.microsoft.com/en-us/partner-center/marketplace-offers/azure-partner-customer-usage-attribution) (CUA), a tracking ID registered in Partner Center. It is not tag-based. For Terraform, Microsoft documents setting the azurerm provider's `partner_id` argument (a GUID, `pid-<guid>`, or `pid-<guid>-partnercenter`), or the `ARM_PARTNER_ID` environment variable, in the caller's own provider configuration.
+
+This module configures no providers, so it has no attribution input. Every example's `provider "azurerm"` block sets `partner_id = var.partner_id == null ? null : lower(var.partner_id)`, and the variable defaults to n8n's Microsoft-issued tracking GUID so usage is attributed to n8n. Set `partner_id = null` to opt out; the provider then falls back to `ARM_PARTNER_ID`. Because provider configuration wins over the environment, a non-null default overrides `ARM_PARTNER_ID`. Callers of the root module set `partner_id` in their own provider block the same way. It reports usage attribution only and is separate from n8n licensing and telemetry.
 
 ## Ingress, DNS, and TLS
 

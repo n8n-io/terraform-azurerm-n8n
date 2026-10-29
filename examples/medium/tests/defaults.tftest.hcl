@@ -194,3 +194,13 @@ run "medium_tier_rejects_a_malformed_n8n_image_tag" {
 
   expect_failures = [var.n8n_image_tag]
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}

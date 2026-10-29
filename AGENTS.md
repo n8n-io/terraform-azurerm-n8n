@@ -841,6 +841,22 @@ binds looser than `and`, so `[...] | length == 0 and (.spec...)` evaluates
 the right-hand side against the filtered array, not the document;
 parenthesize each side.
 
+## Azure Customer Usage Attribution (`add-azure-partner-attribution`)
+
+Azure's counterpart of the AWS sibling's `aws-apn-id` tag is CUA, which is
+not tag-based. Microsoft's documented Terraform route is the azurerm
+provider's `partner_id` (or `ARM_PARTNER_ID`), which only the caller's
+provider configuration can set, so the module has no attribution input. An
+earlier draft created an empty `pid-<guid>` ARM deployment; it was dropped
+because attribution follows the deployment that creates the resources, so a
+standalone empty deployment would not attribute AKS, PostgreSQL or Redis.
+Every example declares `partner_id` (default n8n's Microsoft-issued GUID, `null` opts out) and passes it to its
+`provider "azurerm"` block; the example variable-parity check requires all
+nine to match. Do not port AWS #200's node launch-template tagging: AKS
+applies cluster `tags` to the node resource group's resources and node-pool
+`tags` to the VMSS, two separate scopes, and `aks.tf` sets both. Live
+confirmation is still outstanding (tasks in the change).
+
 ## What this repo is
 
 `terraform-azurerm-n8n` is a Terraform module that deploys a **production-grade,

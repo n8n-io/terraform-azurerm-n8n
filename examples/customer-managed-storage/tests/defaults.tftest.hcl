@@ -174,3 +174,13 @@ run "customer_managed_storage_pg_backup_retention_override" {
     error_message = "An explicit pg_backup_retention_days override (30) must pass through to the module unchanged."
   }
 }
+
+run "rejects_malformed_partner_id" {
+  command = plan
+
+  variables {
+    partner_id = "not-a-guid"
+  }
+
+  expect_failures = [var.partner_id]
+}

@@ -3,6 +3,7 @@
 
 provider "azurerm" {
   storage_use_azuread = true
+  partner_id          = var.partner_id == null ? null : lower(var.partner_id)
 
   # azurerm 5.x registers no resource providers by default. Register the ones
   # this deployment uses, so a fresh subscription behaves as it did on 4.x.
