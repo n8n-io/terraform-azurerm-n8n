@@ -90,7 +90,8 @@ variable "aks_availability_zones" {
   }
 }
 
-# no validation: a plain bool, and nullable = false rejects null.
+# no validation: a plain bool. nullable = false makes an explicit null fall back
+# to the default (true).
 variable "aks_node_pools_follow_cluster_version" {
   description = "Passed through to the root module's aks_node_pools_follow_cluster_version. True (the default) makes a Kubernetes version change upgrade the control plane and then both node pools in the same apply, a surge upgrade that drains every node. Set false to upgrade only the control plane from Terraform and upgrade the pools out of band with `az aks nodepool upgrade`; switching to false plans no change. See docs/troubleshooting.md in the repository root."
   type        = bool

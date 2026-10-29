@@ -228,8 +228,10 @@ run "small_tier_rejects_a_malformed_n8n_image_tag" {
   expect_failures = [var.n8n_image_tag]
 }
 
-# The input has no root output, so this only proves the example accepts and
-# keeps false; the root suite asserts what false does to both node pools.
+# The root module has no output for the node pool version, so this run only
+# proves the example plans with false. tflint's terraform_unused_declarations
+# rule fails CI if main.tf stops passing the variable to module.n8n, and the
+# root suite asserts what false does to both node pools.
 run "small_tier_node_pools_follow_cluster_version_opt_out" {
   command = plan
 
@@ -243,11 +245,6 @@ run "small_tier_node_pools_follow_cluster_version_opt_out" {
     values = {
       secret_id = "https://n8nsmall-tls-test.vault.azure.net/secrets/n8nsmall-n8n-tls/0123456789abcdef0123456789abcdef"
     }
-  }
-
-  assert {
-    condition     = var.aks_node_pools_follow_cluster_version == false
-    error_message = "Setting aks_node_pools_follow_cluster_version = false must be accepted by the example."
   }
 
   assert {
