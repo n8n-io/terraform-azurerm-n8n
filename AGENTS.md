@@ -1074,16 +1074,23 @@ Concretely, in this repo:
   root, which pins `terraform-linters/tflint-ruleset-azurerm`.
 - **`checkov`**, installed at the pinned `CHECKOV_VERSION` (`.github/workflows/terraform-tests.yml`)
   rather than via `bridgecrewio/checkov-action`'s own floating `@v12` tag,
-  and run through `tests/scripts/check-checkov.sh`. Two passes: the
-  configuration as written (reported, not gating; a pre-existing,
-  uncurated backlog exists across every sizing example, tracked for a
-  dedicated curation pass), and the same scan with
+  and run through `tests/scripts/check-checkov.sh`. Findings hard-fail the
+  build, as in `terraform-aws-n8n`: every one is either fixed or annotated at
+  its resource with an inline `checkov:skip=<ID>:<reason>`, and
+  `.checkov.yaml` suppresses no check repo-wide (a repo-wide skip would
+  also silence the same ID on code written later). The script runs two
+  passes: the configuration as written, and the same scan with
   `tests/checkov/opt-in.tfvars` applied so count-0 resources (e.g. the
-  disabled-by-default Redis exporter) are actually evaluated, which is
-  the one thing this job hard-fails on: a rename or a broken toggle that
-  stops a listed opt-in resource from being reached. **When you add new
-  resources, do not regress curated findings; prefer fixing them over
-  adding suppressions.**
+  disabled-by-default Redis exporter) are actually evaluated; the second
+  pass also fails if it does not reach a listed opt-in resource. The
+  script unsets every exported `TF_VAR_*` first: on checkov 3.3.20 any one
+  of them makes checkov ignore `--var-file`, so pass 2 reports the same
+  counts as pass 1 and the coverage failure points at the wrong cause (a
+  real pass 2 has more passed checks than pass 1). Reasons
+  must be true and specific; prefix a skip that records a real gap with
+  `Known gap:` so it stays greppable. **When you add new resources, do not
+  regress curated findings; prefer fixing them over adding suppressions,
+  and when a suppression is right, say why at the resource.**
 
 ### 2. Unit + integration tests via `terraform test`
 

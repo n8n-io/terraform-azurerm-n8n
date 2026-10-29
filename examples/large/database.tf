@@ -24,6 +24,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
 }
 
 resource "azurerm_postgresql_flexible_server" "n8n" {
+  # checkov:skip=CKV2_AZURE_57:False positive: this server is VNet-integrated (delegated_subnet_id = azurerm_subnet.postgres.id, private_dns_zone_id set, public_network_access_enabled = false), which is the private-connectivity alternative to a private endpoint for PostgreSQL Flexible Server; delegated-subnet VNet integration and private endpoints are mutually exclusive deployment modes for this resource.
   name                = "${var.friendly_name_prefix}-postgres"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = var.location

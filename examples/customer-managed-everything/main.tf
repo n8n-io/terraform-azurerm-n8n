@@ -48,6 +48,7 @@ resource "azurerm_virtual_network" "n8n" {
 }
 
 resource "azurerm_subnet" "aks" {
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. The module only creates and associates an NSG for appgw_subnet_id (see ingress.tf azurerm_subnet_network_security_group_association.appgw); aks_network_policy defaults to null and this example leaves it unset, so no AKS network-policy engine restricts pod traffic on the node subnet either.
   name                 = "aks"
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
@@ -62,6 +63,7 @@ resource "azurerm_subnet" "appgw" {
 }
 
 resource "azurerm_subnet" "postgres" {
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. This subnet is delegated to Microsoft.DBforPostgreSQL/flexibleServers for VNet integration; the stand-in azurerm_postgresql_flexible_server.existing below sets public_network_access_enabled = false and uses this delegated subnet plus a private DNS zone for connectivity, but no NSG restricts traffic inside the subnet.
   name                 = "postgres"
   resource_group_name  = azurerm_resource_group.network.name
   virtual_network_name = azurerm_virtual_network.n8n.name
@@ -84,6 +86,7 @@ resource "azurerm_subnet" "postgres" {
 }
 
 resource "azurerm_subnet" "redis" {
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. This subnet hosts this example's own azurerm_private_endpoint.redis NIC for the external Azure Managed Redis stand-in (private_endpoint_network_policies = "Disabled"), so traffic reaches Redis exclusively via the private endpoint, but the subnet itself has no NSG.
   name                              = "redis-private-endpoints"
   resource_group_name               = azurerm_resource_group.network.name
   virtual_network_name              = azurerm_virtual_network.n8n.name
@@ -92,6 +95,7 @@ resource "azurerm_subnet" "redis" {
 }
 
 resource "azurerm_subnet" "private_endpoints" {
+  # checkov:skip=CKV2_AZURE_31:Known gap: no subnet-level NSG. This subnet hosts this example's own azurerm_private_endpoint.blob NIC for the external storage account stand-in (private_endpoint_network_policies = "Disabled"), so traffic reaches the storage account exclusively via the private endpoint, but the subnet itself has no NSG.
   name                              = "storage-private-endpoints"
   resource_group_name               = azurerm_resource_group.network.name
   virtual_network_name              = azurerm_virtual_network.n8n.name
@@ -102,6 +106,19 @@ resource "azurerm_subnet" "private_endpoints" {
 # ── Caller-owned AKS stand-in ─────────────────────────────────────────────────
 
 resource "azurerm_kubernetes_cluster" "existing" {
+  # checkov:skip=CKV_AZURE_4:The stand-in models a plausible minimum-viable customer AKS cluster: no oms_agent/Container Insights addon is configured. A real customer-managed cluster's actual logging posture is the owning platform team's decision.
+  # checkov:skip=CKV_AZURE_7:No network_policy is set in network_profile, matching the module's own azurerm_kubernetes_cluster.n8n default (var.aks_network_policy defaults to null). The stand-in models the least-configured plausible estate, not a hardening recommendation.
+  # checkov:skip=CKV_AZURE_115:private_cluster_enabled is left unset (public API server), matching the module's own default (var.aks_private_cluster_enabled defaults to false). The stand-in models a customer's pre-existing minimum-viable estate, not this module's hardened option.
+  # checkov:skip=CKV_AZURE_116:The Azure Policy add-on is not enabled on this stand-in. A real customer-managed cluster's actual policy posture is the owning platform team's decision, not something this example should model.
+  # checkov:skip=CKV_AZURE_117:Known gap: no disk_encryption_set_id is configured, so the OS disk uses Azure's platform-managed key. Adding a caller-owned Disk Encryption Set is exactly the complexity a "pre-existing cluster" stand-in should not be modeling.
+  # checkov:skip=CKV_AZURE_141:local_account_disabled is left unset (local accounts stay enabled), matching the module's own default (var.aks_local_account_disabled defaults to false, and requires Entra ID integration this stand-in does not configure).
+  # checkov:skip=CKV_AZURE_168:Known gap: default_node_pool has no max_pods override, so it uses Azure's provider default rather than an explicit floor of 50. The stand-in models a plausible minimum-viable customer cluster, not a capacity-tuning exercise.
+  # checkov:skip=CKV_AZURE_170:sku_tier is left unset (Free tier, no financially-backed API server SLA), matching the module's own default (var.aks_sku_tier defaults to "Free"). A real customer-managed cluster's actual SLA tier is the owning platform team's decision.
+  # checkov:skip=CKV_AZURE_171:Known gap: automatic_upgrade_channel is left unset, so this stand-in does not opt into an upgrade channel. A real customer-managed cluster's actual upgrade policy is the owning platform team's decision, not something this example should model.
+  # checkov:skip=CKV_AZURE_172:This stand-in does not use the Secrets Store CSI Driver addon at all, so there is no autorotation setting to configure. n8n gets its TLS certificate through the Application Gateway's own Key Vault integration (ingress.tf), not a CSI-mounted Secret.
+  # checkov:skip=CKV_AZURE_226:Known gap: default_node_pool uses Azure's default managed OS disk, not Ephemeral. Ephemeral disks require sizing the node's local (temp) disk to the OS disk, which is exactly the capacity-tuning complexity a "pre-existing cluster" stand-in should not be modeling.
+  # checkov:skip=CKV_AZURE_227:Known gap: no host-based encryption is configured on the default node pool. A real customer-managed cluster's actual host-encryption posture is the owning platform team's decision, not something this example should model.
+  # checkov:skip=CKV_AZURE_232:only_critical_addons_enabled is left unset on the default node pool, so n8n and other workloads may still schedule onto the system pool. The stand-in models a plausible minimum-viable customer cluster without a dedicated user node pool, so segregating "critical" pods onto this one pool buys nothing extra.
   name                = "${var.friendly_name_prefix}-shared-aks"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
@@ -173,6 +190,8 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
 }
 
 resource "azurerm_postgresql_flexible_server" "existing" {
+  # checkov:skip=CKV_AZURE_136:geo_redundant_backup_enabled is left unset (false), matching the module's own cost-minimizing default (var.pg_geo_redundant_backup_enabled defaults to false). A real customer-managed server's actual backup posture is the owning platform team's decision.
+  # checkov:skip=CKV2_AZURE_57:False positive: this stand-in uses delegated_subnet_id (VNet integration) plus public_network_access_enabled = false for private connectivity, the same shape as the module's own azurerm_postgresql_flexible_server.n8n (database.tf, also flagged for this check). PostgreSQL Flexible Server's VNet-integrated mode does not use a separate azurerm_private_endpoint resource, which is what this check looks for.
   name                = "${var.friendly_name_prefix}-shared-pg"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
@@ -282,6 +301,9 @@ resource "random_string" "storage_suffix" {
 
 resource "azurerm_storage_account" "existing" {
   # checkov:skip=CKV_AZURE_59:Public network access is disabled through public_network_access = "Disabled" (azurerm 5.5.0+); checkov still inspects only the deprecated public_network_access_enabled, which azurerm removes in 6.0.
+  # checkov:skip=CKV_AZURE_206:account_replication_type = "LRS" matches the module's own cost-minimizing default (var.storage_account_replication_type defaults to "LRS"). The stand-in models a plausible minimum-viable customer storage account, not this module's zone/region-redundant option.
+  # checkov:skip=CKV_AZURE_33:This account's Queue service is never used: n8n's workload only accesses the Blob container below (storage_container.existing), the same gap as the module's own azurerm_storage_account.n8n (storage.tf). Enabling diagnostic logging for a service nothing reads from would not improve this stand-in's posture.
+  # checkov:skip=CKV2_AZURE_1:Known gap: encrypted with the Storage-managed default key, not a Customer Managed Key: the module's own azurerm_storage_account.n8n (storage.tf) has no customer_managed_key support either, so this stand-in models a plausible minimum-viable customer storage account, not a CMK-capable posture. A real customer-managed account's actual key is the owning team's decision.
   name                = substr("${var.friendly_name_prefix}st${random_string.storage_suffix.result}", 0, 24)
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
@@ -321,6 +343,7 @@ resource "time_sleep" "storage_rbac" {
 }
 
 resource "azurerm_storage_container" "existing" {
+  # checkov:skip=CKV2_AZURE_21:Known gap: no diagnostic setting routes Blob read-request logs to a Log Analytics workspace or storage account. The stand-in models a plausible minimum-viable customer storage account; a real customer-managed account's actual logging posture is the owning team's decision.
   name                  = "n8n-data"
   storage_account_id    = azurerm_storage_account.existing.id
   container_access_type = "private"
@@ -373,6 +396,11 @@ resource "random_string" "key_vault_suffix" {
 }
 
 resource "azurerm_key_vault" "tls" {
+  # checkov:skip=CKV_AZURE_42:Teardown-friendly example setting: purge_protection_enabled = false is deliberate so the soft-deleted lab TLS vault that `terraform destroy` leaves behind can be purged manually and its name reused.
+  # checkov:skip=CKV_AZURE_110:Same requirement as CKV_AZURE_42 above: purge protection is intentionally disabled for teardown-friendly lab usage.
+  # checkov:skip=CKV_AZURE_109:Known gap: this vault has no network_acls block, so it allows public access from all networks; it only stores a self-signed TLS cert created by modules/tls-self-signed and consumed via app_gateway_tls_cert_secret_id, so a firewall restriction is unnecessary lab convenience, not production data.
+  # checkov:skip=CKV_AZURE_189:Known gap: same as CKV_AZURE_109, public_network_access_enabled defaults to true and no network_acls restrict it, consistent with the lab-only self-signed TLS cert this vault holds.
+  # checkov:skip=CKV2_AZURE_32:Known gap: a private endpoint only helps with restricted network access, which this vault does not implement (see CKV_AZURE_189 above).
   name                       = substr("${var.friendly_name_prefix}-tls-${random_string.key_vault_suffix.result}", 0, 24)
   resource_group_name        = azurerm_resource_group.network.name
   location                   = azurerm_resource_group.network.location

@@ -95,6 +95,7 @@ resource "azurerm_web_application_firewall_policy" "webhook" {
 
 resource "azurerm_application_gateway" "webhook" {
   # checkov:skip=CKV_AZURE_218:Policy tracks the same Azure TLS 1.2-or-later 2022 predefined policy the root module defaults to.
+  # checkov:skip=CKV_AZURE_120:var.create_webhook_waf_policy defaults to true, making sku.name/tier "WAF_v2" with azurerm_web_application_firewall_policy.webhook attached via firewall_policy_id below. Checkov cannot evaluate the ternary driving sku.name, unlike the root module's own azurerm_application_gateway.n8n (ingress.tf), which reads var.appgw_sku_name directly (default "WAF_v2") and is not flagged. Set create_webhook_waf_policy = false only if you accept the public webhook gateway running without a WAF.
   name                = "${var.friendly_name_prefix}-webhook-appgw"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location
@@ -226,6 +227,7 @@ resource "time_sleep" "admin_tls_cert_kv_rbac" {
 }
 
 resource "azurerm_application_gateway" "admin" {
+  # checkov:skip=CKV_AZURE_120:This gateway's frontend never receives internet traffic: no public IP, and the frontend_ip_configuration below binds a private address in the appgw_admin subnet (VirtualNetwork-only, or further restricted to admin_allowed_cidr_blocks by the appgw_admin NSG). A WAF screens untrusted internet requests; this gateway is private by design, which is the isolation this example exists to demonstrate.
   name                = "${var.friendly_name_prefix}-admin-appgw"
   resource_group_name = azurerm_resource_group.n8n.name
   location            = azurerm_resource_group.n8n.location

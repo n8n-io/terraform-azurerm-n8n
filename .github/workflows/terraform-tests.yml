@@ -399,20 +399,13 @@ jobs:
         run: pip install "checkov==${{ env.CHECKOV_VERSION }}"
 
       # The same script contributors run, so "clean locally" and "clean in
-      # CI" cannot drift apart. Module surfaces low-severity, uncurated
-      # findings across every sizing example (e.g. subnet NSG associations,
-      # storage SAS expiration policy) that are intentional defaults for a
-      # getting-started template; continue-on-error preserves the previous
-      # soft_fail: true posture until those are curated in a dedicated pass
-      # (see AGENTS.md's "Static analysis" quality-bar section). The
-      # opt-in second pass (tests/checkov/opt-in.tfvars,
-      # port-aws-050-enhancements section 3) still runs and its coverage
-      # assertion is not soft: check-checkov.sh exits non-zero, and this
-      # step is still reported (yellow) in the GitHub UI, if it fails to
-      # reach a listed opt-in resource.
+      # CI" cannot drift apart. Every finding is fixed or annotated inline
+      # with `checkov:skip=<ID>:<reason>` at its resource, so any finding
+      # fails the job, as in terraform-aws-n8n. Pass 2
+      # (tests/checkov/opt-in.tfvars) also fails if it does not reach a
+      # listed opt-in resource.
       - name: checkov
         run: tests/scripts/check-checkov.sh
-        continue-on-error: true
 
   markdownlint:
     name: markdownlint
