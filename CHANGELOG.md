@@ -9,7 +9,7 @@ Before 1.0.0, minor versions are the breaking-change boundary; see
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-29
+## [0.2.0] - 2026-11-12
 
 This release adds opt-in AKS network, identity, and Key Vault controls,
 caller-supplied private DNS zones, a write-only PostgreSQL password path,
